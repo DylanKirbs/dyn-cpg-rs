@@ -163,8 +163,6 @@ def draw_graph(graph: nx.Graph):
     edge_labels = nx.get_edge_attributes(graph, "label")
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels)
 
-    plt.show()
-
 
 def graph_to_tex(graph: nx.Graph) -> str:
     pos = nx.shell_layout(graph, scale=5)
@@ -253,26 +251,26 @@ def gen_highlighted_change_graph(
 
     changed_ranges = old_tree.changed_ranges(new_tree)
 
-    query = PY_LANGUAGE.query(f"({q_gran} (_) @{q_gran})")
-    orig_captures = query.captures(old_tree.root_node)
-    new_captures = query.captures(new_tree.root_node)
-    for orig_range, new_range in zip_longest(
-        orig_captures.get(q_gran, []),
-        new_captures.get(q_gran, []),
-    ):
-        if orig_range is None or new_range is None:
-            # Added or removed range
-            continue
+    # query = PY_LANGUAGE.query(f"({q_gran} (_) @{q_gran})")
+    # orig_captures = query.captures(old_tree.root_node)
+    # new_captures = query.captures(new_tree.root_node)
+    # for orig_range, new_range in zip_longest(
+    #     orig_captures.get(q_gran, []),
+    #     new_captures.get(q_gran, []),
+    # ):
+    #     if orig_range is None or new_range is None:
+    #         # Added or removed range
+    #         continue
 
-        if orig_range.text != new_range.text:
-            changed_ranges.append(
-                tsRange(
-                    new_range.start_point,
-                    new_range.end_point,
-                    new_range.start_byte,
-                    new_range.end_byte,
-                )
-            )
+    #     if orig_range.text != new_range.text:
+    #         changed_ranges.append(
+    #             tsRange(
+    #                 new_range.start_point,
+    #                 new_range.end_point,
+    #                 new_range.start_byte,
+    #                 new_range.end_byte,
+    #             )
+    #         )
 
     _add_nodes(G, new_tree.root_node, changed_ranges)
 
