@@ -138,7 +138,7 @@ def ast_layout(G, scale=1, center=None):
     return pos
 
 
-def draw_graph(graph: nx.Graph):
+def draw_graph(graph: nx.Graph, ax=None, **kwargs):
     """
     Draw the graph using matplotlib.
 
@@ -158,10 +158,13 @@ def draw_graph(graph: nx.Graph):
         with_labels=True,
         node_color=colors.values(),
         edge_color=edge_colors.values(),
+        ax=ax,
+        **kwargs,
     )
 
     edge_labels = nx.get_edge_attributes(graph, "label")
-    nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels)
+    bbox = {"boxstyle": "round", "ec": (1.0, 1.0, 1.0), "fc": (0.2, 0.2, 0.2)}
+    nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, ax=ax, bbox=bbox)
 
 
 def graph_to_tex(graph: nx.Graph) -> str:
