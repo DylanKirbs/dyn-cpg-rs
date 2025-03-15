@@ -33,6 +33,7 @@ class NodeProps:
     def __init__(self):
         self.is_root = False
         self.is_changed = False
+        self.is_error = False
 
     def get_prop_col(self, alpha=0.5):
 
@@ -198,6 +199,7 @@ def _add_nodes(
             break
 
     props.is_root = parent is None
+    props.is_error = node.type == "ERROR"
 
     label = node.type
     if node.type in LABELED_TYPES:
