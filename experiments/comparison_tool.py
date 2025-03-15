@@ -133,7 +133,8 @@ class TSCompApp(tk.Tk):
         graph = gen_highlighted_change_graph(orig_tree, new_tree)
         draw_graph(graph, self.ax, font_color="white")
         self.ax.set_facecolor(self.text_bg)
-        self.ax.get_figure().set_facecolor(self.dark_bg)
+        cfg = self.ax.get_figure()
+        cfg.set_facecolor(self.dark_bg) if cfg else None
         self.canvas.draw()
 
     def destroy(self):
