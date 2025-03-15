@@ -1,5 +1,6 @@
 # Based on https://medium.com/we-talk-data/explaining-sparse-datasets-with-practical-examples-dead60c2c3b7
 
+import time
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix, csc_matrix
 
@@ -45,3 +46,51 @@ print_matrix(result)
 sum_matrix = sparse_matrix_1 + sparse_matrix_2
 print("Result of addition:")
 print_matrix(sum_matrix)
+
+
+# More from https://research.swtch.com/sparse
+# I know it makes 0 sense to do this in python, but I'm just doing it as a proof of concept
+
+
+class SparseDenseSet:
+    """
+    A sparse set implementation that uses a dense array to store the elements for fast lookup and iteration.
+    The uniqueness of this implementation is that it does not require the elements of the array to be initialized in memory. (Not useful in python, but useful in C)
+    """
+
+    def __init__(self, size):
+        self.size = size
+        self.n = 0
+        self.sparse = [0] * size
+        self.dense = [0] * size
+
+    def add_member(self, x):
+        if x >= self.size:
+            raise ValueError("index out of bounds")
+
+        self.dense[self.n] = x
+        self.sparse[x] = self.n
+        self.n += 1
+
+    def __contains__(self, x):
+        # super fast lookup into sparse array
+        return (
+            x < self.size
+            and self.sparse[x] < self.n
+            and self.dense[self.sparse[x]] == x
+        )
+
+    def clear(self):
+        self.n = 0
+
+    def __iter__(self):
+        for i in range(self.n):
+            yield self.dense[i]
+
+    def remove_member(self, x):
+        if not x in self:
+            return
+        j = self.dense[self.n - 1]
+        self.dense[self.sparse[x]] = j
+        self.sparse[j] = self.sparse[x]
+        self.n -= 1

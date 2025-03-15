@@ -20,7 +20,7 @@ def foo():
 c2 = """
 def foo():
     x = source()
-    if x > MAX:
+    if x == MAX:
         y = 2 * x
         sink(y)
 """
@@ -28,6 +28,8 @@ def foo():
 orig_tree = PY_PARSER.parse(bytes(c1, "utf-8"))
 new_tree = PY_PARSER.parse(bytes(c2, "utf-8"))
 
+
+print(new_tree.changed_ranges(orig_tree))
 
 graph = gen_highlighted_change_graph(orig_tree, new_tree)
 draw_graph(graph)
