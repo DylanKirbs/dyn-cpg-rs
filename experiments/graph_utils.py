@@ -1,14 +1,15 @@
+from collections import defaultdict, deque
+from copy import deepcopy
 from itertools import zip_longest
 from typing import List
 
 import matplotlib
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 import tree_sitter_python
-from tree_sitter import Language, Node, Parser
+from tree_sitter import Language, Node, Parser, Query, Tree
 from tree_sitter import Range as tsRange
-from tree_sitter import Tree
-
 
 matplotlib.use("TkAgg")
 
@@ -21,11 +22,6 @@ LABELED_TYPES = [
     "integer",
     "float",
 ]
-
-from collections import defaultdict, deque
-
-import networkx as nx
-import numpy as np
 
 
 class NodeProps:
@@ -60,9 +56,11 @@ def get_node_uid(node):
     return uid
 
 
-def ast_layout(G, scale=1, center=None):
+def ast_layout(G: nx.Graph, scale=1, center=None):
     """
     Position nodes of an AST in layers without edge intersections, following a partite scheme.
+
+    The tree may contain edges that violate the tree structure, only edges named "AST (child)" are considered when constructing the layout.
 
     Parameters
     ----------
@@ -84,6 +82,14 @@ def ast_layout(G, scale=1, center=None):
         If G is not a tree or has multiple roots.
     """
 
+    G = deepcopy(G)
+
+    # remove edges without the AST child label
+    edges = list(G.edges(data=True))
+    for u, v, data in edges:
+        if data.get("label") != "AST (child)":
+            G.remove_edge(u, v)
+
     if not nx.is_tree(G):
         raise nx.NetworkXError("G is not a tree. AST layout requires a tree structure.")
 
@@ -94,7 +100,7 @@ def ast_layout(G, scale=1, center=None):
 
     # Determine root node(s)
     if is_directed:
-        roots = [n for n in G if G.in_degree(n) == 0]
+        roots = [n for n in G if G.in_degree(n) == 0]  # type: ignore
     else:
         roots = [next(iter(G.nodes))]  # Choose arbitrary root for undirected
 
@@ -110,11 +116,11 @@ def ast_layout(G, scale=1, center=None):
 
     while queue:
         node, parent, depth = queue.popleft()
-        neighbors = G.neighbors(node) if not is_directed else G.successors(node)
+        neighbours = G.neighbors(node) if not is_directed else G.successors(node)  # type: ignore
         children = []
-        for neighbor in neighbors:
-            if (not is_directed and neighbor != parent) or is_directed:
-                children.append(neighbor)
+        for neighbour in neighbours:
+            if (not is_directed and neighbour != parent) or is_directed:
+                children.append(neighbour)
         for child in children:
             if child not in visited:
                 visited[child] = True
@@ -169,8 +175,10 @@ def draw_graph(graph: nx.Graph, ax=None, **kwargs):
 
 
 def graph_to_tex(graph: nx.Graph) -> str:
-    pos = nx.shell_layout(graph, scale=5)
-    node_options = nx.get_node_attributes(graph, "color")
+    pos = ast_layout(graph)
+    node_options = nx.get_node_attributes(
+        graph, "label"
+    )  # TODO: include color at some point
     tex = str(nx.to_latex_raw(graph, pos, node_options=node_options))  # type: ignore
     tex = tex.replace("_", "\\_")
     return tex
@@ -217,7 +225,10 @@ def _add_nodes(
 
     if parent is not None:
         graph.add_edge(
-            get_node_uid(parent), node_uid, label="AST (child)", color=(0, 0, 0, 0.5)
+            get_node_uid(parent),
+            node_uid,
+            label="AST (child)",
+            color=(0, 0, 0, 0.5),
         )
 
     for child in node.children:
@@ -238,45 +249,77 @@ def tree_to_graph(tree: Tree) -> nx.DiGraph:
 
 
 def gen_highlighted_change_graph(
-    old_tree: Tree, new_tree: Tree, q_gran: str = "block"
+    old_tree: Tree,
+    new_tree: Tree,
+    query: Query | None = None,
 ) -> nx.DiGraph:
     """
     Uses networkx to display the new tree with the changes highlighted.
 
     Makes use of tree-sitter's changed_ranges method to highlight the changes.
-    Makes an additional query at the children of the specified granularity to highlight textual changes.
 
     :param tree: The old tree
     :param new_tree: The new tree
-    :param q_gran: The granularity of the query (must be a valid tree-sitter query)
+    :param query: The granularity of the query (must be a valid tree-sitter query with the label 'highlight', e.g. "(block) @highlight")
     :return: The graph
     """
 
-    G = nx.DiGraph()
-
     changed_ranges = old_tree.changed_ranges(new_tree)
 
-    # query = PY_LANGUAGE.query(f"({q_gran} (_) @{q_gran})")
-    # orig_captures = query.captures(old_tree.root_node)
-    # new_captures = query.captures(new_tree.root_node)
-    # for orig_range, new_range in zip_longest(
-    #     orig_captures.get(q_gran, []),
-    #     new_captures.get(q_gran, []),
-    # ):
-    #     if orig_range is None or new_range is None:
-    #         # Added or removed range
-    #         continue
+    if query is None:
+        return highlighted_graph(new_tree, changed_ranges)
 
-    #     if orig_range.text != new_range.text:
-    #         changed_ranges.append(
-    #             tsRange(
-    #                 new_range.start_point,
-    #                 new_range.end_point,
-    #                 new_range.start_byte,
-    #                 new_range.end_byte,
-    #             )
-    #         )
+    # Highlight the changes in the query
+    orig_captures = query.captures(old_tree.root_node)
+    new_captures = query.captures(new_tree.root_node)
 
-    _add_nodes(G, new_tree.root_node, changed_ranges)
+    for o_node, n_node in zip_longest(
+        sorted(orig_captures.get("highlight", []), key=lambda x: x.start_byte),
+        sorted(new_captures.get("highlight", []), key=lambda x: x.start_byte),
+    ):
+        if o_node is None or n_node is None:
+            # Added or removed range
+            continue
 
+        if (
+            o_node.start_byte != n_node.start_byte
+            or n_node.has_changes
+            or o_node.has_changes
+            or o_node.text != n_node.text
+        ):
+            changed_ranges.append(
+                tsRange(
+                    n_node.start_point,
+                    n_node.end_point,
+                    n_node.start_byte,
+                    n_node.end_byte,
+                )
+            )
+
+    return highlighted_graph(new_tree, changed_ranges)
+
+
+def highlighted_query_graph(tree: Tree, query: Query, labels: List[str]) -> nx.DiGraph:
+    captures = query.captures(tree.root_node)
+    matches = []
+    for label in labels:
+        matches.extend(captures.get(label, []))
+
+    highlights: List[tsRange] = []
+    for match in matches:
+        highlights.append(
+            tsRange(
+                match.start_point,
+                match.end_point,
+                match.start_byte,
+                match.end_byte,
+            )
+        )
+
+    return highlighted_graph(tree, highlights)
+
+
+def highlighted_graph(tree, highlight_ranges):
+    G = nx.DiGraph()
+    _add_nodes(G, tree.root_node, highlight_ranges)
     return G
