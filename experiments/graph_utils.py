@@ -4,17 +4,12 @@ from itertools import zip_longest
 from typing import List
 
 import matplotlib
-import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
-import tree_sitter_python
-from tree_sitter import Language, Node, Parser, Query, Tree
-from tree_sitter import Range as tsRange
+
+from tree_sitter import Node, Query, Tree, Range as tsRange
 
 matplotlib.use("TkAgg")
 
-PY_LANGUAGE = Language(tree_sitter_python.language())
-PY_PARSER = Parser(PY_LANGUAGE)
 
 LABELED_TYPES = [
     "string",

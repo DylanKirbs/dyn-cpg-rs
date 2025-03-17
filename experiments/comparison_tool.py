@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from graph_utils import PY_PARSER, draw_graph, gen_highlighted_change_graph, plt
+from graph_utils import draw_graph, gen_highlighted_change_graph
+import matplotlib.pyplot as plt
+from ts_utils import Languages, Parsers
 
 c1 = """
 if x < y:
@@ -37,8 +39,18 @@ class TSCompApp(tk.Tk):
         # Ensure proper cleanup
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
+        # Language selector dropdown
+        self.lang_var = tk.StringVar()
+        self.lang_var.set("python")
+        self.lang_selector = ttk.Combobox(
+            self,
+            values=[k for k in Languages.supported_langs.keys()],
+            textvariable=self.lang_var,
+        )
+        self.lang_selector.grid(row=0, column=0, columnspan=2, sticky="ew")
+
         # Left editor
-        self.editor1 = tk.Text(
+        self.left_editor = tk.Text(
             self,
             wrap=tk.NONE,
             bg=self.text_bg,
@@ -46,15 +58,15 @@ class TSCompApp(tk.Tk):
             insertbackground=self.dark_fg,
             selectbackground=self.highlight,
         )
-        self.editor1.grid(row=0, column=0, sticky="nsew")
+        self.left_editor.grid(row=1, column=0, sticky="nsew")
 
-        self.label1 = tk.Label(
+        self.left_root_txt = tk.Label(
             self, relief=tk.SUNKEN, wraplength=800, bg=self.text_bg, fg=self.accent
         )
-        self.label1.grid(row=1, column=0, sticky="ew")
+        self.left_root_txt.grid(row=2, column=0, sticky="ew")
 
         # Right editor
-        self.editor2 = tk.Text(
+        self.right_editor = tk.Text(
             self,
             wrap=tk.NONE,
             bg=self.text_bg,
@@ -62,37 +74,38 @@ class TSCompApp(tk.Tk):
             insertbackground=self.dark_fg,
             selectbackground=self.highlight,
         )
-        self.editor2.grid(row=0, column=1, sticky="nsew")
+        self.right_editor.grid(row=1, column=1, sticky="nsew")
 
-        self.label2 = tk.Label(
+        self.right_root_txt = tk.Label(
             self, relief=tk.SUNKEN, wraplength=800, bg=self.text_bg, fg=self.accent
         )
-        self.label2.grid(row=1, column=1, sticky="ew")
+        self.right_root_txt.grid(row=2, column=1, sticky="ew")
 
         # Changed ranges
-        self.label3 = tk.Label(
+        self.changed_ranges = tk.Label(
             self, relief=tk.SUNKEN, wraplength=800, bg=self.text_bg, fg=self.dark_fg
         )
-        self.label3.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.changed_ranges.grid(row=3, column=0, columnspan=2, sticky="ew")
 
         # Matplotlib figure setup with dark theme
         self.figure = plt.figure(figsize=(10, 6), facecolor=self.dark_bg)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().configure(bg=self.dark_bg)
-        self.canvas.get_tk_widget().grid(row=3, column=0, columnspan=2, sticky="nsew")
+        self.canvas.get_tk_widget().grid(row=4, column=0, columnspan=2, sticky="nsew")
         self.ax = self.figure.add_subplot(111)
         self.ax.set_facecolor(self.text_bg)
 
         # Bind text modifications
-        self.editor1.bind("<<Modified>>", self.on_text_modified)
-        self.editor2.bind("<<Modified>>", self.on_text_modified)
+        self.left_editor.bind("<<Modified>>", self.on_text_modified)
+        self.right_editor.bind("<<Modified>>", self.on_text_modified)
 
         # Set initial code
-        self.editor1.insert("1.0", c1.strip())
-        self.editor2.insert("1.0", c2.strip())
+        self.left_editor.insert("1.0", c1.strip())
+        self.right_editor.insert("1.0", c2.strip())
 
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        # Configure grid weights
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(4, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
@@ -116,17 +129,20 @@ class TSCompApp(tk.Tk):
 
     def update_display(self):
         # Get code from both editors
-        code1 = self.editor1.get("1.0", "end-1c")
-        code2 = self.editor2.get("1.0", "end-1c")
+        code1 = self.left_editor.get("1.0", "end-1c")
+        code2 = self.right_editor.get("1.0", "end-1c")
 
         # Parse code
-        orig_tree = PY_PARSER.parse(bytes(code1, "utf-8"))
-        new_tree = PY_PARSER.parse(bytes(code2, "utf-8"))
+        parser = getattr(Parsers, self.lang_var.get())
+        orig_tree = parser.parse(bytes(code1, "utf-8"))
+        new_tree = parser.parse(bytes(code2, "utf-8"))
 
         # Update labels
-        self.label1.config(text=f"Original Root Node: {orig_tree.root_node}")
-        self.label2.config(text=f"Modified Root Node: {new_tree.root_node}")
-        self.label3.config(text=f"Changed Ranges: {orig_tree.changed_ranges(new_tree)}")
+        self.left_root_txt.config(text=f"Original Root Node: {orig_tree.root_node}")
+        self.right_root_txt.config(text=f"Modified Root Node: {new_tree.root_node}")
+        self.changed_ranges.config(
+            text=f"Changed Ranges: {orig_tree.changed_ranges(new_tree)}"
+        )
 
         # Generate and draw graph with dark theme
         self.ax.clear()
