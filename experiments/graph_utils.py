@@ -26,6 +26,7 @@ class NodeProps:
         self.is_changed = False
         self.is_error = False
         self.has_changed_child = False
+        self.is_missing = False
 
     def get_prop_col(self, alpha=0.5):
 
@@ -198,13 +199,16 @@ def _add_nodes(
     props = NodeProps()
 
     for range in changed_ranges:
-        # changed child: if the node is within a changed range
-        if range.start_byte <= node.start_byte and range.end_byte >= node.end_byte:
-            props.has_changed_child = True
-
-        # changed self: if the node is the changed range
-        if range.start_byte >= node.start_byte and range.end_byte <= node.end_byte:
+        if range.start_byte <= node.start_byte and node.end_byte <= range.end_byte:
             props.is_changed = True
+        elif node.start_byte <= range.start_byte and range.end_byte <= node.end_byte:
+            if len(node.children) > 0:
+                props.has_changed_child = True
+            else:
+                props.is_changed = True
+
+    if node.is_missing:
+        props.is_missing = True
 
     props.is_root = parent is None
     props.is_error = node.type == "ERROR"

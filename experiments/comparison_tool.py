@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from graph_utils import draw_graph, highlighted_graph
-from tree_sitter import Range
+from tree_sitter import Range, Tree
 import matplotlib.pyplot as plt
 from ts_utils import Languages, Parsers
 from difflib import SequenceMatcher
@@ -163,24 +163,38 @@ class TSCompApp(tk.Tk):
         old_source = bytes(code1, "utf-8")
         new_source = bytes(code2, "utf-8")
 
-        orig_tree = parser.parse(old_source)
-        new_tree = parser.parse(new_source)
+        orig_tree: Tree = parser.parse(old_source)
+
+        changes = source_edits(old_source, new_source)
+        for old_start, old_end, new_start, new_end in changes:
+            sp = (0, 0)
+            ep = orig_tree.root_node.end_point
+            if node := orig_tree.root_node.descendant_for_byte_range(
+                old_start, old_end
+            ):
+                sp = node.start_point
+                ep = node.end_point
+            orig_tree.edit(old_start, new_start, new_end, sp, ep, ep)
+
+        new_tree: Tree = parser.parse(new_source)  # , orig_tree)
 
         # Update labels
         self.left_root_txt.config(text=f"Original Root Node: {orig_tree.root_node}")
         self.right_root_txt.config(text=f"Modified Root Node: {new_tree.root_node}")
-        self.changed_ranges.config(
-            text=f"Changed Ranges: {source_edits(old_source, new_source)}"
-        )
+
+        self.changed_ranges.config(text=f"Changed Ranges: {changes}")
 
         # Generate and draw graph with dark theme
         self.ax.clear()
         graph = highlighted_graph(
             new_tree,
-            [
-                Range((0, 0), (0, 0), *e[2:])
-                for e in source_edits(old_source, new_source)
-            ],
+            set(
+                [
+                    Range((0, 0), (0, 0), *e[2:])
+                    for e in source_edits(old_source, new_source)
+                ]
+                + orig_tree.changed_ranges(new_tree)
+            ),
         )
         draw_graph(graph, self.ax, font_color="white")
         self.ax.set_facecolor(self.text_bg)
