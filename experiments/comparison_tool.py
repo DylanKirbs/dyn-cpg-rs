@@ -1,9 +1,11 @@
 import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from graph_utils import draw_graph, gen_highlighted_change_graph
+from graph_utils import draw_graph, highlighted_graph
+from tree_sitter import Range
 import matplotlib.pyplot as plt
 from ts_utils import Languages, Parsers
+from difflib import SequenceMatcher
 
 c1 = """
 if x < y:
@@ -14,6 +16,29 @@ c2 = """
 if x . y:
     pass
 """
+
+
+def source_edits(
+    old_source: bytes, new_source: bytes
+) -> list[tuple[int, int, int, int]]:
+    """
+    Perform a sequence alignment between the old and new source code and return
+    the list of source code edits.
+
+    :param old_source: The old source code
+    :param new_source: The new source code
+    :return: A list of tuples (old_start, old_end, new_start, new_end) representing the source code edits
+    """
+
+    edits = []
+    for tag, old_start, old_end, new_start, new_end in SequenceMatcher(
+        None, old_source, new_source
+    ).get_opcodes():
+        if tag == "equal" or old_start != new_start:
+            continue
+        edits.append((old_start, old_end, new_start, new_end))
+
+    return edits
 
 
 class TSCompApp(tk.Tk):
@@ -134,19 +159,29 @@ class TSCompApp(tk.Tk):
 
         # Parse code
         parser = getattr(Parsers, self.lang_var.get())
-        orig_tree = parser.parse(bytes(code1, "utf-8"))
-        new_tree = parser.parse(bytes(code2, "utf-8"))
+
+        old_source = bytes(code1, "utf-8")
+        new_source = bytes(code2, "utf-8")
+
+        orig_tree = parser.parse(old_source)
+        new_tree = parser.parse(new_source)
 
         # Update labels
         self.left_root_txt.config(text=f"Original Root Node: {orig_tree.root_node}")
         self.right_root_txt.config(text=f"Modified Root Node: {new_tree.root_node}")
         self.changed_ranges.config(
-            text=f"Changed Ranges: {orig_tree.changed_ranges(new_tree)}"
+            text=f"Changed Ranges: {source_edits(old_source, new_source)}"
         )
 
         # Generate and draw graph with dark theme
         self.ax.clear()
-        graph = gen_highlighted_change_graph(orig_tree, new_tree)
+        graph = highlighted_graph(
+            new_tree,
+            [
+                Range((0, 0), (0, 0), *e[2:])
+                for e in source_edits(old_source, new_source)
+            ],
+        )
         draw_graph(graph, self.ax, font_color="white")
         self.ax.set_facecolor(self.text_bg)
         cfg = self.ax.get_figure()
