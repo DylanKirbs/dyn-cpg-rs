@@ -22,7 +22,7 @@ def source_edits(
     old_source: bytes, new_source: bytes
 ) -> list[tuple[int, int, int, int]]:
     """
-    Perform a sequence alignment between the old and new source code and return
+    Perform a sequence match between the old and new source code and return
     the list of source code edits.
 
     :param old_source: The old source code
@@ -34,7 +34,7 @@ def source_edits(
     for tag, old_start, old_end, new_start, new_end in SequenceMatcher(
         None, old_source, new_source
     ).get_opcodes():
-        if tag == "equal" or old_start != new_start:
+        if tag == "equal":
             continue
         edits.append((old_start, old_end, new_start, new_end))
 
@@ -193,7 +193,7 @@ class TSCompApp(tk.Tk):
                     Range((0, 0), (0, 0), *e[2:])
                     for e in source_edits(old_source, new_source)
                 ]
-                + orig_tree.changed_ranges(new_tree)
+                # + orig_tree.changed_ranges(new_tree)
             ),
         )
         draw_graph(graph, self.ax, font_color="white")
