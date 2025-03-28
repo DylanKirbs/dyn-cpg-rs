@@ -176,7 +176,7 @@ class TSCompApp(tk.Tk):
                 ep = node.end_point
             orig_tree.edit(old_start, new_start, new_end, sp, ep, ep)
 
-        new_tree: Tree = parser.parse(new_source)  # , orig_tree)
+        new_tree: Tree = parser.parse(new_source, orig_tree)
 
         # Update labels
         self.left_root_txt.config(text=f"Original Root Node: {orig_tree.root_node}")
