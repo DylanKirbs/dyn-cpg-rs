@@ -8,6 +8,14 @@
 
 void print_changed_ranges(TSRange *ranges, unsigned int count, char *source)
 {
+
+    unsigned int source_length = strlen(source);
+    if (count == 0)
+    {
+        printf("No changes detected.\n");
+        return;
+    }
+
     for (unsigned int i = 0; i < count; i++)
     {
         printf("Range %u: ", i);
@@ -16,11 +24,124 @@ void print_changed_ranges(TSRange *ranges, unsigned int count, char *source)
         printf("Start point: (%u, %u), ", ranges[i].start_point.row, ranges[i].start_point.column);
         printf("End point: (%u, %u), ", ranges[i].end_point.row, ranges[i].end_point.column);
         printf("Changed code: ");
-        for (unsigned int j = ranges[i].start_byte; j < ranges[i].end_byte; j++)
+
+        // Add bounds checking
+        unsigned int end = ranges[i].end_byte;
+        if (end > source_length)
+        {
+            end = source_length;
+        }
+
+        for (unsigned int j = ranges[i].start_byte; j < end; j++)
         {
             putchar(source[j]);
         }
         putchar('\n');
+    }
+}
+
+/**
+ * Print a side-by-side diff of two code samples
+ *
+ * @param original The original code string
+ * @param original_length Length of the original code
+ * @param modified The modified code string
+ * @param modified_length Length of the modified code
+ * @param segments Array of diff segments
+ * @param segment_count Number of segments in the array
+ */
+void print_side_by_side_diff(
+    const char *original,
+    size_t original_length,
+    const char *modified,
+    size_t modified_length,
+    MSMDiffSegment *segments,
+    int segment_count)
+{
+    char *diff_fmt = "[%3d:%3d] %-40.40s %c [%3d:%3d] %-40.40s\n";
+
+    for (int i = 0; i < segment_count; i++)
+    {
+        MSMDiffSegment segment = segments[i];
+        char diff_type = ' ';
+
+        // Determine diff symbol
+        switch (segment.type)
+        {
+        case INSERT:
+            diff_type = '+';
+            break;
+        case DELETE:
+            diff_type = '-';
+            break;
+        case REPLACE:
+            diff_type = '|';
+            break;
+        case EQUAL:
+            diff_type = ' ';
+            break;
+        }
+
+        // Extract the relevant portions of text
+        char *original_text = NULL;
+        char *modified_text = NULL;
+
+        // For original text
+        if (segment.type != INSERT)
+        {
+            size_t len = segment.end_a - segment.start_a;
+            original_text = (char *)malloc(len + 1);
+            if (original_text)
+            {
+                strncpy(original_text, original + segment.start_a, len);
+                original_text[len] = '\0';
+            }
+        }
+
+        // For modified text
+        if (segment.type != DELETE)
+        {
+            size_t len = segment.end_b - segment.start_b;
+            modified_text = (char *)malloc(len + 1);
+            if (modified_text)
+            {
+                strncpy(modified_text, modified + segment.start_b, len);
+                modified_text[len] = '\0';
+            }
+        }
+
+        // Print the diff, accounting for newlines
+
+        if (original_text)
+        {
+            for (size_t j = 0; j < strlen(original_text); j++)
+            {
+                if (original_text[j] == '\n')
+                {
+                    original_text[j] = ' ';
+                }
+            }
+        }
+
+        if (modified_text)
+        {
+            for (size_t j = 0; j < strlen(modified_text); j++)
+            {
+                if (modified_text[j] == '\n')
+                {
+                    modified_text[j] = ' ';
+                }
+            }
+        }
+
+        printf(diff_fmt,
+               segment.start_a, segment.end_a, original_text ? original_text : "",
+               diff_type,
+               segment.start_b, segment.end_b, modified_text ? modified_text : "");
+
+        // Free allocated memory
+        free(original_text);
+        free(modified_text);
     }
 }
 
@@ -92,7 +213,13 @@ int main()
             };
             ts_tree_edit(tree, &edit);
         }
+        printf("\n");
 
+        // Print side-by-side diff
+        print_side_by_side_diff(original_code, original_length, modified_code, modified_length, result->segments, result->count);
+        printf("\n");
+
+        // Free the diff result
         msm_free_diff_result(result);
     }
 

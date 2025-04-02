@@ -343,10 +343,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
             {
                 MSMDiffSegment segment;
                 segment.type = current_type;
-                segment.start_a = start_a;
-                segment.end_a = a_idx;
-                segment.start_b = start_b;
-                segment.end_b = b_idx;
+                segment.start_a = start_a; // old_start
+                segment.end_a = a_idx;     // old_end
+                segment.start_b = start_b; // new_start
+                segment.end_b = b_idx;     // new_end
 
                 if (is_character_mode)
                 {
@@ -372,10 +372,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
                 {
                     MSMDiffSegment segment;
                     segment.type = INSERT;
-                    segment.start_a = start_b;
-                    segment.end_a = start_b;
-                    segment.start_b = start_b;
-                    segment.end_b = b_idx;
+                    segment.start_a = start_a; // old_start
+                    segment.end_a = start_a;   // old_end (no deletion in old)
+                    segment.start_b = start_b; // new_start
+                    segment.end_b = b_idx;     // new_end
                     segment.value_a = NULL;
 
                     if (is_character_mode)
@@ -393,10 +393,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
                 {
                     MSMDiffSegment segment;
                     segment.type = DELETE;
-                    segment.start_a = start_a;
-                    segment.end_a = a_idx;
-                    segment.start_b = start_a;
-                    segment.end_b = start_a;
+                    segment.start_a = start_a; // old_start
+                    segment.end_a = a_idx;     // old_end
+                    segment.start_b = start_b; // new_start
+                    segment.end_b = start_b;   // new_end (no insertion in new)
 
                     if (is_character_mode)
                     {
@@ -429,10 +429,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
                 {
                     MSMDiffSegment segment;
                     segment.type = EQUAL;
-                    segment.start_a = start_a;
-                    segment.end_a = a_idx;
-                    segment.start_b = start_b;
-                    segment.end_b = b_idx;
+                    segment.start_a = start_a; // old_start
+                    segment.end_a = a_idx;     // old_end
+                    segment.start_b = start_b; // new_start
+                    segment.end_b = b_idx;     // new_end
 
                     if (is_character_mode)
                     {
@@ -470,10 +470,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
                 {
                     MSMDiffSegment segment;
                     segment.type = EQUAL;
-                    segment.start_a = start_a;
-                    segment.end_a = a_idx;
-                    segment.start_b = start_b;
-                    segment.end_b = b_idx;
+                    segment.start_a = start_a; // old_start
+                    segment.end_a = a_idx;     // old_end
+                    segment.start_b = start_b; // new_start
+                    segment.end_b = b_idx;     // new_end
 
                     if (is_character_mode)
                     {
@@ -512,10 +512,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
 
         if (current_type == EQUAL)
         {
-            segment.start_a = start_a;
-            segment.end_a = a_idx;
-            segment.start_b = start_b;
-            segment.end_b = b_idx;
+            segment.start_a = start_a; // old_start
+            segment.end_a = a_idx;     // old_end
+            segment.start_b = start_b; // new_start
+            segment.end_b = b_idx;     // new_end
 
             if (is_character_mode)
             {
@@ -530,10 +530,11 @@ static MSMDiffResult *msm_proc_raw_diffs(
         }
         else if (current_type == INSERT)
         {
-            segment.start_a = start_b;
-            segment.end_a = start_b;
-            segment.start_b = start_b;
-            segment.end_b = b_idx;
+            segment.start_a = start_a; // old_start
+            segment.end_a = start_a;   // old_end (no deletion in old)
+            segment.start_b = start_b; // new_start
+            segment.end_b = b_idx;     // new_end
+
             segment.value_a = NULL;
 
             if (is_character_mode)
@@ -547,10 +548,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
         }
         else if (current_type == DELETE)
         {
-            segment.start_a = start_a;
-            segment.end_a = a_idx;
-            segment.start_b = start_a;
-            segment.end_b = start_a;
+            segment.start_a = start_a; // old_start
+            segment.end_a = a_idx;     // old_end
+            segment.start_b = start_b; // new_start
+            segment.end_b = start_b;   // new_end (no insertion in new)
 
             if (is_character_mode)
             {
@@ -565,10 +566,10 @@ static MSMDiffResult *msm_proc_raw_diffs(
         }
         else if (current_type == REPLACE)
         {
-            segment.start_a = start_a;
-            segment.end_a = a_idx;
-            segment.start_b = start_b;
-            segment.end_b = b_idx;
+            segment.start_a = start_a; // old_start
+            segment.end_a = a_idx;     // old_end
+            segment.start_b = start_b; // new_start
+            segment.end_b = b_idx;     // new_end
 
             if (is_character_mode)
             {
