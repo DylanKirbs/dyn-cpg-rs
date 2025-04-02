@@ -203,6 +203,7 @@ int main()
                    segment.start_b,
                    segment.end_b);
 
+            // This only works because the files are UTF-8 encoded
             TSInputEdit edit = {
                 .start_byte = segment.start_a,
                 .old_end_byte = segment.end_a,

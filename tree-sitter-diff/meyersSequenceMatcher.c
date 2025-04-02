@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #include "meyersSequenceMatcher.h"
 
@@ -295,18 +296,49 @@ static msm_RawDiff *msm_diff_generic(
     return raw_diffs;
 }
 
-// Comparison function for characters
-static bool compare_chars(const void *a_data, const void *b_data, int idx_a, int idx_b)
+/**
+ * Compare a char sequence in a string.
+ * This function is used to compare characters in the Myers diff algorithm.
+ *
+ * If the previous and next characters are different, it returns false.
+ * Otherwise it returns the result of the comparison between the two characters.
+ *
+ * @param a_data The data to compare
+ * @param b_data The data to compare
+ * @param idx_a The index of the character in a_data
+ * @param idx_b The index of the character in b_data
+ * @return true if the characters (before, current and after) are equal, false otherwise
+ */
+static bool compare_char_seq(const void *a_data, const void *b_data, int idx_a, int idx_b)
 {
     const char *a_str = (const char *)a_data;
     const char *b_str = (const char *)b_data;
+
+    // Check the char before and after if they exist (aims to keep things together)
+    if (idx_a > 0 && idx_b > 0)
+    {
+        char prev_a = a_str[idx_a - 1];
+        char prev_b = b_str[idx_b - 1];
+
+        if (prev_a != prev_b)
+            return false;
+    }
+    if (idx_a < strlen(a_str) - 1 && idx_b < strlen(b_str) - 1)
+    {
+        char next_a = a_str[idx_a + 1];
+        char next_b = b_str[idx_b + 1];
+
+        if (next_a != next_b)
+            return false;
+    }
+
     return a_str[idx_a] == b_str[idx_b];
 }
 
 // Core Myers diff algorithm for characters in strings
 msm_RawDiff *msm_diff_chars(const char *a_str, int a_len, const char *b_str, int b_len, int *diff_count)
 {
-    return msm_diff_generic(a_str, a_len, b_str, b_len, diff_count, compare_chars);
+    return msm_diff_generic(a_str, a_len, b_str, b_len, diff_count, compare_char_seq);
 }
 
 // Process raw diffs into higher-level diff segments
