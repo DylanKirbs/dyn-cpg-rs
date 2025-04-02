@@ -314,6 +314,7 @@ static bool compare_char_seq(const void *a_data, const void *b_data, int idx_a, 
     const char *a_str = (const char *)a_data;
     const char *b_str = (const char *)b_data;
 
+    // TODO: work up to isspace delimiters on each end
     // Check the char before and after if they exist (aims to keep things together)
     if (idx_a > 0 && idx_b > 0)
     {
