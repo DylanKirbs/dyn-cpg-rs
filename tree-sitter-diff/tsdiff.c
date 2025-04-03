@@ -186,6 +186,23 @@ bool parse_and_update(const char *old_source,
 	return true;
 }
 
+bool cmp_expected_output(TSRange *ranges,
+                         size_t range_count,
+                         const char *exp_out)
+{
+
+	for (size_t i = 0; i < range_count; i++) {
+		printf("{%d,%d,(%d,%d),(%d,%d)}\n", ranges[i].start_byte,
+		       ranges[i].end_byte, ranges[i].start_point.row,
+		       ranges[i].start_point.column, ranges[i].end_point.row,
+		       ranges[i].end_point.column);
+	}
+
+  // TODO make this do it's job
+
+	return true;
+}
+
 int main()
 {
 
@@ -224,8 +241,10 @@ int main()
 			TSRange *ranges =
 			    ts_tree_get_changed_ranges(old_tree, new_tree, &range_count);
 
-			print_changed_ranges(ranges, range_count,
-			                     test_case->modified_source);
+			if (!cmp_expected_output(ranges, range_count,
+			                         test_case->expected_output)) {
+				printf("FAIL: Output Mismatch\n");
+			}
 
 			// Free resources
 			free(ranges);
