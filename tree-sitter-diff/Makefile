@@ -1,6 +1,6 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra
+CFLAGS = -Wall -Wextra -g
 INCLUDES = -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 LIBS = -ltree-sitter -ltree-sitter-c
@@ -9,7 +9,8 @@ LIBS = -ltree-sitter -ltree-sitter-c
 TARGET = tsdiff
 
 # Source files
-SOURCES = tsdiff.c meyersSequenceMatcher.c
+SOURCES = \
+	$(wildcard *.c)
 
 # Object files
 OBJECTS = $(SOURCES:.c=.o)

@@ -1,0 +1,85 @@
+# Clang-Format Configuration
+# Author: Luke Leppan - 25849611
+# Editor: Dylan Kirby - 25853805
+# Clang-Format Version: 16.0.6
+---
+Language: Cpp
+Standard: Auto
+
+# ------------ PERSONAL PREFERANCE ------------ #
+IndentCaseLabels: true
+AlignArrayOfStructures: Left
+MaxEmptyLinesToKeep: 1
+
+# Includes
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+
+# ------------- REQUIRED SETTINGS ------------- #
+
+# Indentation and Spacing
+TabWidth: 4
+IndentWidth: 4
+UseTab: ForIndentation
+LineEnding: LF
+
+# Line management
+ColumnLimit: 80
+
+# General Alignment
+PointerAlignment: Right
+ReferenceAlignment: Right
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false # Visual appeal
+# Macros
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: false
+# Long statements
+AlignOperands: AlignAfterOperator
+# Comments
+AlignTrailingComments:
+  Kind: Always
+ReflowComments: true
+
+# Parameters and Block Styling
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse # Prevent reformatting of else switch
+AllowShortLoopsOnASingleLine: false
+BinPackParameters: false
+
+# Brace and Ternary Styling
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+BreakBeforeBraces: Custom
+BreakBeforeTernaryOperators: true
+
+# Misc
+DerivePointerBinding: false
+
+# Spacing
+SpaceAfterCStyleCast: true
+SpaceAfterLogicalNot: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCaseColon: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: Never
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpacesInContainerLiterals: false
+...
