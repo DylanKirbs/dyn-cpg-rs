@@ -301,12 +301,15 @@ int main()
 	for (i = 0; i < suites.count; i++) {
 
 		suite = &suites.suites[i];
-		printf("Test Suite %lu:\n", i + 1);
+		printf("\n[%lu] Test Suite " H_BLUE("'%s'") "\n", i + 1, suite->name);
 
 		for (j = 0; j < suite->count; j++) {
 
 			test_case = &suite->cases[j];
-			if (strcmp(test_case->language, "c") != 0) continue;
+			if (strcmp(test_case->language, "c") != 0) {
+        printf(H_RED("CURRENTLY ONLY THE 'C' LANGUAGE IS SUPPORTED. SKIPPING.") "\n");
+        continue;
+      }
 
 			/* Print case */
 			printf("Testing case: " H_BLUE("%s") "\n", test_case->name);

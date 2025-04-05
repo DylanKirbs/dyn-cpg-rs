@@ -189,16 +189,17 @@ static char *parse_source_block(char **source)
 /**
  * Parse a single test file into a TestSuite.
  */
-static TestSuite parse_test_file(const char *filepath)
+static TestSuite parse_test_file(const char *filepath, char *name)
 {
 	/* Tests */
 	size_t current_test = 0, test_count = 0;
-	TestSuite suite = {NULL, 0};
+	TestSuite suite = {NULL, NULL, 0};
 	/* Content */
 	char *current_pos, *line, *content = read_file(filepath);
 	if (!content) {
 		return suite;
 	}
+	suite.name = strdup(name);
 
 	/* Count test cases and allocate memory */
 	current_pos = content;
@@ -306,7 +307,7 @@ TestSuites load_test_suites(const char *directory)
 				snprintf(filepath, PATH_MAX, "%s/%s", directory, entry->d_name);
 
 				/* Parse the test file */
-				suite = parse_test_file(filepath);
+				suite = parse_test_file(filepath, entry->d_name);
 				if (suite.cases && suite.count > 0) {
 					suites.suites[suite_index] = suite;
 					suite_index++;
@@ -341,6 +342,7 @@ void free_test_suites(TestSuites *suites)
 	for (i = 0; i < suites->count; i++) {
 		suite = &suites->suites[i];
 
+		if (suite->name) free(suite->name);
 		for (j = 0; j < suite->count; j++) {
 			test_case = &suite->cases[j];
 			free(test_case->name);

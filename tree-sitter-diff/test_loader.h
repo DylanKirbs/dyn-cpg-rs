@@ -20,6 +20,7 @@ typedef struct
  */
 typedef struct
 {
+    char *name;
     TestCase *cases;
     size_t count;
 } TestSuite;
