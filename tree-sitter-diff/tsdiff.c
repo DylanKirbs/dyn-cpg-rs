@@ -16,6 +16,7 @@
 #define ANSI_MAGENTA "\x1b[35m"
 #define ANSI_CYAN    "\x1b[36m"
 #define ANSI_RESET   "\x1b[0m"
+#define ANSI_C_LEFT  "\x1b[1K\x1b[0G"
 
 /* Highlighters */
 #define H_RED(s)   ANSI_RED s ANSI_RESET
@@ -307,18 +308,19 @@ int main()
 
 			test_case = &suite->cases[j];
 			if (strcmp(test_case->language, "c") != 0) {
-        printf(H_RED("CURRENTLY ONLY THE 'C' LANGUAGE IS SUPPORTED. SKIPPING.") "\n");
-        continue;
-      }
+				printf(H_RED("CURRENTLY ONLY THE 'C' LANGUAGE IS SUPPORTED. "
+				             "SKIPPING.") "\n");
+				continue;
+			}
 
 			/* Print case */
-			printf("Testing case: " H_BLUE("%s") "\n", test_case->name);
+			printf("TEST: " H_BLUE("%s") " - ", test_case->name);
 
 			parse_result = parse_and_update(test_case->original_source,
 			                                test_case->modified_source, parser,
 			                                &old_tree, &new_tree);
 			if (!parse_result) {
-				printf("FAILED TO PROCESS TREES\n");
+				printf(H_RED("FAILED TO PROCESS TREES") "\n");
 				continue;
 			}
 
@@ -328,9 +330,12 @@ int main()
 
 			if (!cmp_expected_output(ranges, range_count,
 			                         test_case->expected_output)) {
-				printf(H_RED("FAIL") ": Output Mismatch\n");
+				printf(ANSI_C_LEFT H_RED("FAIL") ": " H_BLUE("%s") "\n",
+				       test_case->name);
+			} else {
+				printf(ANSI_C_LEFT H_GREEN("PASS") ": " H_BLUE("%s") "\n",
+				       test_case->name);
 			}
-			printf(H_GREEN("PASS") "\n");
 
 			/* Free resources */
 			free(ranges);
