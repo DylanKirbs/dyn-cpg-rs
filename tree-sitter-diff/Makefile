@@ -2,7 +2,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra
 CFLAGS += -ansi -pedantic -D_DEFAULT_SOURCE # enforce ansi c standards (allowing some stuff ;)
-CLFAGS += -g # debug
+CFLAGS += -g # debug
 INCLUDES = -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 LIBS = -ltree-sitter -ltree-sitter-c
