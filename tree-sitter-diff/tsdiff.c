@@ -181,8 +181,9 @@ bool parse_and_update(const char *old_source,
 	/* Textual Diff to update tree */
 	result = msm_diff(old_source, new_source);
 	if (!result) { /* No updates */
-		*new_tree = *old_tree;
-		return true;
+		*new_tree = ts_parser_parse_string(parser, NULL, new_source,
+		                                   strlen(new_source));
+		return *new_tree != NULL;
 	}
 
 	for (i = 0; i < result->count; i++) {
