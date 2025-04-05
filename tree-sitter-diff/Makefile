@@ -36,5 +36,8 @@ clean:
 run: $(TARGET)
 	./$(TARGET)
 
+fmt:
+	clang-format -i $(SOURCES)
+
 # Phony targets
 .PHONY: all clean run

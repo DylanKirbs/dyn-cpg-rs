@@ -214,16 +214,31 @@ bool cmp_expected_output(TSRange *ranges,
 		if (*p == '\n') p++;
 
 		/* Parse the line */
+		r = ranges[i];
 		if (sscanf(line, "{%u,%u,(%u,%u),(%u,%u)}", &start_byte, &end_byte,
 		           &srow, &scol, &erow, &ecol) != 6) {
-			return false;
+
+			/* Check if there is a wildcard "-" */
+			if (sscanf(line, "{%u,%u,(%u,%u),(%u,-)}", &start_byte, &end_byte,
+			           &srow, &scol, &erow) != 5) {
+
+				printf("EXPECTED: {%u,%u,(%u,%u),(%u,%u)}, FOUND: %s\n",
+				       r.start_byte, r.end_byte, r.start_point.row,
+				       r.start_point.column, r.end_point.row,
+				       r.end_point.column, line);
+				return false;
+			}
+			ecol = r.end_point.column;
 		}
 
 		/* Compare to the corresponding TSRange */
-		r = ranges[i];
 		if (r.start_byte != start_byte || r.end_byte != end_byte ||
 		    r.start_point.row != srow || r.start_point.column != scol ||
 		    r.end_point.row != erow || r.end_point.column != ecol) {
+			printf("EXPECTED: {%u,%u,(%u,%u),(%u,%u)}, FOUND: %s\n",
+			       r.start_byte, r.end_byte, r.start_point.row,
+			       r.start_point.column, r.end_point.row, r.end_point.column,
+			       line);
 			return false;
 		}
 
@@ -231,8 +246,14 @@ bool cmp_expected_output(TSRange *ranges,
 	}
 
 	/* Extra ranges or lines? */
-	if (i != range_count) return false;
-	if (*p != '\0') return false;
+	if (i != range_count) {
+		printf("MORE RANGES THAN EXPECTED\n");
+		return false;
+	}
+	if (*p != '\0') {
+		printf("LESS RANGES THAN EXPECTED\n");
+		return false;
+	}
 
 	return true;
 }
