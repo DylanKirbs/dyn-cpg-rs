@@ -8,6 +8,20 @@
 #include <tree_sitter/api.h>
 #include <tree_sitter/tree-sitter-c.h>
 
+/* Colours */
+#define ANSI_RED     "\x1b[31m"
+#define ANSI_GREEN   "\x1b[32m"
+#define ANSI_YELLOW  "\x1b[33m"
+#define ANSI_BLUE    "\x1b[34m"
+#define ANSI_MAGENTA "\x1b[35m"
+#define ANSI_CYAN    "\x1b[36m"
+#define ANSI_RESET   "\x1b[0m"
+
+/* Highlighters */
+#define H_RED(s)   ANSI_RED s ANSI_RESET
+#define H_GREEN(s) ANSI_GREEN s ANSI_RESET
+#define H_BLUE(s)  ANSI_BLUE s ANSI_RESET
+
 void print_changed_ranges(TSRange *ranges, unsigned int count, char *source)
 {
 
@@ -295,7 +309,7 @@ int main()
 			if (strcmp(test_case->language, "c") != 0) continue;
 
 			/* Print case */
-			printf("Testing case: %s\n", test_case->name);
+			printf("Testing case: " H_BLUE("%s") "\n", test_case->name);
 
 			parse_result = parse_and_update(test_case->original_source,
 			                                test_case->modified_source, parser,
@@ -311,9 +325,9 @@ int main()
 
 			if (!cmp_expected_output(ranges, range_count,
 			                         test_case->expected_output)) {
-				printf("FAIL: Output Mismatch\n");
+				printf(H_RED("FAIL") ": Output Mismatch\n");
 			}
-			printf("PASS\n");
+			printf(H_GREEN("PASS") "\n");
 
 			/* Free resources */
 			free(ranges);
