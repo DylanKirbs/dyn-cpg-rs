@@ -44,4 +44,4 @@ TestSuites load_test_suites(const char *directory);
  */
 void free_test_suites(TestSuites *suites);
 
-#endif // TEST_LOADER_H
+#endif /* TEST_LOADER_H */
