@@ -143,7 +143,11 @@ bool parse_and_update(const char *old_source,
                       TSTree **old_tree,
                       TSTree **new_tree)
 {
-	TSInputEdit edit;
+	TSInputEdit edit = {
+	    0, 0, 0, {0, 0},
+           {0, 0},
+           {0, 0}
+    };
 	MSMDiffResult *result;
 	MSMDiffSegment segment;
 	int i;
@@ -247,11 +251,11 @@ bool cmp_expected_output(TSRange *ranges,
 
 	/* Extra ranges or lines? */
 	if (i != range_count) {
-		printf("MORE RANGES THAN EXPECTED\n");
+		printf("TREE SITTER RETURNED MORE RANGES THAN EXPECTED\n");
 		return false;
 	}
 	if (*p != '\0') {
-		printf("LESS RANGES THAN EXPECTED\n");
+		printf("TREE SITTER RETURNED LESS RANGES THAN EXPECTED\n");
 		return false;
 	}
 
@@ -319,6 +323,7 @@ int main()
 	}
 
 	ts_parser_delete(parser);
+	free_test_suites(&suites);
 
 	return 0;
 }
