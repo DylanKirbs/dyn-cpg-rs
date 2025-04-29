@@ -121,6 +121,11 @@ class BatchVertexCentricSolver(Generic[V, M, E]):
             # Check for convergence
             if self.convergence_func:
                 converged = self.convergence_func(vertex_states, new_vertex_states)
+            else:
+                # Default convergence check: if states are unchanged
+                converged = all(
+                    vertex_states[v] == new_vertex_states[v] for v in vertex_states
+                )
 
             # Update states for next iteration
             vertex_states = new_vertex_states
@@ -299,11 +304,83 @@ def connected_components_example():
         print(f"Component {i+1}: {nodes} (ID: {component})")
 
 
+# Example: Simplify AST
+def simplify_ast_example():
+
+    G = nx.DiGraph()
+    G.add_edges_from(
+        [
+            ("module", "function_definition"),
+            ("function_definition", "assignment_statement"),
+            ("function_definition", "if_statement"),
+            ("function_definition", "return_statement"),
+            ("assignment_statement", "variable"),
+            ("assignment_statement", "expression"),
+            ("if_statement", "condition"),
+            ("if_statement", "block"),
+            ("return_statement", "expression"),
+            ("block", "statement"),
+            ("statement", "expression"),
+        ]
+    )
+
+    def init_ast(graph):
+        return {node: {"id": node, "type": node} for node in graph.nodes()}
+
+    def aggregate_ast(messages):
+        return None
+
+    def update_ast(vertex_state, aggregated_msg):
+        if vertex_state.get("simplified"):
+            return vertex_state
+        new_state = vertex_state.copy()
+
+        type_map = {
+            "module": "module",
+            "function_definition": "statement",
+            "assignment_statement": "statement",
+            "if_statement": "predicate",
+            "return_statement": "statement",
+            "condition": "predicate",
+            "block": "statement",
+            "statement": "statement",
+            "variable": "expression",
+            "expression": "expression",
+        }
+
+        new_state["type"] = type_map.get(vertex_state["type"], vertex_state["type"])
+        new_state["code"] = vertex_state["type"]
+        new_state["simplified"] = True
+        return new_state
+
+    def propagate_ast(graph, vertex_state, aggregated_msg, edge_prop):
+        return []
+
+    solver = BatchVertexCentricSolver(
+        graph=G,
+        init_func=init_ast,
+        aggregate_func=aggregate_ast,
+        update_func=update_ast,
+        propagate_func=propagate_ast,
+        max_iterations=10,
+        convergence_func=None,
+        debug=True,
+    )
+    final_states = solver.run()
+
+    print("\nSimplified AST:")
+    for node, state in sorted(final_states.items()):
+        print(f"Node {node}: {state['type']} - {state['code']}")
+
+
 if __name__ == "__main__":
-    print("Running PageRank example:")
-    pagerank_example()
+    # print("Running PageRank example:")
+    # pagerank_example()
 
-    print("\n" + "=" * 50 + "\n")
+    # print("\n" + "=" * 50 + "\n")
 
-    print("Running Connected Components example:")
-    connected_components_example()
+    # print("Running Connected Components example:")
+    # connected_components_example()
+
+    print("Running AST Simplification example:")
+    simplify_ast_example()
