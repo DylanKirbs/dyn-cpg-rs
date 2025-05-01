@@ -49,7 +49,7 @@ class ASTControlFlowGraph:
         node_counter = [0]  # Use list to allow modification in inner function
         node_to_id = {}
 
-        def add_node(node):
+        def add_node(node, order):
             node_id = node_counter[0]
             node_counter[0] += 1
             node_to_id[node] = node_id
@@ -58,6 +58,7 @@ class ASTControlFlowGraph:
             graph.add_node(
                 node_id,
                 data={
+                    "order": order,
                     "ast_node": node,
                     "type": type(node).__name__,
                     "lineno": getattr(node, "lineno", -1),
@@ -69,31 +70,30 @@ class ASTControlFlowGraph:
             return node_id
 
         # Walk the AST and create nodes and edges
-        def build_graph(node, parent_id=None):
+        def build_graph(node, order, parent_id=None):
             if node is None:
                 return None
 
-            node_id = add_node(node)
+            node_id = add_node(node, order)
 
             # If this node has a parent, add edge from parent to this node
             if parent_id is not None:
                 graph.add_edge(parent_id, node_id, type="ast")
 
             # Process child nodes based on node type
-            for field, value in ast.iter_fields(node):
+            for field_index, (_, value) in enumerate(ast.iter_fields(node)):
                 if isinstance(value, list):
-                    # Fields like body, orelse, etc.
-                    for item in value:
+                    # List types like body, orelse, etc.
+                    for item_index, item in enumerate(value):
                         if isinstance(item, ast.AST):
-                            build_graph(item, node_id)
+                            build_graph(item, field_index, node_id)
                 elif isinstance(value, ast.AST):
-                    # Single child node
-                    build_graph(value, node_id)
+                    build_graph(value, field_index, node_id)
 
             return node_id
 
         # Start building graph from the root
-        build_graph(self.ast_tree)
+        build_graph(self.ast_tree, 0)
         return graph
 
     def build_control_flow_graph(self):
@@ -131,7 +131,7 @@ class ASTControlFlowGraph:
             # Handle special node types that affect control flow
             if isinstance(ast_node, (ast.Return, ast.Break, ast.Continue)):
                 node_data["next_nodes"] = set()
-            else:
+            elif isinstance(ast_node, tuple(self.control_flow_nodes)):
                 for succ in aggregated_msg:
                     if (
                         not graph.has_edge(node_id, succ)
@@ -158,15 +158,15 @@ class ASTControlFlowGraph:
                     children.append(child_id)
 
             # Find first executable child (if any)
-            first_child = None
-            for child in sorted(children):
-                child_type = graph.nodes[child]["data"]["type"]
-                if child_type not in ("Load", "Store"):  # Skip non-executable nodes
-                    first_child = child
+            first_child_id = None
+            for child_id in sorted(children):
+                child_type = graph.nodes[child_id]["data"]["type"]
+                if child_type not in ("Load", "Store") and child_id != node_id:
+                    first_child_id = child_id
                     break
 
             # Default: the next node is the first child, if any
-            next_nodes = {first_child} if first_child else set()
+            next_nodes = {first_child_id} if first_child_id else set()
 
             # Special handling based on node type
             if isinstance(ast_node, ast.If):
@@ -179,13 +179,13 @@ class ASTControlFlowGraph:
                         field = getattr(ast_node, field_name)
                         if field and isinstance(field, list):
                             # Find the first node in this branch
-                            for child in children:
-                                child_node = graph.nodes[child]["data"]["ast_node"]
+                            for child_id in children:
+                                child_node = graph.nodes[child_id]["data"]["ast_node"]
                                 if child_node in field:
                                     if idx == 0:  # body
-                                        body_nodes.append(child)
+                                        body_nodes.append(child_id)
                                     else:  # orelse
-                                        else_nodes.append(child)
+                                        else_nodes.append(child_id)
 
                 # First node in each branch is a successor
                 if body_nodes:
@@ -201,10 +201,10 @@ class ASTControlFlowGraph:
                 body_nodes = []
 
                 if hasattr(ast_node, "body"):
-                    for child in children:
-                        child_node = graph.nodes[child]["data"]["ast_node"]
+                    for child_id in children:
+                        child_node = graph.nodes[child_id]["data"]["ast_node"]
                         if child_node in ast_node.body:
-                            body_nodes.append(child)
+                            body_nodes.append(child_id)
 
                 # First node in body is a successor
                 if body_nodes:
@@ -252,9 +252,9 @@ class ASTControlFlowGraph:
                         )
 
                         # Find the node after the loop
-                        for i, child in enumerate(children_of_grandparent):
+                        for i, child_id in enumerate(children_of_grandparent):
                             if (
-                                child == loop_parent
+                                child_id == loop_parent
                                 and i < len(children_of_grandparent) - 1
                             ):
                                 next_nodes.add(children_of_grandparent[i + 1])
@@ -376,6 +376,8 @@ class ASTControlFlowGraph:
                     node_label = f"{type(ast_node).__name__} (line {ast_node.lineno})"
                 else:
                     node_label = type(ast_node).__name__
+
+                node_label += f" [{node_data['order']}] "
 
                 # Add more details for specific node types
                 if isinstance(ast_node, ast.Name):
