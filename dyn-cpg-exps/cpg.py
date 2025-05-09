@@ -17,7 +17,7 @@ Facilities are provided to serialise the CPG to a graph database, such as Neo4j,
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
 from enum import Enum, auto
 import logging
 
@@ -80,6 +80,16 @@ class NodePropertyKey(Enum):
     FILE = "file"
     """The file in which the node is defined (for a translation unit)"""
 
+    START_BYTE = "start_byte"
+    """The start byte offset of the node in the source code"""
+
+    END_BYTE = "end_byte"
+    """The end byte offset of the node in the source code"""
+
+    ORDER = "order"
+    """The order of the node among its siblings"""
+    """The code associated with the node (e.g. the source code)"""
+
     CODE = "code"
     """The code associated with the node (e.g. the source code)"""
 
@@ -116,72 +126,59 @@ class CPGNode:
     kind: NodeKind
     """The type of the node"""
 
-    start_byte: int
-    """The start byte of the node in the source code"""
-
-    end_byte: int
-    """The end byte of the node in the source code"""
-
-    order: int
-    """The order of this node in the parent node's children, if any"""
-
-    parent: Optional["CPGNode"] = None
-    """The parent node of this node, if any"""
-
-    children: List["CPGNode"] = field(default_factory=list)
-    """The children of this node, if any"""
-
     properties: Dict[NodePropertyKey, PropertyValue] = field(default_factory=dict)
     """The properties of this node, if any"""
 
-    in_edges: List["CPGEdge"] = field(default_factory=list)
-    """The incoming edges of this node, if any"""
+    listeners: Dict[
+        NodePropertyKey, List[Callable[["CPGNode", PropertyValue], None]]
+    ] = field(default_factory=dict)
+    """The listeners for this node, if any. In the format {property: [listeners]}, where listener gets called with the node and the old value of the property"""
 
-    out_edges: List["CPGEdge"] = field(default_factory=list)
-    """The outgoing edges of this node, if any"""
-
-    def insert(self, *args, **kwargs):
+    @property
+    def id(self) -> int:
         """
-        Insert a new node into the CPG.
+        The unique identifier of the node.
 
-        Handles the creation of the new node and performs the relevant steps to update the CPG.
-        This includes updating the parent node's children, and linking the new node to its parent.
-        As well as updating the CF and DF edges to and from this node.
+        Returns:
+            int: The unique identifier of the node.
         """
+        return id(self)
 
-        logging.debug("Inserting node: %s", self)
-
-        # TODO: Implement the logic for inserting this node
-        logging.error("Node insertion not implemented")
-
-    def update(self, *args, **kwargs):
+    def update(self, mode: Literal["insert", "addChild", "delete"], **kwargs) -> None:
         """
-        Update node event.
+        Update the node in the CPG.
 
         Handles the update of the node and performs the relevant steps to update the CPG.
+        This includes updating the node's properties, and re-linking all edges to and from this node.
+        And notifying subscribers of the update.
         """
 
-        logging.debug("Updating node: %s", self)
+        logging.debug("Updating node: %s [%s]", self, mode)
 
-        # TODO: Implement the logic for updating this node
-        logging.error("Node update not implemented")
+        if mode == "insert":
+            # We are inserting the node into the CPG and need to update our parent and siblings
+            parent = kwargs.get("parent")
+            if parent is None:
+                raise ValueError("Parent node is required for insert mode")
 
-    def delete(self, *args, **kwargs) -> None:
-        """
-        Delete node event.
+            # TODO
+            return
 
-        Handles the removal of the node and performs the relevant steps to update the CPG.
-        This includes removing the node from its parent, and re-linking all edges to and from this node.
-        """
+        if mode == "addChild":
+            # We are adding a child node to this node
+            child = kwargs.get("child")
+            if child is None:
+                raise ValueError("Child node is required for addChild mode")
 
-        logging.debug("Deleting node: %s", self)
+            # TODO
+            return
 
-        # TODO: Implement the logic for deleting this node
-        logging.error("Node deletion not implemented")
+        if mode == "delete":
+            # We are deleting the node from the CPG
+            # TODO
 
-        ...
-
-        del self
+            del self
+            return
 
     def to_dot(self, keep_lang_impl=False) -> str:
         """
@@ -192,37 +189,10 @@ class CPGNode:
             str: The DOT format string representing the node.
         """
 
-        if self.kind == NodeKind.LANG_IMPLEMENTATION and not keep_lang_impl:
-            return ""
-
-        dot = f'  {id(self)} [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
+        dot = f'  {self.id} [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
         dot += f"<TR><TD>{self.kind.name}</TD></TR>"
-        dot += f"<TR><TD>{self.start_byte}:{self.end_byte}</TD></TR>"
-        dot += f"<TR><TD>{self.order}</TD></TR>"
         dot += f"<TR><TD>{self.properties}</TD></TR>"
         dot += "</TABLE>>]\n"
-
-        dot += "{ rank=same; "
-        for child in self.children:
-            if child.kind == NodeKind.LANG_IMPLEMENTATION and not keep_lang_impl:
-                continue
-            dot += f"{id(child)}; "
-        dot += "}\n"
-        for child in self.children:
-            if child.kind == NodeKind.LANG_IMPLEMENTATION and not keep_lang_impl:
-                continue
-            dot += child.to_dot()
-
-        for edge in self.out_edges:
-            if edge.target.kind == NodeKind.LANG_IMPLEMENTATION and not keep_lang_impl:
-                continue
-            if edge.source.kind == NodeKind.LANG_IMPLEMENTATION and not keep_lang_impl:
-                continue
-
-            el = edge.kind.name
-            if edge.kind == EdgeKind.CONTROL_FLOW:
-                el = f"CF_{edge.properties[EdgePropertyKey.CONTROL_DEPENDENCE]}"
-            dot += f'  {id(self)} -> {id(edge.target)} [label="{el}"]\n'
 
         return dot
 
@@ -245,14 +215,6 @@ class CPGEdge:
     properties: Dict[EdgePropertyKey, PropertyValue] = field(default_factory=dict)
     """The properties of this edge, if any"""
 
-    def update_nodes(self) -> None:
-        """
-        Update the source and target nodes of the edge.
-        This is called when the edge is created or modified.
-        """
-        self.source.out_edges.append(self)
-        self.target.in_edges.append(self)
-
 
 class CPG:
     """
@@ -268,6 +230,8 @@ class CPG:
         """
 
         self.root = ast_root
+        self.nodes: Dict[int, CPGNode] = {ast_root.id: ast_root}
+        self.edges: Dict[Tuple[int, int], CPGEdge] = {}
 
     def to_dot(self) -> str:
         """
@@ -283,10 +247,38 @@ class CPG:
         dot += "  rankdir=LR\n"
         dot += "  ranksep=0.5\n"
         dot += "  nodesep=0.5\n"
-        dot += f"  {self.root.to_dot()}\n"
+
+        for node in self.nodes.values():
+            dot += node.to_dot()
+
+        for edge in self.edges.values():
+            dot += (
+                f'  {edge.source.id} -> {edge.target.id} [label="{edge.kind.name}"]\n'
+            )
+
         dot += "}\n"
 
         return dot
+
+    def addChild(self, parent: CPGNode, child: CPGNode) -> None:
+        """
+        Add a child node to a parent node in the CPG and create a 'syntax' edge between them.
+
+        Args:
+            parent (CPGNode): The parent node.
+            child (CPGNode): The child node to add.
+        """
+
+        if parent.id not in self.nodes:
+            raise ValueError(f"Parent node {parent.id} not found in CPG")
+
+        self.nodes[child.id] = child
+        self.edges[(parent.id, child.id)] = CPGEdge(
+            source=parent, target=child, kind=EdgeKind.SYNTAX
+        )
+
+        parent.update("addChild", child=child)
+        child.update("insert", parent=parent)
 
 
 def main():
@@ -310,9 +302,7 @@ foo(5)
 """
 
     # As the "language frontend" we MUST convert the python AST to a format the CPG can use
-    def convert_ast(
-        node: ast.AST, parent: Optional[CPGNode] = None, order: int = 0
-    ) -> CPGNode:
+    def convert_ast(cpg: CPG, node: ast.AST, parent: CPGNode, order: int = 0):
         """
         Recursively converts a Python AST node into a CPGNode and its children.
 
@@ -371,27 +361,35 @@ foo(5)
             kind = NodeKind.EXPRESSION
 
         # Create the current CPGNode
+        properties.update(
+            {
+                NodePropertyKey.START_BYTE: getattr(node, "lineno", 0),
+                NodePropertyKey.END_BYTE: getattr(
+                    node, "end_lineno", getattr(node, "lineno", 0)
+                ),
+                NodePropertyKey.ORDER: order,
+            }
+        )
         cpg_node = CPGNode(
             kind=kind,
-            start_byte=getattr(node, "lineno", 0),
-            end_byte=getattr(node, "end_lineno", getattr(node, "lineno", 0)),
-            order=order,
-            parent=parent,
             properties=properties,
         )
+        cpg.addChild(parent, cpg_node)
 
         # Recursively process child nodes
         for idx, child in enumerate(ast.iter_child_nodes(node)):
-            child_node = convert_ast(child, parent=cpg_node, order=idx)
-            cpg_node.children.append(child_node)
-            e = CPGEdge(source=cpg_node, target=child_node, kind=EdgeKind.SYNTAX)
-            e.update_nodes()
-
-        return cpg_node
+            convert_ast(cpg, child, parent=cpg_node, order=idx)
 
     # Convert the AST to a CPG
-    cpg_root = convert_ast(ast.parse(sample))
-    cpg = CPG(cpg_root)
+    cpg = CPG(
+        CPGNode(
+            kind=NodeKind.TRANSLATION_UNIT,
+            properties={NodePropertyKey.FILE: "sample.py"},
+        )
+    )
+    module = ast.parse(sample)
+    for idx, node in enumerate(ast.iter_child_nodes(module)):
+        convert_ast(cpg, node, parent=cpg.root, order=idx)
 
     # Print the DOT format of the CPG
     with open("cpg.dot", "w") as f:
