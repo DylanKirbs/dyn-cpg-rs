@@ -147,6 +147,7 @@ class CPGNode:
         """
         return id(self)
 
+    # TODO: determine if it is better to just have a function for each mode instead
     def update(
         self,
         mode: Literal["insert", "addChild", "addEdge", "delete"],
