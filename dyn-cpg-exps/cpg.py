@@ -93,6 +93,9 @@ class NodePropertyKey(Enum):
     CODE = "code"
     """The code associated with the node (e.g. the source code)"""
 
+    PARENT_ID = "parent_id"
+    """The parent node of this node"""
+
     def __repr__(self):
         return f"{self.value}"
 
@@ -144,7 +147,12 @@ class CPGNode:
         """
         return id(self)
 
-    def update(self, mode: Literal["insert", "addChild", "delete"], **kwargs) -> None:
+    def update(
+        self,
+        mode: Literal["insert", "addChild", "addEdge", "delete"],
+        cpg: "CPG",
+        **kwargs,
+    ) -> None:
         """
         Update the node in the CPG.
 
@@ -160,6 +168,24 @@ class CPGNode:
             parent = kwargs.get("parent")
             if parent is None:
                 raise ValueError("Parent node is required for insert mode")
+
+            if self.properties.get(NodePropertyKey.ORDER) is None:
+                raise ValueError("Order property is required for insert mode")
+            order: int = self.properties[NodePropertyKey.ORDER]  # type: ignore
+
+            if order > 0:
+                # TODO: this is a hack and is not really a true representation
+                # We need to find the previous sibling and add an edge to it
+                siblings = [
+                    n
+                    for n in cpg.nodes.values()
+                    if n.properties.get(NodePropertyKey.ORDER) == order - 1
+                    and n.properties.get(NodePropertyKey.PARENT_ID) == parent.id
+                ]
+                if not siblings:
+                    raise ValueError("No previous sibling found")
+                prev_sibling = siblings[0]
+                cpg.addEdge(prev_sibling, self, EdgeKind.CONTROL_FLOW)
 
             # TODO
             return
@@ -180,7 +206,7 @@ class CPGNode:
             del self
             return
 
-    def to_dot(self, keep_lang_impl=False) -> str:
+    def to_dot(self) -> str:
         """
         Convert the node to a DOT format string.
         This can be used to visualise the node using Graphviz.
@@ -215,6 +241,24 @@ class CPGEdge:
     properties: Dict[EdgePropertyKey, PropertyValue] = field(default_factory=dict)
     """The properties of this edge, if any"""
 
+    def to_dot(self) -> str:
+        """
+        Convert the edge to a DOT format string.
+        This can be used to visualise the edge using Graphviz.
+
+        Returns:
+            str: The DOT format string representing the edge.
+        """
+
+        col = "black"
+        if self.kind == EdgeKind.CONTROL_FLOW:
+            col = "blue"
+        elif self.kind == EdgeKind.PROGRAM_DEPENDENCE:
+            col = "red"
+
+        dot = f'  {self.source.id} -> {self.target.id} [label="{self.kind.name}", color={col}]\n'
+        return dot
+
 
 class CPG:
     """
@@ -231,7 +275,7 @@ class CPG:
 
         self.root = ast_root
         self.nodes: Dict[int, CPGNode] = {ast_root.id: ast_root}
-        self.edges: Dict[Tuple[int, int], CPGEdge] = {}
+        self.edges: Dict[Tuple[int, int], List[CPGEdge]] = {}
 
     def to_dot(self) -> str:
         """
@@ -244,21 +288,40 @@ class CPG:
         dot = "digraph G {\n"
         dot += "  node [shape=rectangle]\n"
         dot += "  edge [arrowhead=vee]\n"
-        dot += "  rankdir=LR\n"
+        dot += "  rankdir=TB\n"
         dot += "  ranksep=0.5\n"
         dot += "  nodesep=0.5\n"
 
-        for node in self.nodes.values():
-            dot += node.to_dot()
+        for n in self.nodes.values():
+            dot += n.to_dot()
 
-        for edge in self.edges.values():
-            dot += (
-                f'  {edge.source.id} -> {edge.target.id} [label="{edge.kind.name}"]\n'
-            )
+        for es in self.edges.values():
+            for e in es:
+                dot += e.to_dot()
 
         dot += "}\n"
 
         return dot
+
+    def _ins_edge(self, e: CPGEdge) -> None:
+        k = (e.source.id, e.target.id)
+        if k not in self.edges:
+            self.edges[k] = []
+        if e not in self.edges[k]:
+            self.edges[k].append(e)
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the CPG.
+        This includes the number of nodes and edges in the CPG.
+
+        Returns:
+            str: A string representation of the CPG.
+        """
+
+        num_e = sum(len(es) for es in self.edges.values())
+
+        return f"CPG with {len(self.nodes)} nodes and {num_e} edges"
 
     def addChild(self, parent: CPGNode, child: CPGNode) -> None:
         """
@@ -272,13 +335,33 @@ class CPG:
         if parent.id not in self.nodes:
             raise ValueError(f"Parent node {parent.id} not found in CPG")
 
-        self.nodes[child.id] = child
-        self.edges[(parent.id, child.id)] = CPGEdge(
-            source=parent, target=child, kind=EdgeKind.SYNTAX
-        )
+        child.properties[NodePropertyKey.PARENT_ID] = parent.id
 
-        parent.update("addChild", child=child)
-        child.update("insert", parent=parent)
+        self.nodes[child.id] = child
+        e = CPGEdge(source=parent, target=child, kind=EdgeKind.SYNTAX)
+        self._ins_edge(e)
+
+        parent.update("addChild", self, child=child)
+        child.update("insert", self, parent=parent)
+
+    def addEdge(self, source: CPGNode, target: CPGNode, kind: EdgeKind) -> None:
+        """
+        Add an edge between two nodes in the CPG.
+
+        Args:
+            source (CPGNode): The source node.
+            target (CPGNode): The target node.
+            kind (EdgeKind): The type of the edge.
+        """
+
+        if source.id not in self.nodes or target.id not in self.nodes:
+            raise ValueError("Source or target node not found in CPG")
+
+        e = CPGEdge(source=source, target=target, kind=kind)
+        self._ins_edge(e)
+
+        source.update("addEdge", self, edge=e)
+        target.update("addEdge", self, edge=e)
 
 
 def main():
@@ -390,6 +473,8 @@ foo(5)
     module = ast.parse(sample)
     for idx, node in enumerate(ast.iter_child_nodes(module)):
         convert_ast(cpg, node, parent=cpg.root, order=idx)
+
+    print(cpg)
 
     # Print the DOT format of the CPG
     with open("cpg.dot", "w") as f:
