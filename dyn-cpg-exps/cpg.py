@@ -21,6 +21,21 @@ from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
 from enum import Enum, auto
 import logging
 
+# Helpers
+
+
+def log_nyi(func):
+    """
+    Decorator to log that a function is not yet implemented.
+    """
+
+    def wrapper(*args, **kwargs):
+        logging.critical(f"{func.__name__} NOT YET IMPLEMENTED")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 # Nodes & Edges
 
 
@@ -74,6 +89,9 @@ class NodePropertyKey(Enum):
     Enum for the keys of properties in a node.
     """
 
+    _ALL = "*"
+    """Wildcard for all properties, must not be set, only to be used by listeners"""
+
     TYPE = "type"
     """The data type of the node (e.g. int, float, etc.)"""
 
@@ -116,7 +134,7 @@ class EdgePropertyKey(Enum):
 
 
 PropertyValue = Union[
-    str, int, float, bool, List[str], List[int], List[float], List[bool]
+    str, int, float, bool, List[str], List[int], List[float], List[bool], None
 ]
 
 
@@ -133,9 +151,9 @@ class CPGNode:
     """The properties of this node, if any"""
 
     listeners: Dict[
-        NodePropertyKey, List[Callable[["CPGNode", PropertyValue], None]]
+        NodePropertyKey, Dict[str, Callable[["CPGNode", PropertyValue], None]]
     ] = field(default_factory=dict)
-    """The listeners for this node, if any. In the format {property: [listeners]}, where listener gets called with the node and the old value of the property"""
+    """The listeners for this node, if any. In the format {property: {name:listener}}, where listener gets called with the node and the old value of the property. The name is used to uniquely identify the listener so that it can be managed."""
 
     @property
     def id(self) -> int:
@@ -147,65 +165,207 @@ class CPGNode:
         """
         return id(self)
 
-    # TODO: determine if it is better to just have a function for each mode instead
-    def update(
-        self,
-        mode: Literal["insert", "addChild", "addEdge", "delete"],
-        cpg: "CPG",
-        **kwargs,
+    def children(self, cpg) -> List["CPGNode"]:
+        """
+        Get the children of this node in the CPG.
+
+        Args:
+            cpg (CPG): The CPG to get the children from.
+
+        Returns:
+            List[CPGNode]: The children of this node in the CPG.
+        """
+
+        children = []
+        for s, t in cpg.edges:
+            if s == self.id and any(
+                [e.kind == EdgeKind.SYNTAX for e in cpg.edges[(s, t)]]
+            ):
+                children.append(cpg.nodes[t])
+
+        return children
+
+    def _update_property_and_notify(
+        self, key: NodePropertyKey, value: PropertyValue
     ) -> None:
         """
-        Update the node in the CPG.
+        Update a property of the node and notify the listeners.
 
-        Handles the update of the node and performs the relevant steps to update the CPG.
-        This includes updating the node's properties, and re-linking all edges to and from this node.
-        And notifying subscribers of the update.
+        Args:
+            key (NodePropertyKey): The key of the property to update.
+            value (PropertyValue): The new value of the property.
         """
 
-        logging.debug("Updating node: %s [%s]", self, mode)
+        old_value = self.properties.get(key)
+        self.properties[key] = value
 
-        if mode == "insert":
-            # We are inserting the node into the CPG and need to update our parent and siblings
-            parent = kwargs.get("parent")
-            if parent is None:
-                raise ValueError("Parent node is required for insert mode")
-
-            if self.properties.get(NodePropertyKey.ORDER) is None:
-                raise ValueError("Order property is required for insert mode")
-            order: int = self.properties[NodePropertyKey.ORDER]  # type: ignore
-
-            if order > 0:
-                # TODO: this is a hack and is not really a true representation
-                # We need to find the previous sibling and add an edge to it
-                siblings = [
-                    n
-                    for n in cpg.nodes.values()
-                    if n.properties.get(NodePropertyKey.ORDER) == order - 1
-                    and n.properties.get(NodePropertyKey.PARENT_ID) == parent.id
-                ]
-                if not siblings:
-                    raise ValueError("No previous sibling found")
-                prev_sibling = siblings[0]
-                cpg.addEdge(prev_sibling, self, EdgeKind.CONTROL_FLOW)
-
-            # TODO
+        if old_value == value:
+            # No change, no need to notify
             return
 
-        if mode == "addChild":
-            # We are adding a child node to this node
-            child = kwargs.get("child")
-            if child is None:
-                raise ValueError("Child node is required for addChild mode")
+        with open("cpg.log", "a") as f:
+            f.write(
+                f"Notifying listeners of property {key} change from {old_value} to {value}\n"
+            )
 
-            # TODO
-            return
+        for _, listener in self.listeners.get(key, {}).items():
+            listener(self, old_value)
 
-        if mode == "delete":
-            # We are deleting the node from the CPG
-            # TODO
+        for _, listener in self.listeners.get(NodePropertyKey._ALL, {}).items():
+            listener(self, old_value)
 
-            del self
-            return
+    def _update_or_add_listener(
+        self, key: NodePropertyKey, name: str, listener: Callable
+    ):
+        """
+        Update or add a listener for a property of the node.
+
+        Args:
+            key (NodePropertyKey): The key of the property to listen to.
+            name (str): The name of the listener.
+            listener (Callable): The listener function to call when the property changes.
+        """
+
+        if key not in self.listeners:
+            self.listeners[key] = {}
+
+        self.listeners[key][name] = listener
+
+    @log_nyi
+    def propagate_insert(self, cpg: "CPG", parent: "CPGNode") -> None:
+        """
+        Called after the node is inserted into the CPG.
+
+        Args:
+            cpg (CPG): The CPG node.
+            parent (CPGNode): The parent node.
+        """
+
+        logging.debug("Propagating node insert %s under parent %s", self.id, parent.id)
+
+        if parent.id not in cpg.nodes:
+            raise ValueError(f"Parent node {parent.id} not found in CPG")
+
+        if self.id not in cpg.nodes:
+            raise ValueError(f"Node {self.id} not found in CPG")
+
+        # Subscribe myself to my predecessors order, and my successor to my order
+        siblings = parent.children(cpg)
+        left_sibling = None
+        right_sibling = None
+        for sibling in siblings:
+            if sibling.id == self.id:
+                continue
+
+            if sibling.properties.get(NodePropertyKey.ORDER, 0) == self.properties.get(
+                NodePropertyKey.ORDER, 0
+            ):
+                right_sibling = sibling
+            elif (
+                sibling.properties.get(NodePropertyKey.ORDER, 0)
+                == self.properties.get(NodePropertyKey.ORDER, 0) - 1  # type: ignore
+            ):
+                left_sibling = sibling
+
+        logging.debug(
+            "Reattaching listeners (left: %s, right: %s)",
+            left_sibling,
+            right_sibling,
+        )
+
+        def order_update_builder(subscribed_node: CPGNode):
+            def update_node_order(updated_node, old_order):
+                if updated_node.id == subscribed_node.id:
+                    logging.debug(
+                        "Aborting, node must not be subscribed to itself: %s",
+                        updated_node.id,
+                    )
+                    return
+                delta = (
+                    updated_node.properties.get(NodePropertyKey.ORDER, 0) - old_order
+                )
+                subscribed_node._update_property_and_notify(
+                    NodePropertyKey.ORDER,
+                    subscribed_node.properties.get(NodePropertyKey.ORDER, 0) + delta,
+                )
+
+            return update_node_order
+
+        if right_sibling:
+            # I have replaced this sibling, so it must be shifted
+            logging.debug("Updating right sibling %s", right_sibling)
+            right_sibling._update_property_and_notify(
+                NodePropertyKey.ORDER,
+                right_sibling.properties.get(NodePropertyKey.ORDER, 0) + 1,  # type: ignore
+            )
+            # Subscribe the sibling to my order
+            self._update_or_add_listener(
+                NodePropertyKey.ORDER,
+                "sibling_order",
+                order_update_builder(right_sibling),
+            )
+
+        if left_sibling:
+            # Subscribe myself to the previous sibling's order
+            left_sibling._update_or_add_listener(
+                NodePropertyKey.ORDER, "sibling_order", order_update_builder(self)
+            )
+
+        # TODO: Notify other nodes about the insertion
+        self._update_property_and_notify(NodePropertyKey.PARENT_ID, parent.id)
+        ...
+
+    @log_nyi
+    def propagate_update(
+        self, cpg: "CPG", what: Literal["addChild", "addEdge"], **kwargs
+    ) -> None:
+        """
+        Called when the node is updated in the CPG.
+
+        Args:
+            cpg (CPG): The CPG to update the node in.
+            what (str): The type of update to perform.
+            kwargs: Additional arguments for the update.
+        """
+
+        kwarg_requirements = {
+            "addChild": {"child": CPGNode},
+            "addEdge": {"edge": CPGEdge},
+        }
+
+        logging.debug("Propagating node update %s", self.id)
+
+        if what not in ["addChild", "addEdge"]:
+            raise ValueError(f"Invalid update type: {what}")
+
+        for name, type in kwarg_requirements[what].items():
+            if name not in kwargs:
+                raise ValueError(f"Missing required argument: {name}")
+            if not isinstance(kwargs[name], type):
+                raise ValueError(f"Invalid type for argument {name}: {type}")
+
+        if self.id not in cpg.nodes:
+            raise ValueError(f"Node {self.id} not found in CPG")
+
+        # TODO: Notify other nodes about the update
+        ...
+
+    @log_nyi
+    def propagate_delete(self, cpg: "CPG") -> None:
+        """
+        Called when the node is deleted from the CPG.
+
+        Args:
+            cpg (CPG): The CPG to delete the node from.
+        """
+
+        logging.debug("Propagating node delete %s", self.id)
+
+        if self.id not in cpg.nodes:
+            raise ValueError(f"Node {self.id} not found in CPG")
+
+        # TODO: Notify other nodes about the deletion
+        ...
 
     def to_dot(self) -> str:
         """
@@ -216,11 +376,17 @@ class CPGNode:
             str: The DOT format string representing the node.
         """
 
+        col = "black"
+        bg = "white"
+        if self.kind == NodeKind.TRANSLATION_UNIT:
+            bg = "orange"
+        elif self.kind == NodeKind.LANG_IMPLEMENTATION:
+            col = "grey"
+
         dot = f'  {self.id} [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
         dot += f"<TR><TD>{self.kind.name}</TD></TR>"
         dot += f"<TR><TD>{self.properties}</TD></TR>"
-        dot += "</TABLE>>]\n"
-
+        dot += f"</TABLE>>, color={col}, style=filled, fillcolor={bg}]\n"
         return dot
 
 
@@ -289,7 +455,7 @@ class CPG:
         dot = "digraph G {\n"
         dot += "  node [shape=rectangle]\n"
         dot += "  edge [arrowhead=vee]\n"
-        dot += "  rankdir=TB\n"
+        dot += "  rankdir=LR\n"
         dot += "  ranksep=0.5\n"
         dot += "  nodesep=0.5\n"
 
@@ -299,6 +465,35 @@ class CPG:
         for es in self.edges.values():
             for e in es:
                 dot += e.to_dot()
+
+        # my patent pending rankifyer XD
+        # starting from the root, combine ranks by parent
+        # i.e. root : a, b and a : c and b : d then c and d are in the same rank
+        ranks = {self.root.id: 0}
+        queue = [self.root.id]
+        while queue:
+            node_id = queue.pop(0)
+            for k, v in self.edges.items():
+                if not any(
+                    [e.kind == EdgeKind.SYNTAX for e in v if e.source.id == node_id]
+                ):
+                    continue
+                if k[0] == node_id:
+                    # we have a child, so it's rank is ours + 1
+                    child_id = k[1]
+                    if child_id not in ranks:
+                        ranks[child_id] = ranks[node_id] + 1
+                        queue.append(child_id)
+
+        rev_ranks = {}
+        for k, v in ranks.items():
+            if v not in rev_ranks:
+                rev_ranks[v] = []
+            rev_ranks[v].append(k)
+
+        for same_rank in rev_ranks.values():
+            if len(same_rank) > 1:
+                dot += f"  {{rank=same; {' '.join(map(str, same_rank))}}}\n"
 
         dot += "}\n"
 
@@ -336,14 +531,12 @@ class CPG:
         if parent.id not in self.nodes:
             raise ValueError(f"Parent node {parent.id} not found in CPG")
 
-        child.properties[NodePropertyKey.PARENT_ID] = parent.id
-
         self.nodes[child.id] = child
         e = CPGEdge(source=parent, target=child, kind=EdgeKind.SYNTAX)
         self._ins_edge(e)
 
-        parent.update("addChild", self, child=child)
-        child.update("insert", self, parent=parent)
+        parent.propagate_update(self, "addChild", child=child)
+        child.propagate_insert(self, parent)
 
     def addEdge(self, source: CPGNode, target: CPGNode, kind: EdgeKind) -> None:
         """
@@ -361,123 +554,61 @@ class CPG:
         e = CPGEdge(source=source, target=target, kind=kind)
         self._ins_edge(e)
 
-        source.update("addEdge", self, edge=e)
-        target.update("addEdge", self, edge=e)
+        source.propagate_update(self, "addEdge", edge=e)
+        target.propagate_update(self, "addEdge", edge=e)
 
 
 def main():
+    """
+    Main function to demonstrate the CPG functionality.
+    """
 
-    import ast
-
-    sample = """
-from typing import List
-
-def foo(x: int) -> List[int]:
-    # A very cool function that does math
-    y = x + 1
-    if y > 10:
-        y = 10
-    else:
-        y = 5
-    z = y * 2
-    return [y, z]
-    
-foo(5)
-"""
-
-    # As the "language frontend" we MUST convert the python AST to a format the CPG can use
-    def convert_ast(cpg: CPG, node: ast.AST, parent: CPGNode, order: int = 0):
-        """
-        Recursively converts a Python AST node into a CPGNode and its children.
-
-        Args:
-            node (ast.AST): The Python AST node to convert.
-            parent (Optional[CPGNode]): The parent CPGNode, if any.
-            order (int): The order of the node among its siblings.
-
-        Returns:
-            CPGNode: The root CPGNode of the converted subtree.
-        """
-        kind = NodeKind.LANG_IMPLEMENTATION  # Default kind for generic nodes
-        properties: Dict[NodePropertyKey, PropertyValue] = {
-            NodePropertyKey.TYPE: node.__class__.__name__.lower()
+    dbg_lstn = {
+        NodePropertyKey._ALL: {
+            "debug": lambda curr_node, old_value: logging.debug(
+                "Node %s property changed: %s -> %s",
+                curr_node.id,
+                old_value,
+                curr_node.properties,
+            )
         }
+    }
 
-        if isinstance(node, ast.Module):
-            kind = NodeKind.TRANSLATION_UNIT
-            properties[NodePropertyKey.FILE] = "sample.py"
-            setattr(node, "end_lineno", len(sample.splitlines()))
-        elif isinstance(node, ast.FunctionDef):
-            kind = NodeKind.FUNCTION
-            properties[NodePropertyKey.TYPE] = "function"
-            properties[NodePropertyKey.CODE] = [node.name]
-        elif isinstance(node, (ast.If, ast.For, ast.While)):
-            kind = NodeKind.BLOCK
-        elif isinstance(
-            node,
-            (
-                ast.BinOp,
-                ast.Expr,
-                ast.Expression,
-                ast.Assign,
-                ast.Return,
-                ast.ImportFrom,
-            ),
-        ):
-            kind = NodeKind.STATEMENT
-        elif isinstance(
-            node,
-            (
-                ast.Name,
-                ast.Constant,
-                ast.List,
-                ast.Tuple,
-                ast.Subscript,
-                ast.Attribute,
-                ast.Call,
-                ast.UnaryOp,
-                ast.BinOp,
-                ast.Compare,
-                ast.BoolOp,
-                ast.ListComp,
-            ),
-        ):
-            kind = NodeKind.EXPRESSION
+    # Create a simple CPG
+    root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=dbg_lstn)
+    cpg = CPG(ast_root=root)
 
-        # Create the current CPGNode
-        properties.update(
-            {
-                NodePropertyKey.START_BYTE: getattr(node, "lineno", 0),
-                NodePropertyKey.END_BYTE: getattr(
-                    node, "end_lineno", getattr(node, "lineno", 0)
-                ),
-                NodePropertyKey.ORDER: order,
-            }
-        )
-        cpg_node = CPGNode(
-            kind=kind,
-            properties=properties,
-        )
-        cpg.addChild(parent, cpg_node)
-
-        # Recursively process child nodes
-        for idx, child in enumerate(ast.iter_child_nodes(node)):
-            convert_ast(cpg, child, parent=cpg_node, order=idx)
-
-    # Convert the AST to a CPG
-    cpg = CPG(
-        CPGNode(
-            kind=NodeKind.TRANSLATION_UNIT,
-            properties={NodePropertyKey.FILE: "sample.py"},
-        )
+    # Create some nodes
+    func_node = CPGNode(
+        kind=NodeKind.FUNCTION,
+        properties={NodePropertyKey.ORDER: 0},
+        listeners=dbg_lstn,
     )
-    module = ast.parse(sample)
-    for idx, node in enumerate(ast.iter_child_nodes(module)):
-        convert_ast(cpg, node, parent=cpg.root, order=idx)
+    stmt1_node = CPGNode(
+        kind=NodeKind.STATEMENT,
+        properties={NodePropertyKey.ORDER: 0},
+        listeners=dbg_lstn,
+    )
+    stmt2_node = CPGNode(
+        kind=NodeKind.STATEMENT,
+        properties={NodePropertyKey.ORDER: 1},
+        listeners=dbg_lstn,
+    )
 
-    print(cpg)
+    # Add nodes to the CPG
+    cpg.addChild(root, func_node)
+    cpg.addChild(func_node, stmt1_node)
+    cpg.addChild(func_node, stmt2_node)
 
-    # Print the DOT format of the CPG
+    # Now, the magic! An incremental update to the CPG, add an expression in between the statements
+    expr_node = CPGNode(
+        kind=NodeKind.EXPRESSION,
+        properties={NodePropertyKey.ORDER: 1},
+        listeners=dbg_lstn,
+    )
+    cpg.addChild(func_node, expr_node)
+
+    # Print the CPG in DOT format
     with open("cpg.dot", "w") as f:
         f.write(cpg.to_dot())
 
