@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
 from enum import Enum, auto
 import logging
+from contextlib import contextmanager
 
 # Helpers
 
@@ -155,6 +156,11 @@ class CPGNode:
     ] = field(default_factory=dict)
     """The listeners for this node, if any. In the format {property: {name:listener}}, where listener gets called with the node and the old value of the property. The name is used to uniquely identify the listener so that it can be managed."""
 
+    _listeners_suspended: bool = field(default=False, init=False, repr=False)
+    _pending_notifications: List[Tuple[NodePropertyKey, PropertyValue]] = field(
+        default_factory=list, init=False, repr=False
+    )
+
     @property
     def id(self) -> int:
         """
@@ -185,36 +191,41 @@ class CPGNode:
 
         return children
 
+    @contextmanager
+    def suspend_listeners(self):
+        """
+        Context manager to temporarily suspend all listeners for this node.
+        """
+        self._listeners_suspended = True
+        try:
+            yield
+        finally:
+            self._listeners_suspended = False
+            # Re-fire all listeners for changed keys
+            for key, old_value in self._pending_notifications:
+                for _, listener in self.listeners.get(NodePropertyKey._ALL, {}).items():
+                    listener(self, old_value)
+                for _, listener in self.listeners.get(key, {}).items():
+                    listener(self, old_value)
+            self._pending_notifications.clear()
+
     def _update_property_and_notify(
         self, key: NodePropertyKey, value: PropertyValue
     ) -> None:
-        """
-        Update a property of the node and notify the listeners.
-
-        Args:
-            key (NodePropertyKey): The key of the property to update.
-            value (PropertyValue): The new value of the property.
-        """
-
         old_value = self.properties.get(key)
         self.properties[key] = value
 
-        if old_value == value:
-            # No change, no need to notify
+        if self._listeners_suspended:
+            self._pending_notifications.append((key, old_value))
             return
-
-        with open("cpg.log", "a") as f:
-            f.write(
-                f"Notifying listeners of property {key} change from {old_value} to {value}\n"
-            )
-
-        for _, listener in self.listeners.get(key, {}).items():
-            listener(self, old_value)
 
         for _, listener in self.listeners.get(NodePropertyKey._ALL, {}).items():
             listener(self, old_value)
 
-    def _update_or_add_listener(
+        for _, listener in self.listeners.get(key, {}).items():
+            listener(self, old_value)
+
+    def _add_or_update_listener(
         self, key: NodePropertyKey, name: str, listener: Callable
     ):
         """
@@ -230,6 +241,52 @@ class CPGNode:
             self.listeners[key] = {}
 
         self.listeners[key][name] = listener
+
+    def _remove_listener(self, key: NodePropertyKey, name: str):
+        """
+        Remove a listener for a property of the node.
+
+        Args:
+            key (NodePropertyKey): The key of the property to remove the listener from.
+            name (str): The name of the listener to remove.
+        """
+
+        if key in self.listeners and name in self.listeners[key]:
+            del self.listeners[key][name]
+
+    def subscribe_order_to(self: "CPGNode", left: "CPGNode"):
+        """The right (self) node subscribes to be notified when the left node changes order"""
+
+        right = self
+        if right.id == left.id:
+            logging.warning(
+                "Aborting subscription setup, node must not be subscribed to itself: %s",
+                right.id,
+            )
+            return
+
+        def update_node_order(updated_left, old_left_order):
+            if updated_left.id == right.id:
+                logging.debug(
+                    "Aborting, node order must not be subscribed to itself: %s %s",
+                    updated_left.id,
+                    updated_left.listeners,
+                )
+                return
+            # Update the order of the right node and notify its listeners
+            right._update_property_and_notify(
+                NodePropertyKey.ORDER,
+                right.properties.get(NodePropertyKey.ORDER, 0)
+                + updated_left.properties.get(NodePropertyKey.ORDER, 0)
+                - (old_left_order or 0),
+            )
+
+        left._remove_listener(NodePropertyKey.ORDER, "sibling_order")
+        left._add_or_update_listener(
+            NodePropertyKey.ORDER,
+            "sibling_order",
+            update_node_order,
+        )
 
     @log_nyi
     def propagate_insert(self, cpg: "CPG", parent: "CPGNode") -> None:
@@ -250,70 +307,48 @@ class CPGNode:
             raise ValueError(f"Node {self.id} not found in CPG")
 
         # Subscribe myself to my predecessors order, and my successor to my order
-        siblings = parent.children(cpg)
-        left_sibling = None
-        right_sibling = None
+        siblings = sorted(
+            filter(lambda x: x is not self and x.id != self.id, parent.children(cpg)),
+            key=lambda x: x.properties.get(NodePropertyKey.ORDER, -1),  # type: ignore
+        )
+        left_sibling: Optional["CPGNode"] = None
+        right_sibling: Optional["CPGNode"] = None
         for sibling in siblings:
-            if sibling.id == self.id:
-                continue
 
-            if sibling.properties.get(NodePropertyKey.ORDER, 0) == self.properties.get(
+            if not right_sibling and sibling.properties.get(
                 NodePropertyKey.ORDER, 0
-            ):
+            ) == self.properties.get(NodePropertyKey.ORDER, 0):
                 right_sibling = sibling
             elif (
-                sibling.properties.get(NodePropertyKey.ORDER, 0)
+                not left_sibling
+                and sibling.properties.get(NodePropertyKey.ORDER, 0)
                 == self.properties.get(NodePropertyKey.ORDER, 0) - 1  # type: ignore
             ):
                 left_sibling = sibling
 
-        logging.debug(
-            "Reattaching listeners (left: %s, right: %s)",
-            left_sibling,
-            right_sibling,
-        )
-
-        def order_update_builder(subscribed_node: CPGNode):
-            def update_node_order(updated_node, old_order):
-                if updated_node.id == subscribed_node.id:
-                    logging.debug(
-                        "Aborting, node must not be subscribed to itself: %s",
-                        updated_node.id,
-                    )
-                    return
-                delta = (
-                    updated_node.properties.get(NodePropertyKey.ORDER, 0) - old_order
-                )
-                subscribed_node._update_property_and_notify(
-                    NodePropertyKey.ORDER,
-                    subscribed_node.properties.get(NodePropertyKey.ORDER, 0) + delta,
-                )
-
-            return update_node_order
-
-        if right_sibling:
-            # I have replaced this sibling, so it must be shifted
-            logging.debug("Updating right sibling %s", right_sibling)
-            right_sibling._update_property_and_notify(
-                NodePropertyKey.ORDER,
-                right_sibling.properties.get(NodePropertyKey.ORDER, 0) + 1,  # type: ignore
-            )
-            # Subscribe the sibling to my order
-            self._update_or_add_listener(
-                NodePropertyKey.ORDER,
-                "sibling_order",
-                order_update_builder(right_sibling),
-            )
+            if left_sibling and right_sibling:
+                break
 
         if left_sibling:
-            # Subscribe myself to the previous sibling's order
-            left_sibling._update_or_add_listener(
-                NodePropertyKey.ORDER, "sibling_order", order_update_builder(self)
+            self.subscribe_order_to(left_sibling)
+
+        if right_sibling:
+            right_sibling.subscribe_order_to(self)
+
+            logging.debug(
+                "Shifting right sibling [%s] of [%s] and notifying",
+                right_sibling.id,
+                self.id,
+            )
+            right_sibling._update_property_and_notify(
+                NodePropertyKey.ORDER,
+                self.properties.get(NodePropertyKey.ORDER, 0) + 1,  # type: ignore
             )
 
-        # TODO: Notify other nodes about the insertion
+        # Notify other nodes about the insertion
         self._update_property_and_notify(NodePropertyKey.PARENT_ID, parent.id)
-        ...
+
+        # TODO: The rest :)
 
     @log_nyi
     def propagate_update(
@@ -459,7 +494,7 @@ class CPG:
         dot += "  ranksep=0.5\n"
         dot += "  nodesep=0.5\n"
 
-        for n in self.nodes.values():
+        for n in sorted(self.nodes.values(), key=lambda x: x.properties.get(NodePropertyKey.ORDER, -1)):  # type: ignore
             dot += n.to_dot()
 
         for es in self.edges.values():
@@ -563,10 +598,12 @@ def main():
     Main function to demonstrate the CPG functionality.
     """
 
+    import os
+
     dbg_lstn = {
         NodePropertyKey._ALL: {
             "debug": lambda curr_node, old_value: logging.debug(
-                "Node %s property changed: %s -> %s",
+                "LISTENER LOG EVENT: Node %s property changed: %s -> %s",
                 curr_node.id,
                 old_value,
                 curr_node.properties,
@@ -600,6 +637,13 @@ def main():
     cpg.addChild(func_node, stmt1_node)
     cpg.addChild(func_node, stmt2_node)
 
+    # Print the CPG in DOT format
+    with open("cpg.dot", "w") as f:
+        f.write(cpg.to_dot())
+
+    os.system("dot -Tpdf -O cpg.dot")
+    input("Press Enter to continue...")
+
     # Now, the magic! An incremental update to the CPG, add an expression in between the statements
     expr_node = CPGNode(
         kind=NodeKind.EXPRESSION,
@@ -611,6 +655,22 @@ def main():
     # Print the CPG in DOT format
     with open("cpg.dot", "w") as f:
         f.write(cpg.to_dot())
+
+    os.system("dot -Tpdf -O cpg.dot")
+    input("Press Enter to continue...")
+
+    expr_node = CPGNode(
+        kind=NodeKind.BLOCK,
+        properties={NodePropertyKey.ORDER: 1},
+        listeners=dbg_lstn,
+    )
+    cpg.addChild(func_node, expr_node)
+
+    # Print the CPG in DOT format
+    with open("cpg.dot", "w") as f:
+        f.write(cpg.to_dot())
+
+    os.system("dot -Tpdf -O cpg.dot")
 
 
 if __name__ == "__main__":
