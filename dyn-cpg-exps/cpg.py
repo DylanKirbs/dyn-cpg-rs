@@ -16,11 +16,13 @@ Facilities are provided to serialise the CPG to a graph database, such as Neo4j,
 @author: Dylan Kirby [25853805@sun.ac.za]
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
 from enum import Enum, auto
 import logging
 from contextlib import contextmanager
+from functools import partial
 
 # Helpers
 
@@ -143,6 +145,8 @@ PropertyValue = Union[
 class CPGNode:
     """
     A node in the CPG.
+
+    All properties and listeners will be deep copied when the node is created in order to avoid aliasing.
     """
 
     kind: NodeKind
@@ -166,6 +170,10 @@ class CPGNode:
     def __post_init__(self):
         if self.id == -1:
             self.id = id(self)
+
+        self.kind = NodeKind(self.kind)
+        self.properties = deepcopy(self.properties)
+        self.listeners = deepcopy(self.listeners)
 
     def children(self, cpg) -> List["CPGNode"]:
         """
@@ -251,17 +259,16 @@ class CPGNode:
             del self.listeners[key][name]
 
     def subscribe_order_to(self: "CPGNode", left: "CPGNode"):
-        """The right (self) node subscribes to be notified when the left node changes order"""
+        """The right (self) node subscribes to be notified when the left node changes order. This INTENTIONALLY overwrites any existing sibling listener on the left node."""
 
-        right = self
-        if right.id == left.id:
+        if self.id == left.id:
             logging.warning(
                 "Aborting subscription setup, node must not be subscribed to itself: %s",
-                right.id,
+                self.id,
             )
             return
 
-        def update_node_order(updated_left, old_left_order):
+        def _raw_update(updated_left, old_left_order, right):
             if updated_left.id == right.id:
                 logging.debug(
                     "Aborting, node order must not be subscribed to itself: %s %s",
@@ -269,19 +276,18 @@ class CPGNode:
                     updated_left.listeners,
                 )
                 return
-            # Update the order of the right node and notify its listeners
-            right._update_property_and_notify(
-                NodePropertyKey.ORDER,
+
+            new_order = (
                 right.properties.get(NodePropertyKey.ORDER, 0)
                 + updated_left.properties.get(NodePropertyKey.ORDER, 0)
-                - (old_left_order or 0),
+                - (old_left_order or 0)
             )
+            right._update_property_and_notify(NodePropertyKey.ORDER, new_order)
 
-        left._remove_listener(NodePropertyKey.ORDER, "sibling_order")
         left._add_or_update_listener(
             NodePropertyKey.ORDER,
-            "sibling_order",
-            update_node_order,
+            f"sibling_order",
+            partial(_raw_update, right=self),
         )
 
     @log_nyi
@@ -340,6 +346,10 @@ class CPGNode:
                 NodePropertyKey.ORDER,
                 self.properties.get(NodePropertyKey.ORDER, 0) + 1,  # type: ignore
             )
+
+            # tmp
+            for node in cpg.nodes.values():
+                print("TMP", node.id, node.listeners.get(NodePropertyKey.ORDER, {}))
 
         # Notify other nodes about the insertion
         self._update_property_and_notify(NodePropertyKey.PARENT_ID, parent.id)
