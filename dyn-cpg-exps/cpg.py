@@ -161,15 +161,11 @@ class CPGNode:
         default_factory=list, init=False, repr=False
     )
 
-    @property
-    def id(self) -> int:
-        """
-        The unique identifier of the node.
+    id: int = -1
 
-        Returns:
-            int: The unique identifier of the node.
-        """
-        return id(self)
+    def __post_init__(self):
+        if self.id == -1:
+            self.id = id(self)
 
     def children(self, cpg) -> List["CPGNode"]:
         """
