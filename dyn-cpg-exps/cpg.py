@@ -336,20 +336,10 @@ class CPGNode:
 
         if right_sibling:
             right_sibling.subscribe_order_to(self)
-
-            logging.debug(
-                "Shifting right sibling [%s] of [%s] and notifying",
-                right_sibling.id,
-                self.id,
-            )
             right_sibling._update_property_and_notify(
                 NodePropertyKey.ORDER,
                 self.properties.get(NodePropertyKey.ORDER, 0) + 1,  # type: ignore
             )
-
-            # tmp
-            for node in cpg.nodes.values():
-                print("TMP", node.id, node.listeners.get(NodePropertyKey.ORDER, {}))
 
         # Notify other nodes about the insertion
         self._update_property_and_notify(NodePropertyKey.PARENT_ID, parent.id)
