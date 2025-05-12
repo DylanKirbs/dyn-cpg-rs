@@ -3,12 +3,13 @@ import logging
 import ast
 
 
-def pyast_cpg_mock(code: str) -> CPG:
+def py_to_cpg(code: str, filename: str) -> CPG:
     """
     Converts Python code to a CPG (Code Property Graph) using the Python AST.
 
     Args:
         code (str): The Python code to convert.
+        filename (str): The name of the file containing the code.
 
     Returns:
         CPG: The generated CPG.
@@ -87,7 +88,7 @@ def pyast_cpg_mock(code: str) -> CPG:
     cpg = CPG(
         CPGNode(
             kind=NodeKind.TRANSLATION_UNIT,
-            properties={NodePropertyKey.FILE: "sample.py"},
+            properties={NodePropertyKey.FILE: filename},
             listeners={
                 NodePropertyKey._ALL: {
                     "debug": lambda curr_node, old_value: logging.debug(
@@ -109,6 +110,8 @@ def pyast_cpg_mock(code: str) -> CPG:
 
 def main():
 
+    import os
+
     sample = """
 def foo():
     x = source()
@@ -117,12 +120,14 @@ def foo():
         sink(y)
 """
 
-    cpg = pyast_cpg_mock(sample)
+    cpg = py_to_cpg(sample, "sample.py")
     print(cpg)
 
     # Print the DOT format of the CPG
     with open("cpg.dot", "w") as f:
         f.write(cpg.to_dot())
+
+    os.system("dot -Tpdf -O cpg.dot")
 
 
 if __name__ == "__main__":
