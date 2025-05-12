@@ -600,7 +600,7 @@ def main():
     dbg_lstn = {
         NodePropertyKey._ALL: {
             "debug": lambda curr_node, old_value: logging.debug(
-                "LISTENER LOG EVENT: Node %s property changed: %s -> %s",
+                "EVENT: Node %s property changed: %s -> %s",
                 curr_node.id,
                 old_value,
                 curr_node.properties,
@@ -676,5 +676,8 @@ def main():
 
 
 if __name__ == "__main__":
+    from utils import attach_basic_colour_formatter
+
     logging.basicConfig(level=logging.DEBUG)
+    attach_basic_colour_formatter()
     main()
