@@ -146,7 +146,10 @@ class CPGNode:
     """
     A node in the CPG.
 
-    All properties and listeners will be deep copied when the node is created in order to avoid aliasing.
+    The instantiator of the node must ensure:
+     1. The unique ID of the node (if one is provided)
+     2. The uniqueness of the properties and listeners (to avoid aliasing across nodes)
+
     """
 
     kind: NodeKind
@@ -170,10 +173,6 @@ class CPGNode:
     def __post_init__(self):
         if self.id == -1:
             self.id = id(self)
-
-        self.kind = NodeKind(self.kind)
-        self.properties = deepcopy(self.properties)
-        self.listeners = deepcopy(self.listeners)
 
     def children(self, cpg) -> List["CPGNode"]:
         """
@@ -597,7 +596,7 @@ def main():
 
     import os
 
-    dbg_lstn = {
+    mk_dbg_lstn = lambda: {
         NodePropertyKey._ALL: {
             "debug": lambda curr_node, old_value: logging.debug(
                 "EVENT: Node %s property changed: %s -> %s",
@@ -609,26 +608,26 @@ def main():
     }
 
     # Create a simple CPG
-    root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=dbg_lstn, id=0)
+    root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=mk_dbg_lstn(), id=0)
     cpg = CPG(ast_root=root)
 
     # Create some nodes
     func_node = CPGNode(
         kind=NodeKind.FUNCTION,
         properties={NodePropertyKey.ORDER: 0},
-        listeners=dbg_lstn,
+        listeners=mk_dbg_lstn(),
         id=1,
     )
     stmt1_node = CPGNode(
         kind=NodeKind.STATEMENT,
         properties={NodePropertyKey.ORDER: 0},
-        listeners=dbg_lstn,
+        listeners=mk_dbg_lstn(),
         id=2,
     )
     stmt2_node = CPGNode(
         kind=NodeKind.STATEMENT,
         properties={NodePropertyKey.ORDER: 1},
-        listeners=dbg_lstn,
+        listeners=mk_dbg_lstn(),
         id=5,
     )
 
@@ -648,7 +647,7 @@ def main():
     expr_node = CPGNode(
         kind=NodeKind.EXPRESSION,
         properties={NodePropertyKey.ORDER: 1},
-        listeners=dbg_lstn,
+        listeners=mk_dbg_lstn(),
         id=4,
     )
     cpg.addChild(func_node, expr_node)
@@ -663,7 +662,7 @@ def main():
     expr_node = CPGNode(
         kind=NodeKind.BLOCK,
         properties={NodePropertyKey.ORDER: 1},
-        listeners=dbg_lstn,
+        listeners=mk_dbg_lstn(),
         id=3,
     )
     cpg.addChild(func_node, expr_node)
