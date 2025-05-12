@@ -18,6 +18,7 @@ Facilities are provided to serialise the CPG to a graph database, such as Neo4j,
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from html import escape
 from typing import Dict, List, Literal, Optional, Tuple, Union, Callable
 from enum import Enum, auto
 import logging
@@ -258,7 +259,10 @@ class CPGNode:
             del self.listeners[key][name]
 
     def subscribe_order_to(self: "CPGNode", left: "CPGNode"):
-        """The right (self) node subscribes to be notified when the left node changes order. This INTENTIONALLY overwrites any existing sibling listener on the left node."""
+        """
+        The right (self) node subscribes to be notified when the left node changes order.
+        This INTENTIONALLY overwrites any existing sibling listener on the left node.
+        """
 
         if self.id == left.id:
             logging.warning(
@@ -414,9 +418,10 @@ class CPGNode:
             col = "grey"
 
         dot = f'  {self.id} [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
-        dot += f"<TR><TD>{self.kind.name}</TD></TR>"
-        dot += f"<TR><TD>ID: {self.id}</TD></TR>"
-        dot += f"<TR><TD>{self.properties}</TD></TR>"
+        dot += f"<TR><TD>{escape(self.kind.name)}</TD></TR>"
+        dot += f"<TR><TD>ID: {escape(str(self.id))}</TD></TR>"
+        dot += f"<TR><TD>PROPERTIES: {escape(str(self.properties))}</TD></TR>"
+        dot += f"<TR><TD>LISTENERS: {escape(str({k: [n for n in v.keys()] for k, v in self.listeners.items()}))}</TD></TR>"
         dot += f"</TABLE>>, color={col}, style=filled, fillcolor={bg}]\n"
         return dot
 
