@@ -416,6 +416,7 @@ class CPGNode:
 
         dot = f'  {self.id} [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
         dot += f"<TR><TD>{self.kind.name}</TD></TR>"
+        dot += f"<TR><TD>ID: {self.id}</TD></TR>"
         dot += f"<TR><TD>{self.properties}</TD></TR>"
         dot += f"</TABLE>>, color={col}, style=filled, fillcolor={bg}]\n"
         return dot
@@ -608,7 +609,7 @@ def main():
     }
 
     # Create a simple CPG
-    root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=dbg_lstn)
+    root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=dbg_lstn, id=0)
     cpg = CPG(ast_root=root)
 
     # Create some nodes
@@ -616,16 +617,19 @@ def main():
         kind=NodeKind.FUNCTION,
         properties={NodePropertyKey.ORDER: 0},
         listeners=dbg_lstn,
+        id=1,
     )
     stmt1_node = CPGNode(
         kind=NodeKind.STATEMENT,
         properties={NodePropertyKey.ORDER: 0},
         listeners=dbg_lstn,
+        id=2,
     )
     stmt2_node = CPGNode(
         kind=NodeKind.STATEMENT,
         properties={NodePropertyKey.ORDER: 1},
         listeners=dbg_lstn,
+        id=5,
     )
 
     # Add nodes to the CPG
@@ -645,6 +649,7 @@ def main():
         kind=NodeKind.EXPRESSION,
         properties={NodePropertyKey.ORDER: 1},
         listeners=dbg_lstn,
+        id=4,
     )
     cpg.addChild(func_node, expr_node)
 
@@ -659,6 +664,7 @@ def main():
         kind=NodeKind.BLOCK,
         properties={NodePropertyKey.ORDER: 1},
         listeners=dbg_lstn,
+        id=3,
     )
     cpg.addChild(func_node, expr_node)
 
