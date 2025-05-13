@@ -480,6 +480,8 @@ class CPG:
         self.nodes: Dict[int, CPGNode] = {ast_root.id: ast_root}
         self.edges: Dict[Tuple[int, int], List[CPGEdge]] = {}
 
+        # TODO: Maybe we should include a "missing or external nodes" so that we can build references to missing nodes, and just attach them later if we find them
+
     def to_dot(self) -> str:
         """
         Convert the CPG to a DOT format string.
@@ -594,14 +596,9 @@ class CPG:
         target.propagate_update(self, "addEdge", edge=e)
 
 
-def main():
-    """
-    Main function to demonstrate the CPG functionality.
-    """
-
-    import os
-
-    mk_dbg_lstn = lambda: {
+# --- More helpers ---
+def mk_dbg_lstn():
+    return {
         NodePropertyKey._ALL: {
             "debug": lambda curr_node, old_value: logging.debug(
                 "EVENT: Node %s property changed: %s -> %s",
@@ -611,6 +608,14 @@ def main():
             )
         }
     }
+
+
+def main():
+    """
+    Main function to demonstrate the CPG functionality.
+    """
+
+    import os
 
     # Create a simple CPG
     root = CPGNode(kind=NodeKind.TRANSLATION_UNIT, listeners=mk_dbg_lstn(), id=0)

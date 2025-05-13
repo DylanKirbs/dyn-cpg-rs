@@ -2,6 +2,9 @@ from tree_sitter import Language, Parser, Node
 import tree_sitter_python
 from cpg import *
 import html
+from utils import attach_basic_colour_formatter
+
+DEBUG_PY_TS_FRONTEND = True
 
 PY_LANG = Language(tree_sitter_python.language())
 
@@ -63,6 +66,7 @@ def _translate_fallback(cpg: CPG, node: Node, parent: CPGNode, order: int):
         },
         id=node.id,
     )
+    cpg_node.listeners.update(mk_dbg_lstn()) if DEBUG_PY_TS_FRONTEND else None
     cpg.addChild(parent, cpg_node)
 
     for idx, child in enumerate(node.children):
@@ -96,6 +100,7 @@ def py_to_cpg(code: str, file: str) -> CPG:
 if __name__ == "__main__":
 
     logging.basicConfig(level=logging.DEBUG)
+    attach_basic_colour_formatter()
 
     import os
 
