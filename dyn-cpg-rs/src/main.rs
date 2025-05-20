@@ -126,6 +126,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     })?;
+
+    if files.is_empty() {
+        eprintln!("Error: No files found matching the provided patterns");
+        std::process::exit(1);
+    }
     
     for file in &files {
         verify_file_path(file).map_err(|e| {
