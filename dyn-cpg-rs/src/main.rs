@@ -1,11 +1,13 @@
 use clap::{ArgGroup, Parser as ClapParser};
+use git2::{ObjectType, Repository};
+use glob::glob;
+use gremlin_client::{ConnectionOptions, GremlinClient};
 use std::str::FromStr;
 use strum::VariantNames;
 use strum_macros::EnumVariantNames;
+use tracing::{debug, error, info};
+use tracing_subscriber::EnvFilter;
 use tree_sitter::Parser as TSParser;
-// use tree_sitter::Tree as TSTree;
-use git2::{ObjectType, Repository};
-use glob::glob;
 use url::Url;
 
 // --- CLI Argument Parsing --- //
@@ -82,17 +84,16 @@ impl Language {
 fn parse_db_uri(uri: &str) -> Result<Url, String> {
     let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
     let host = parsed.host_str().ok_or("Missing host in URI")?.to_string();
-    let port = parsed.port().ok_or("Missing port in URI")?.to_string();
+
+    // Check if the scheme is either ws or wss or nothing
     let scheme = parsed.scheme();
-    if scheme != "ws" && scheme != "wss" {
-        return Err(format!("Unsupported scheme: {}", scheme));
+    if scheme != "ws" && scheme != "wss" && scheme != "" {
+        return Err(format!(
+            "Invalid scheme: {}. Expected 'ws' or 'wss'",
+            scheme
+        ));
     }
-    if host.is_empty() {
-        return Err("Host cannot be empty".to_string());
-    }
-    if port.is_empty() {
-        return Err("Port cannot be empty".to_string());
-    }
+
     Ok(parsed)
 }
 
@@ -111,31 +112,71 @@ fn parse_glob(pattern: &str) -> Result<Vec<String>, String> {
 }
 
 fn parse_commit(commit: &str) -> Result<String, String> {
-    let repo =
-        Repository::discover(".").map_err(|e| format!("Failed to discover repository: {}", e))?;
-
-    let object = repo
-        .revparse_single(commit)
-        .map_err(|e| format!("Failed to resolve commit '{}': {}", commit, e))?;
-
-    if object.kind() != Some(ObjectType::Commit) {
-        return Err(format!("Object '{}' is not a commit", commit));
+    if commit.len() < 7 || commit.len() > 40 {
+        return Err(format!(
+            "Invalid commit hash: {} expected length between 7 and 40",
+            commit
+        ));
+    }
+    if !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Commit must be a valid hex hash".to_string());
     }
 
-    Ok(object.id().to_string())
+    Ok(commit.to_string())
 }
+
+// --- Helper Functions --- //
+
+// fn parse_commit(commit: &str) -> Result<String, String> {
+//     let repo =
+//         Repository::discover(".").map_err(|e| format!("Failed to discover repository: {}", e))?;
+
+//     let object = repo
+//         .revparse_single(commit)
+//         .map_err(|e| format!("Failed to resolve commit '{}': {}", commit, e))?;
+
+//     if object.kind() != Some(ObjectType::Commit) {
+//         return Err(format!("Object '{}' is not a commit", commit));
+//     }
+
+//     Ok(object.id().to_string())
+// }
 
 // --- Main Entry Point --- //
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
     let args = Cli::parse();
 
-    println!("Database URI: {}", args.db);
-    println!("Language: {:?}", args.lang); // lang is verified by construction
+    debug!("Database URI: {}", args.db);
+
+    let client = GremlinClient::connect(
+        ConnectionOptions::builder()
+            .host(args.db.host_str().unwrap())
+            .port(args.db.port().unwrap_or(8182))
+            .build(),
+    );
+    match client {
+        Ok(_) => info!("Connected to Gremlin server"),
+        Err(e) => {
+            error!("Failed to connect to Gremlin server: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    debug!("Language: {:?}", args.lang); // lang is verified by construction
+    let mut parser = args.lang.get_parser().map_err(|e| {
+        error!("Error initializing parser: {}", e);
+        std::process::exit(1);
+    })?;
+    debug!("Parser initialized");
 
     // Flatten the Vec<Vec<String>> into Vec<String>
     let files: Vec<String> = args.files.into_iter().flat_map(|v| v).collect();
-    println!("Files: {:?}", files);
+    debug!("Files: {:?}", files);
 
     let old_files: Vec<String> = match (args.old_files, args.old_commit) {
         (Some(o_fs), None) => o_fs.into_iter().flat_map(|v| v).collect(),
@@ -143,22 +184,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => unreachable!("how did we get here?"),
     };
 
-    println!("Old files: {:?}", old_files);
-
-    let mut parser = args.lang.get_parser().map_err(|e| {
-        eprintln!("Error initializing parser: {}", e);
-        std::process::exit(1);
-    })?;
+    debug!("Old files: {:?}", old_files);
 
     // Some temporary code to test the parser
     let tree = parser.parse("int main() { return 0; }", None);
 
     match tree {
         Some(t) => {
-            println!("Parsed tree: {:?}", t);
+            debug!("Parsed tree: {:?}", t);
         }
         None => {
-            eprintln!("Failed to parse the code");
+            error!("Failed to parse the code");
             std::process::exit(1);
         }
     }
