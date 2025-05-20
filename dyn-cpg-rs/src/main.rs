@@ -1,9 +1,10 @@
-use clap::Parser as ClapParser;
+use clap::{ArgGroup, Parser as ClapParser};
 use std::str::FromStr;
 use strum::VariantNames;
 use strum_macros::EnumVariantNames;
 use tree_sitter::Parser as TSParser;
 // use tree_sitter::Tree as TSTree;
+use git2::{ObjectType, Repository};
 use glob::glob;
 use url::Url;
 
@@ -12,19 +13,28 @@ use url::Url;
 #[derive(ClapParser, Debug)]
 #[command(name = "dyn-cpg-rs")]
 #[command(about = "Incremental CPG generator and update tool", long_about = None)]
+#[command(group(ArgGroup::new("old_input").required(true).args(["old_files", "old_commit"])))]
 struct Cli {
     /// Database URI (e.g. ws://localhost:8182)
-    db: String,
+    #[arg(long, value_parser = parse_db_uri)]
+    db: Url,
 
     /// Language of the source code
-    #[arg(value_parser = Language::from_str)]
+    #[arg(long, value_parser = Language::from_str)]
     lang: Language,
 
     /// Files/globs to parse
-    #[arg(required = true)]
-    files: Vec<String>,
-}
+    #[arg(long, num_args = 1.., value_parser = parse_glob)]
+    files: Vec<Vec<String>>,
 
+    /// Old version of files/globs to diff against
+    #[arg(long, num_args = 1.., value_parser = parse_glob)]
+    old_files: Option<Vec<Vec<String>>>,
+
+    /// Git commit hash to extract old file versions from
+    #[arg(long, value_parser = parse_commit)]
+    old_commit: Option<String>,
+}
 
 #[derive(Debug, Clone, EnumVariantNames)]
 enum Language {
@@ -33,23 +43,24 @@ enum Language {
     C,
 }
 
-
 impl FromStr for Language {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        
         match s.to_lowercase().as_str() {
             "java" => Ok(Language::Java),
             "python" | "py" | "python3" => Ok(Language::Python),
             "c" | "h" => Ok(Language::C),
-            _ => Err(format!("Unknown language '{}', expected one of {:?}", s, Language::VARIANTS)),
+            _ => Err(format!(
+                "Unknown language '{}', expected one of {:?}",
+                s,
+                Language::VARIANTS
+            )),
         }
     }
 }
 
 impl Language {
-
     pub fn get_parser(&self) -> Result<TSParser, String> {
         let mut parser = TSParser::new();
 
@@ -68,45 +79,51 @@ impl Language {
 
 // --- Verification of User Input --- //
 
-fn expand_globs(globs: &[String]) -> Result<Vec<String>, String> {
-    let mut result = Vec::new();
-
-    for pattern in globs {
-        let matches = glob(pattern).map_err(|e| format!("Invalid glob '{}': {}", pattern, e))?;
-        for entry in matches {
-            let path = entry.map_err(|e| format!("Glob error in '{}': {}", pattern, e))?;
-            result.push(path.display().to_string());
-        }
-    }
-
-    if result.is_empty() {
-        return Err("No matching files found".to_string());
-    }
-
-    Ok(result)
-}
-
-
-fn verify_db_uri(uri: &str) -> Result<(), String> {
+fn parse_db_uri(uri: &str) -> Result<Url, String> {
     let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
-    if parsed.scheme() != "ws" && parsed.scheme() != "wss" {
-        return Err(format!("Invalid scheme '{}', expected ws:// or wss://", parsed.scheme()));
+    let host = parsed.host_str().ok_or("Missing host in URI")?.to_string();
+    let port = parsed.port().ok_or("Missing port in URI")?.to_string();
+    let scheme = parsed.scheme();
+    if scheme != "ws" && scheme != "wss" {
+        return Err(format!("Unsupported scheme: {}", scheme));
     }
-    Ok(())
+    if host.is_empty() {
+        return Err("Host cannot be empty".to_string());
+    }
+    if port.is_empty() {
+        return Err("Port cannot be empty".to_string());
+    }
+    Ok(parsed)
 }
 
-fn verify_file_path(path: &str) -> Result<(), String> {
-    if path.is_empty() {
-        return Err("File path cannot be empty".to_string());
+fn parse_glob(pattern: &str) -> Result<Vec<String>, String> {
+    let matches: Vec<_> = glob(pattern)
+        .map_err(|e| format!("Invalid glob '{}': {}", pattern, e))?
+        .filter_map(Result::ok)
+        .map(|p| p.display().to_string())
+        .collect();
+
+    if matches.is_empty() {
+        return Err(format!("No files matched pattern '{}'", pattern));
     }
 
-    if std::fs::metadata(path).is_err() {
-        return Err(format!("Could not read file: {}", path));
-    }
-
-    Ok(())
+    Ok(matches)
 }
 
+fn parse_commit(commit: &str) -> Result<String, String> {
+    let repo =
+        Repository::discover(".").map_err(|e| format!("Failed to discover repository: {}", e))?;
+
+    let object = repo
+        .revparse_single(commit)
+        .map_err(|e| format!("Failed to resolve commit '{}': {}", commit, e))?;
+
+    if object.kind() != Some(ObjectType::Commit) {
+        return Err(format!("Object '{}' is not a commit", commit));
+    }
+
+    Ok(object.id().to_string())
+}
 
 // --- Main Entry Point --- //
 
@@ -115,37 +132,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Database URI: {}", args.db);
     println!("Language: {:?}", args.lang); // lang is verified by construction
-    println!("Files: {:?}", args.files);
 
-    verify_db_uri(&args.db).map_err(|e| {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    })?;
+    // Flatten the Vec<Vec<String>> into Vec<String>
+    let files: Vec<String> = args.files.into_iter().flat_map(|v| v).collect();
+    println!("Files: {:?}", files);
 
-    let files = expand_globs(&args.files).map_err(|e| {
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    })?;
+    let old_files: Vec<String> = match (args.old_files, args.old_commit) {
+        (Some(o_fs), None) => o_fs.into_iter().flat_map(|v| v).collect(),
+        (None, Some(commit)) => vec![], // TODO
+        _ => unreachable!("how did we get here?"),
+    };
 
-    if files.is_empty() {
-        eprintln!("Error: No files found matching the provided patterns");
-        std::process::exit(1);
-    }
-    
-    for file in &files {
-        verify_file_path(file).map_err(|e| {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
-        })?;
-    }
+    println!("Old files: {:?}", old_files);
 
-    
     let mut parser = args.lang.get_parser().map_err(|e| {
         eprintln!("Error initializing parser: {}", e);
         std::process::exit(1);
     })?;
-    
 
+    // Some temporary code to test the parser
     let tree = parser.parse("int main() { return 0; }", None);
 
     match tree {
@@ -157,7 +162,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     }
-
 
     Ok(())
 }

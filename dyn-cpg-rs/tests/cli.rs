@@ -6,10 +6,13 @@ use std::process::Command;
 fn test_db_scheme() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("dyn-cpg-rs")?;
 
-    cmd.arg("http://localhost:2025").arg("c").arg("**/*.c");
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("Error: Invalid scheme \'http\', expected ws:// or wss://"));
+    cmd.arg("--db=http://localhost:2025")
+        .arg("--lang=c")
+        .arg("--files=**/*.c")
+        .arg("--old-files=**/*.c");
+    cmd.assert().failure().stderr(predicate::str::contains(
+        "Error: Invalid scheme \'http\', expected ws:// or wss://",
+    ));
 
     Ok(())
 }
