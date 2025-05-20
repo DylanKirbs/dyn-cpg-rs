@@ -1,5 +1,4 @@
 use clap::{ArgGroup, Parser as ClapParser};
-use git2::{ObjectType, Repository};
 use glob::glob;
 use gremlin_client::{ConnectionOptions, GremlinClient};
 use std::str::FromStr;
@@ -33,7 +32,7 @@ struct Cli {
     #[arg(long, num_args = 1.., value_parser = parse_glob)]
     old_files: Option<Vec<Vec<String>>>,
 
-    /// Git commit hash to extract old file versions from
+    /// Git commit hash to extract old file versions from (new files must then be relative to the repo root)
     #[arg(long, value_parser = parse_commit)]
     old_commit: Option<String>,
 }
@@ -83,11 +82,22 @@ impl Language {
 
 fn parse_db_uri(uri: &str) -> Result<Url, String> {
     let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
-    let host = parsed.host_str().ok_or("Missing host in URI")?.to_string();
+    let host = parsed.host_str().unwrap_or("");
+
+    // Check if the host is a valid IP address or hostname
+    if host.is_empty() {
+        return Err("Missing host in URI".to_string());
+    }
+    if !host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(format!("Invalid host in URI: {}", host));
+    }
 
     // Check if the scheme is either ws or wss or nothing
     let scheme = parsed.scheme();
-    if scheme != "ws" && scheme != "wss" && scheme != "" {
+    if scheme != "ws" && scheme != "wss" {
         return Err(format!(
             "Invalid scheme: {}. Expected 'ws' or 'wss'",
             scheme
@@ -127,6 +137,7 @@ fn parse_commit(commit: &str) -> Result<String, String> {
 
 // --- Helper Functions --- //
 
+// use git2::{ObjectType, Repository};
 // fn parse_commit(commit: &str) -> Result<String, String> {
 //     let repo =
 //         Repository::discover(".").map_err(|e| format!("Failed to discover repository: {}", e))?;
@@ -151,28 +162,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Cli::parse();
 
-    debug!("Database URI: {}", args.db);
+    // DB
 
+    debug!("Database URI: {}", args.db);
     let client = GremlinClient::connect(
         ConnectionOptions::builder()
-            .host(args.db.host_str().unwrap())
+            .host(args.db.host_str().unwrap_or_else(|| {
+                error!("Missing host in database URI");
+                std::process::exit(1);
+            }))
             .port(args.db.port().unwrap_or(8182))
             .build(),
-    );
-    match client {
-        Ok(_) => info!("Connected to Gremlin server"),
+    )
+    .unwrap_or_else(|e| {
+        error!("Failed to connect to Gremlin server: {}", e);
+        std::process::exit(1);
+    });
+    info!("Connected to Gremlin server");
+
+    // Lang + Parser
+
+    debug!("Language: {:?}", args.lang);
+    let mut parser = match args.lang.get_parser() {
+        Ok(parser) => parser,
         Err(e) => {
-            error!("Failed to connect to Gremlin server: {}", e);
+            error!("Error initializing parser: {}", e);
             std::process::exit(1);
         }
-    }
-
-    debug!("Language: {:?}", args.lang); // lang is verified by construction
-    let mut parser = args.lang.get_parser().map_err(|e| {
-        error!("Error initializing parser: {}", e);
-        std::process::exit(1);
-    })?;
+    };
     debug!("Parser initialized");
+
+    // Files
 
     // Flatten the Vec<Vec<String>> into Vec<String>
     let files: Vec<String> = args.files.into_iter().flat_map(|v| v).collect();
