@@ -1,0 +1,45 @@
+services:
+  janusgraph:
+    image: janusgraph/janusgraph:latest
+    container_name: janusgraph
+    ports:
+      - "8182:8182"
+    volumes:
+      - ./conf/gremlin-server:/opt/janusgraph/conf/gremlin-server
+    environment:
+      - JANUSGRAPH_ES_HOSTS=elasticsearch
+      - JANUSGRAPH_STORAGE_BACKEND=cassandra
+      - JANUSGRAPH_STORAGE_HOSTS=cassandra
+      - JANUSGRAPH_INDEX_BACKEND=elasticsearch
+      - JANUSGRAPH_INDEX_HOSTS=elasticsearch:9200
+    depends_on:
+      - cassandra
+      - elasticsearch
+    networks:
+      - dyncpg-net
+
+  cassandra:
+    image: cassandra:3.11
+    container_name: cassandra
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    networks:
+      - dyncpg-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - network.host=0.0.0.0
+    networks:
+      - dyncpg-net
+
+volumes:
+  cassandra-data:
+
+
+networks:
+  dyncpg-net:
+    driver: bridge
