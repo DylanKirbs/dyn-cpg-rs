@@ -2,19 +2,29 @@ import tkinter as tk
 from tkinter import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from graph_utils import draw_graph, highlighted_graph
-from tree_sitter import Range, Tree
+from tree_sitter import Parser, Range, Tree
 import matplotlib.pyplot as plt
 from ts_utils import Languages, Parsers
 from difflib import SequenceMatcher
 
 c1 = """
-if x < y:
-    print()
+void foo() {
+  int x = source();
+  if (x < MAX) {
+    int y = 2 * x;
+    sink(y);
+  }
+}
 """
 
 c2 = """
-if x . y:
-    pass
+void foo() {
+  int x = source();
+  if (x < MAX) {
+    int z = 2 * x;
+    sink(z);
+  }
+}
 """
 
 
@@ -66,7 +76,7 @@ class TSCompApp(tk.Tk):
 
         # Language selector dropdown
         self.lang_var = tk.StringVar()
-        self.lang_var.set("python")
+        self.lang_var.set("c")
         self.lang_selector = ttk.Combobox(
             self,
             values=[k for k in Languages.supported_langs.keys()],
@@ -158,7 +168,7 @@ class TSCompApp(tk.Tk):
         code2 = self.right_editor.get("1.0", "end-1c")
 
         # Parse code
-        parser = getattr(Parsers, self.lang_var.get())
+        parser: Parser = getattr(Parsers, self.lang_var.get())
 
         old_source = bytes(code1, "utf-8")
         new_source = bytes(code2, "utf-8")
@@ -178,23 +188,21 @@ class TSCompApp(tk.Tk):
 
         new_tree: Tree = parser.parse(new_source, orig_tree)
 
-        # Update labels
-        self.left_root_txt.config(text=f"Original Root Node: {orig_tree.root_node}")
-        self.right_root_txt.config(text=f"Modified Root Node: {new_tree.root_node}")
+        changed_ranges = set(orig_tree.changed_ranges(new_tree))
 
-        self.changed_ranges.config(text=f"Changed Ranges: {changes}")
+        # Update labels
+        self.left_root_txt.config(text=f"Old Structure: {orig_tree.root_node}")
+        self.right_root_txt.config(text=f"New Structure: {new_tree.root_node}")
+
+        self.changed_ranges.config(
+            text=f"Source Edits : {[(a,b) for (a,b,_,_) in changes]} | TS Changed Ranges: {[(r.start_byte,r.end_byte) for r in changed_ranges]}"
+        )
 
         # Generate and draw graph with dark theme
         self.ax.clear()
         graph = highlighted_graph(
             new_tree,
-            set(
-                [
-                    Range((0, 0), (0, 0), *e[2:])
-                    for e in source_edits(old_source, new_source)
-                ]
-                # + orig_tree.changed_ranges(new_tree)
-            ),
+            changed_ranges,
         )
         draw_graph(graph, self.ax, font_color="white")
         self.ax.set_facecolor(self.text_bg)

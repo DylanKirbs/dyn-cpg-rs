@@ -18,6 +18,25 @@ LABELED_TYPES = [
     "float",
 ]
 
+TYPE_LABELS = {
+    "translation_unit": "TU",
+    "function_definition": "FuncDef",
+    "function_declarator": "FuncDecl",
+    "declaration": "Decl",
+    "compound_statement": "Block",
+    "primitive_type": "Type",
+    "init_declarator": "InitDecl",
+    "parameter_list": "ParamList",
+    "parenthesized_expression": "Parens",
+    "binary_expression": "BinOp",
+    "identifier": "ID",
+    "expression_statement": "ExprStmt",
+    "if_statement": "IfStmt",
+    "argument_list": "ArgList",
+    "call_expression": "CallExpr",
+    "number_literal": "NumLit",
+}
+
 
 class NodeProps:
 
@@ -49,7 +68,10 @@ class NodeProps:
 def get_node_uid(node):
     uid = f"{node.type}:{node.start_byte}:{node.end_byte}"
     if node.text:
-        uid += f":{node.text.decode()}"
+        try:
+            uid += f":{node.text.decode()}"
+        except UnicodeDecodeError:
+            pass
     return uid
 
 
@@ -106,10 +128,9 @@ def ast_layout(G: nx.Graph, scale=1, center=None):
     root = roots[0]
 
     # BFS to assign layers and order nodes
-    layers = defaultdict(list)
     visited = {root: True}
     queue = deque([(root, None, 0)])
-    layers[0].append(root)
+    G.nodes[root]["layer"] = 0
 
     while queue:
         node, parent, depth = queue.popleft()
@@ -121,16 +142,13 @@ def ast_layout(G: nx.Graph, scale=1, center=None):
         for child in children:
             if child not in visited:
                 visited[child] = True
-                layers[depth + 1].append(child)
+                G.nodes[child]["layer"] = depth + 1
                 queue.append((child, node, depth + 1))
-
-    # Prepare subset_key for multipartite_layout
-    subset_key = {depth: layer for depth, layer in layers.items()}
 
     # Use multipartite_layout with vertical alignment
     pos = nx.multipartite_layout(
         G,
-        subset_key=subset_key,  # type: ignore
+        subset_key="layer",
         align="vertical",
         scale=scale,
         center=center,
@@ -213,7 +231,7 @@ def _add_nodes(
     props.is_root = parent is None
     props.is_error = node.type == "ERROR"
 
-    label = node.type
+    label = TYPE_LABELS.get(node.type, node.type)
     if node.type in LABELED_TYPES:
         label += (": " + node.text.decode()) if node.text else ""
     label += f"\n({node.start_byte}:{node.end_byte})"
