@@ -92,3 +92,29 @@ fn parse_commit(commit: &str) -> Result<String, String> {
 
     Ok(commit.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_db_uri() {
+        assert!(parse_db_uri("ws://localhost:8182").is_ok());
+        assert!(parse_db_uri("wss://example.com:1234").is_ok());
+        assert!(parse_db_uri("http://invalid.com").is_err());
+        assert!(parse_db_uri("ws://").is_err());
+    }
+
+    #[test]
+    fn test_parse_glob() {
+        assert!(parse_glob("src/**/*.rs").is_ok());
+        assert!(parse_glob("nonexistent/*.rs").is_err());
+    }
+
+    #[test]
+    fn test_parse_commit() {
+        assert!(parse_commit("abc1234").is_ok());
+        assert!(parse_commit("123456").is_err());
+        assert!(parse_commit("xyz1234").is_err());
+    }
+}
