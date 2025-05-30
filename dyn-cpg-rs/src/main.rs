@@ -6,6 +6,7 @@ mod cli;
 use cli::Cli;
 
 use dyn_cpg_rs::logging;
+use dyn_cpg_rs::parser::Language;
 
 // --- Helper Functions --- //
 

@@ -1,10 +1,9 @@
 use clap::{ArgGroup, Parser as ClapParser};
 use glob::glob;
 use gremlin_client::ConnectionOptions;
-use std::str::FromStr;
 use url::Url;
 
-use dyn_cpg_rs::parser::Language;
+use dyn_cpg_rs::parser::Languages;
 
 // --- CLI Argument Parsing --- //
 
@@ -18,8 +17,8 @@ pub struct Cli {
     pub db: ConnectionOptions,
 
     /// Language of the source code
-    #[arg(long, value_parser = Language::from_str)]
-    pub lang: Language,
+    #[arg(long)]
+    pub lang: Languages,
 
     /// Files/globs to parse
     #[arg(long, num_args = 1.., value_parser = parse_glob)]

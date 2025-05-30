@@ -1,62 +1,21 @@
 //! # The CPG (Code Property Graph) module
 //! This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 //! As well as serialize and deserialize the CPG to and from a Gremlin database.
-use gremlin_client::GValue;
-use gremlin_client::process::traversal::ByteCode;
+
+use gremlin_client::GID::String as GIDString;
+use gremlin_client::GremlinClient;
+use gremlin_client::structure::GValue;
 use std::collections::HashMap;
+use strum_macros::Display;
 
-// For now, this is a mock implementation, highly subject to change
-#[derive(Debug, Clone)]
-pub struct CpgNode {
-    pub id: String,
-    pub label: String,
-    pub properties: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CpgEdge {
-    pub from: String,
-    pub to: String,
-    pub label: String,
-}
-
-#[derive(Debug, Default)]
-pub struct MockCpg {
-    pub nodes: Vec<CpgNode>,
-    pub edges: Vec<CpgEdge>,
-}
-
-impl MockCpg {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn add_node(&mut self, id: &str, label: &str, props: &[(&str, &str)]) {
-        let mut properties = HashMap::new();
-        for (k, v) in props {
-            properties.insert(k.to_string(), v.to_string());
-        }
-        self.nodes.push(CpgNode {
-            id: id.to_string(),
-            label: label.to_string(),
-            properties,
-        });
-    }
-
-    pub fn add_edge(&mut self, from: &str, to: &str, label: &str) {
-        self.edges.push(CpgEdge {
-            from: from.to_string(),
-            to: to.to_string(),
-            label: label.to_string(),
-        });
-    }
-}
+// Error handling for CPG operations
 
 #[derive(Debug)]
 pub enum CpgError {
     InvalidFormat(String),
     MissingField(String),
     ConversionError(String),
+    QueryExecutionError(String),
 }
 
 impl std::fmt::Display for CpgError {
@@ -65,204 +24,432 @@ impl std::fmt::Display for CpgError {
             CpgError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
             CpgError::MissingField(field) => write!(f, "Missing required field: {}", field),
             CpgError::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
+            CpgError::QueryExecutionError(msg) => write!(f, "Query execution error: {}", msg),
         }
     }
 }
 
 impl std::error::Error for CpgError {}
 
-impl TryFrom<GValue> for CpgNode {
-    type Error = CpgError;
+/// Trait for serializing and deserializing objects to and from a Gremlin-compatible format.
+pub trait GremlinSerializable {
+    /// Returns the Gremlin label and the properties as key-value pairs.
+    fn serialize(&self) -> Result<(String, Vec<(&str, String)>), CpgError>;
 
-    fn try_from(value: GValue) -> Result<Self, Self::Error> {
-        match value {
-            GValue::Vertex(vertex) => {
-                let id = format!("{:?}", vertex.id());
-                let label = vertex.label().to_string();
+    /// Reconstructs a struct from a Gremlin GValue (typically a vertex or edge).
+    fn deserialize(value: &GValue) -> Result<Self, CpgError>
+    where
+        Self: Sized;
+}
 
-                let properties = HashMap::new();
-                // TODO: Currently ignored
+// The graph structure for the CPG
 
-                Ok(CpgNode {
-                    id,
+#[derive(Debug, Clone, Display)]
+pub enum NodeType {
+    Unknown,
+    Error,
+    TranslationUnit,
+    Method,
+}
+
+#[derive(Debug, Clone)]
+pub struct Node {
+    pub id: String,
+    pub type_: NodeType,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum EdgeType {
+    Unknown,
+
+    // AST
+    SyntaxChild,
+    SyntaxSibling,
+
+    // Control Flow
+    ControlFlowEpsilon,
+    ControlFlowTrue,
+    ControlFlowFalse,
+
+    // Program Dependence
+    PDControlTrue,
+    PDControlFalse,
+    PDData(String), // Identifier for data dependencies
+}
+
+#[derive(Debug, Clone)]
+pub struct Edge {
+    pub from: String,
+    pub to: String,
+    pub type_: EdgeType,
+    pub properties: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ListenerType {
+    SyntaxExample,
+    ControlFlowExample,
+    ProgramDependenceExample,
+    // Custom(String), // For custom listeners (may be useful?)
+}
+
+#[derive(Debug, Clone)]
+pub struct Listener {
+    pub id: String,
+    pub type_: ListenerType, // Type of listener, disambiguates whether this listens to nodes or edges
+    pub source: String,      // The edge or node this listener is associated with
+    pub target: String,      // The node this listener is listening to
+                             // pub properties: HashMap<String, String>, // if needed
+}
+
+#[derive(Debug, Clone)]
+pub struct Cpg {
+    pub nodes: HashMap<String, Node>,
+    pub edges: HashMap<String, Edge>,
+    pub listeners: HashMap<String, Listener>,
+}
+
+// Functionality to interact with the CPG
+
+impl From<&str> for NodeType {
+    fn from(label: &str) -> Self {
+        match label {
+            "Unknown" => NodeType::Unknown,
+            "Error" => NodeType::Error,
+            "TranslationUnit" => NodeType::TranslationUnit,
+            "Method" => NodeType::Method,
+            _ => NodeType::Unknown, // Default case
+        }
+    }
+}
+
+impl From<&str> for EdgeType {
+    fn from(label: &str) -> Self {
+        match label {
+            "SyntaxChild" => EdgeType::SyntaxChild,
+            "SyntaxSibling" => EdgeType::SyntaxSibling,
+            "ControlFlowEpsilon" => EdgeType::ControlFlowEpsilon,
+            "ControlFlowTrue" => EdgeType::ControlFlowTrue,
+            "ControlFlowFalse" => EdgeType::ControlFlowFalse,
+            "PDControlTrue" => EdgeType::PDControlTrue,
+            "PDControlFalse" => EdgeType::PDControlFalse,
+            _ if label.starts_with("PDData") => EdgeType::PDData(label.to_string()),
+            _ => EdgeType::Unknown, // Default case
+        }
+    }
+}
+
+impl From<&str> for ListenerType {
+    fn from(label: &str) -> Self {
+        match label {
+            "SyntaxExample" => ListenerType::SyntaxExample,
+            "ControlFlowExample" => ListenerType::ControlFlowExample,
+            "ProgramDependenceExample" => ListenerType::ProgramDependenceExample,
+            _ => ListenerType::SyntaxExample, // Default case
+        }
+    }
+}
+
+impl GremlinSerializable for Node {
+    fn serialize(&self) -> Result<(String, Vec<(&str, String)>), CpgError> {
+        let mut props = vec![
+            ("iden", self.id.clone()),
+            ("type", format!("{:?}", self.type_)),
+        ];
+
+        for (k, v) in &self.properties {
+            props.push((k.as_str(), v.clone()));
+        }
+
+        Ok((
+            "g.addV(iden).property(\"type\", type).next()".to_string(),
+            props,
+        ))
+    }
+
+    fn deserialize(value: &GValue) -> Result<Self, CpgError> {
+        // Guard clause to ensure we have a vertex
+        if let GValue::Vertex(vertex) = value {
+            let id = match vertex.id() {
+                GIDString(a) => a.to_string(),
+                _ => return Err(CpgError::MissingField("id".to_string())),
+            };
+            let type_ = NodeType::from(vertex.label().as_str());
+
+            let mut properties = HashMap::new();
+            for prop in vertex.iter() {
+                let (key, val) = prop;
+                let v = val
+                    .iter()
+                    .next()
+                    .ok_or_else(|| CpgError::MissingField(key.clone()))?
+                    .value()
+                    .clone();
+                match v {
+                    GValue::String(s) => properties.insert(key.clone(), s),
+                    GValue::Int32(i) => properties.insert(key.clone(), i.to_string()),
+                    GValue::Float(f) => properties.insert(key.clone(), f.to_string()),
+                    GValue::Bool(b) => properties.insert(key.clone(), b.to_string()),
+                    _ => {
+                        return Err(CpgError::ConversionError(
+                            "Unsupported property type".to_string(),
+                        ));
+                    }
+                };
+            }
+
+            Ok(Node {
+                id,
+                type_,
+                properties,
+            })
+        } else {
+            Err(CpgError::InvalidFormat("Expected a vertex".to_string()))
+        }
+    }
+}
+
+impl GremlinSerializable for Edge {
+    fn serialize(&self) -> Result<(String, Vec<(&str, String)>), CpgError> {
+        let mut props = vec![
+            ("from", self.from.clone()),
+            ("to", self.to.clone()),
+            ("type", format!("{:?}", self.type_)),
+        ];
+
+        for (k, v) in &self.properties {
+            props.push((k.as_str(), v.clone()));
+        }
+
+        Ok((
+            "g.addE(from).to(g.V(to)).property(\"type\", type).next()".to_string(),
+            props,
+        ))
+    }
+
+    fn deserialize(value: &GValue) -> Result<Self, CpgError> {
+        // Guard clause to ensure we have an edge
+        if let GValue::Edge(edge) = value {
+            let type_ = EdgeType::from(edge.label().as_str());
+
+            let mut properties = HashMap::new();
+            for prop in edge.iter() {
+                let (key, val) = prop;
+                let v = val.value().clone();
+                match v {
+                    GValue::String(s) => properties.insert(key.clone(), s),
+                    GValue::Int32(i) => properties.insert(key.clone(), i.to_string()),
+                    GValue::Float(f) => properties.insert(key.clone(), f.to_string()),
+                    GValue::Bool(b) => properties.insert(key.clone(), b.to_string()),
+                    _ => {
+                        return Err(CpgError::ConversionError(
+                            "Unsupported property type".to_string(),
+                        ));
+                    }
+                };
+            }
+
+            let from = "0".to_string(); // TODO
+            let to = "0".to_string(); // TODO
+
+            Ok(Edge {
+                from,
+                to,
+                type_,
+                properties,
+            })
+        } else {
+            Err(CpgError::InvalidFormat("Expected an edge".to_string()))
+        }
+    }
+}
+
+impl GremlinSerializable for Listener {
+    // Just pretend it's an edge for now
+    fn serialize(&self) -> Result<(String, Vec<(&str, String)>), CpgError> {
+        let props = vec![
+            ("iden", self.id.clone()),
+            ("type", format!("{:?}", self.type_)),
+            ("source", self.source.clone()),
+            ("target", self.target.clone()),
+        ];
+
+        Ok((
+            "g.addE(iden).to(g.V(target)).property(\"type\", type).property(\"source\", source).next()".to_string(),
+            props,
+        ))
+    }
+
+    fn deserialize(value: &GValue) -> Result<Self, CpgError>
+    where
+        Self: Sized,
+    {
+        Err(CpgError::InvalidFormat(
+            "Listeners are not yet supported".to_string(),
+        ))
+    }
+}
+
+impl Cpg {
+    pub fn new() -> Self {
+        Cpg {
+            nodes: HashMap::new(),
+            edges: HashMap::new(),
+            listeners: HashMap::new(),
+        }
+    }
+
+    pub fn read_and_deserialize(client: &GremlinClient) -> Result<Self, CpgError> {
+        let mut cpg = Cpg::new();
+
+        // TODO
+
+        Ok(cpg)
+    }
+
+    pub fn add_node(&mut self, node: Node) {
+        self.nodes.insert(node.id.clone(), node);
+    }
+
+    pub fn add_edge(&mut self, edge: Edge) {
+        self.edges
+            .insert(format!("{}-{}", edge.from, edge.to), edge);
+    }
+
+    pub fn add_listener(&mut self, listener: Listener) {
+        self.listeners.insert(listener.id.clone(), listener);
+    }
+
+    pub fn get_node(&self, id: &str) -> Option<&Node> {
+        self.nodes.get(id)
+    }
+
+    pub fn get_edge(&self, from: &str, to: &str) -> Option<&Edge> {
+        self.edges.get(&format!("{}-{}", from, to))
+    }
+
+    pub fn get_listener(&self, id: &str) -> Option<&Listener> {
+        self.listeners.get(id)
+    }
+
+    pub fn serialize_and_write(&self, client: &GremlinClient) -> Result<(), CpgError> {
+        for node in self.nodes.values() {
+            let (label, props) = node.serialize()?;
+            client
+                .execute(
                     label,
-                    properties,
-                })
-            }
-            _ => Err(CpgError::InvalidFormat("Expected Vertex".to_string())),
+                    &props
+                        .iter()
+                        .map(|(k, v)| (*k, v as &dyn gremlin_client::ToGValue))
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| CpgError::QueryExecutionError(e.to_string()))?;
         }
+
+        for edge in self.edges.values() {
+            let (label, props) = edge.serialize()?;
+            client
+                .execute(
+                    label,
+                    &props
+                        .iter()
+                        .map(|(k, v)| (*k, v as &dyn gremlin_client::ToGValue))
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| CpgError::QueryExecutionError(e.to_string()))?;
+        }
+
+        for listener in self.listeners.values() {
+            let (label, props) = listener.serialize()?;
+            client
+                .execute(
+                    label,
+                    &props
+                        .iter()
+                        .map(|(k, v)| (*k, v as &dyn gremlin_client::ToGValue))
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| CpgError::QueryExecutionError(e.to_string()))?;
+        }
+
+        Ok(())
     }
 }
 
-impl TryFrom<GValue> for CpgEdge {
-    type Error = CpgError;
-
-    fn try_from(value: GValue) -> Result<Self, Self::Error> {
-        match value {
-            GValue::Edge(edge) => {
-                let from = format!("{:?}", edge.out_v());
-                let to = format!("{:?}", edge.in_v());
-                let label = edge.label().to_string();
-
-                Ok(CpgEdge { from, to, label })
-            }
-            _ => Err(CpgError::InvalidFormat("Expected Edge".to_string())),
-        }
-    }
-}
-
-impl TryFrom<GValue> for MockCpg {
-    type Error = CpgError;
-
-    fn try_from(value: GValue) -> Result<Self, Self::Error> {
-        match value {
-            GValue::Map(map) => {
-                let mut cpg = MockCpg::new();
-
-                // Extract nodes
-                if let Some(nodes_value) = map.get("nodes") {
-                    match nodes_value {
-                        GValue::List(nodes_list) => {
-                            for node_value in nodes_list.clone().into_iter() {
-                                let node = CpgNode::try_from(node_value.clone())?;
-                                cpg.nodes.push(node);
-                            }
-                        }
-                        _ => {
-                            return Err(CpgError::InvalidFormat(
-                                "nodes should be a list".to_string(),
-                            ));
-                        }
-                    }
-                }
-
-                // Extract edges
-                if let Some(edges_value) = map.get("edges") {
-                    match edges_value {
-                        GValue::List(edges_list) => {
-                            for edge_value in edges_list.clone().into_iter() {
-                                let edge = CpgEdge::try_from(edge_value.clone())?;
-                                cpg.edges.push(edge);
-                            }
-                        }
-                        _ => {
-                            return Err(CpgError::InvalidFormat(
-                                "edges should be a list".to_string(),
-                            ));
-                        }
-                    }
-                }
-
-                Ok(cpg)
-            }
-            GValue::List(list) => {
-                // Handle case where the result is a list of mixed vertices and edges
-                let mut cpg = MockCpg::new();
-
-                for item in list {
-                    match item {
-                        GValue::Vertex(_) => {
-                            let node = CpgNode::try_from(item)?;
-                            cpg.nodes.push(node);
-                        }
-                        GValue::Edge(_) => {
-                            let edge = CpgEdge::try_from(item)?;
-                            cpg.edges.push(edge);
-                        }
-                        _ => {
-                            // Skip unknown types or handle them as needed
-                            continue;
-                        }
-                    }
-                }
-
-                Ok(cpg)
-            }
-            _ => Err(CpgError::InvalidFormat("Expected Map or List".to_string())),
-        }
-    }
-}
-
-// Helper methods for serialization back to Gremlin
-impl MockCpg {
-    /// Convert the CPG to a format suitable for Gremlin queries
-    pub fn to_gremlin_insertions(&self) -> Vec<String> {
-        let mut queries = Vec::new();
-
-        // Add vertex insertions
-        for node in &self.nodes {
-            let mut query = format!("g.addV('{}').property(id, '{}')", node.label, node.id);
-            for (key, value) in &node.properties {
-                query.push_str(&format!(".property('{}', '{}')", key, value));
-            }
-            queries.push(query);
-        }
-
-        // Add edge insertions
-        for edge in &self.edges {
-            let query = format!(
-                "g.V('{}').addE('{}').to(g.V('{}'))",
-                edge.from, edge.label, edge.to
-            );
-            queries.push(query);
-        }
-
-        queries
-    }
-
-    /// Get a node by ID
-    pub fn get_node(&self, id: &str) -> Option<&CpgNode> {
-        self.nodes.iter().find(|node| node.id == id)
-    }
-
-    /// Get all edges from a node
-    pub fn get_outgoing_edges(&self, node_id: &str) -> Vec<&CpgEdge> {
-        self.edges
-            .iter()
-            .filter(|edge| edge.from == node_id)
-            .collect()
-    }
-
-    /// Get all edges to a node
-    pub fn get_incoming_edges(&self, node_id: &str) -> Vec<&CpgEdge> {
-        self.edges
-            .iter()
-            .filter(|edge| edge.to == node_id)
-            .collect()
-    }
-}
-
-impl From<MockCpg> for ByteCode {
-    fn from(cpg: MockCpg) -> Self {
-        let mut bytecode = ByteCode::new();
-
-        for step in cpg.to_gremlin_insertions() {
-            bytecode.add_step(step);
-        }
-
-        bytecode
-    }
-}
+// Unit tests for the CPG module
 
 #[cfg(test)]
 mod tests {
+    use gremlin_client::ConnectionOptions;
+
     use super::*;
 
+    fn mk_test_cpg() -> Cpg {
+        let mut node_properties = HashMap::new();
+        node_properties.insert("name".to_string(), "main".to_string());
+        let node = Node {
+            id: "node1".to_string(),
+            type_: NodeType::Method,
+            properties: node_properties,
+        };
+
+        let mut edge_properties = HashMap::new();
+        edge_properties.insert("condition".to_string(), "true".to_string());
+        let edge = Edge {
+            from: "node1".to_string(),
+            to: "node2".to_string(),
+            type_: EdgeType::ControlFlowTrue,
+            properties: edge_properties,
+        };
+
+        let mut listener_properties = HashMap::new();
+        listener_properties.insert("event".to_string(), "onEnter".to_string());
+        let listener = Listener {
+            id: "listener1".to_string(),
+            type_: ListenerType::ControlFlowExample,
+            source: "node1".to_string(),
+            target: "node2".to_string(),
+        };
+
+        let mut cpg = Cpg {
+            nodes: HashMap::new(),
+            edges: HashMap::new(),
+            listeners: HashMap::new(),
+        };
+
+        cpg.nodes.insert(node.id.clone(), node);
+        cpg.edges.insert(format!("{}-{}", edge.from, edge.to), edge);
+        cpg.listeners.insert(listener.id.clone(), listener);
+
+        cpg
+    }
+
+    fn connect_to_client() -> gremlin_client::GremlinClient {
+        // Mock connection to a Gremlin client
+        gremlin_client::GremlinClient::connect(
+            ConnectionOptions::builder()
+                .host("localhost")
+                .port(8182)
+                .pool_connection_timeout(Some(std::time::Duration::from_secs(5)))
+                .build(),
+        )
+        .expect("Failed to connect to Gremlin server")
+    }
+
     #[test]
-    fn test_cpg_creation() {
-        let mut cpg = MockCpg::new();
-        cpg.add_node("1", "Method", &[("name", "main"), ("code", "main()")]);
-        cpg.add_node("2", "Parameter", &[("name", "args"), ("type", "String[]")]);
-        cpg.add_edge("1", "2", "AST");
+    fn test_gremlin_serialization() {
+        // Set up a mock gremlin client and test that we deserialize correctly
 
-        assert_eq!(cpg.nodes.len(), 2);
-        assert_eq!(cpg.edges.len(), 1);
+        let client = connect_to_client();
 
-        let method_node = cpg.get_node("1").unwrap();
-        assert_eq!(method_node.label, "Method");
-        assert_eq!(
-            method_node.properties.get("name"),
-            Some(&"main".to_string())
-        );
+        let cpg = mk_test_cpg();
+        cpg.serialize_and_write(&client)
+            .expect("Failed to serialize and write CPG");
+
+        let new_cpg =
+            Cpg::read_and_deserialize(&client).expect("Failed to read and deserialize CPG");
+
+        assert_eq!(new_cpg.nodes.len(), cpg.nodes.len());
     }
 }
