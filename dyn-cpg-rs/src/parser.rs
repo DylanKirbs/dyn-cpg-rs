@@ -9,27 +9,28 @@ pub trait Language: std::fmt::Debug + Clone {
     /// Get the variant names and extensions for the language.
     fn get_variant_names(&self) -> &'static [&'static str];
 
-    /// Get the Tree-sitter parser for the language.
+    /// Get a Tree-sitter parser for the language.
+    /// Each call to this function should return a new parser instance.
     fn get_parser(&self) -> Result<TSParser, String>;
 }
 
-macro_rules! define_languages {
+macro_rules! define_RegisteredLanguage {
     (
         $(
-            $variant:ident => $type:ident, [$($alias:expr),+], $lang:path;
+            $variant:ident => [$($alias:expr),+], $lang:path;
         )+
     ) => {
         $(
             #[derive(Debug, Clone)]
-            pub struct $type;
+            pub struct $variant;
 
-            impl Default for $type {
+            impl Default for $variant {
                 fn default() -> Self {
                     Self
                 }
             }
 
-            impl Language for $type {
+            impl Language for $variant {
                 fn get_display_name(&self) -> &'static str {
                     stringify!($variant)
                 }
@@ -48,20 +49,20 @@ macro_rules! define_languages {
         )+
 
         #[derive(Debug, Clone)]
-        pub enum Languages {
+        pub enum RegisteredLanguage {
             $(
-                $variant($type),
+                $variant($variant),
             )+
         }
 
-        impl std::str::FromStr for Languages {
+        impl std::str::FromStr for RegisteredLanguage {
             type Err = String;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 let s = s.to_lowercase();
                 let candidates = vec![
                     $(
-                        (&$type::default().get_variant_names()[..], Languages::$variant($type::default())),
+                        (&$variant::default().get_variant_names()[..], RegisteredLanguage::$variant($variant::default())),
                     )+
                 ];
                 for (aliases, lang) in candidates {
@@ -73,22 +74,22 @@ macro_rules! define_languages {
             }
         }
 
-        impl Language for Languages {
+        impl Language for RegisteredLanguage {
             fn get_display_name(&self) -> &'static str {
                 match self {
-                    $(Languages::$variant(lang) => lang.get_display_name(),)+
+                    $(RegisteredLanguage::$variant(lang) => lang.get_display_name(),)+
                 }
             }
 
             fn get_variant_names(&self) -> &'static [&'static str] {
                 match self {
-                    $(Languages::$variant(lang) => lang.get_variant_names(),)+
+                    $(RegisteredLanguage::$variant(lang) => lang.get_variant_names(),)+
                 }
             }
 
             fn get_parser(&self) -> Result<TSParser, String> {
                 match self {
-                    $(Languages::$variant(lang) => lang.get_parser(),)+
+                    $(RegisteredLanguage::$variant(lang) => lang.get_parser(),)+
                 }
             }
         }
@@ -97,10 +98,10 @@ macro_rules! define_languages {
 
 // --- Language Definitions --- //
 
-define_languages! {
-    Python => PyLang, ["python", "py", "python3"], tree_sitter_python::LANGUAGE;
-    Java   => JavaLang, ["java", "javac", "jvm"], tree_sitter_java::LANGUAGE;
-    C      => CLang, ["c", "h", "c++", "cpp", "clang"], tree_sitter_c::LANGUAGE;
+define_RegisteredLanguage! {
+    Python => ["python", "py", "python3"], tree_sitter_python::LANGUAGE;
+    Java   => ["java", "javac", "jvm"], tree_sitter_java::LANGUAGE;
+    C      => ["c", "h", "c++", "cpp", "clang"], tree_sitter_c::LANGUAGE;
 }
 
 #[cfg(test)]
@@ -109,15 +110,15 @@ mod tests {
 
     #[test]
     fn test_define_language() {
-        let lang: Languages = "python".parse().unwrap();
+        let lang: RegisteredLanguage = "python".parse().unwrap();
         assert_eq!(lang.get_display_name(), "Python");
         assert!(lang.get_parser().is_ok());
 
-        let lang: Languages = "java".parse().unwrap();
+        let lang: RegisteredLanguage = "java".parse().unwrap();
         assert_eq!(lang.get_display_name(), "Java");
         assert!(lang.get_parser().is_ok());
 
-        let lang: Languages = "c".parse().unwrap();
+        let lang: RegisteredLanguage = "c".parse().unwrap();
         assert_eq!(lang.get_display_name(), "C");
         assert!(lang.get_parser().is_ok());
     }
