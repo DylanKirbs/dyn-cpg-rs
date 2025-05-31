@@ -1,5 +1,5 @@
 pub mod cpg;
-pub mod parser;
+pub mod languages;
 
 pub mod logging {
     use tracing_subscriber::EnvFilter;

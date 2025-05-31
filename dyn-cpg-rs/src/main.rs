@@ -6,7 +6,6 @@ mod cli;
 use cli::Cli;
 
 use dyn_cpg_rs::logging;
-use dyn_cpg_rs::parser::Language;
 
 // --- Helper Functions --- //
 
@@ -34,10 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Cli = Cli::parse();
 
     // DB
-    let client = GremlinClient::connect(args.db).map_err(|e| {
-        error!("Failed to connect to Gremlin server: {}", e);
-        e
-    })?;
+    // let client = GremlinClient::connect(args.db).map_err(|e| {
+    //     error!("Failed to connect to Gremlin server: {}", e);
+    //     e
+    // })?;
     info!("Connected to Gremlin server");
 
     // Lang + Parser
@@ -69,6 +68,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     debug!("Parsed tree: {:?}", tree);
+
+    // Convert tree to CPG
+    let cpg = args.lang.cst_to_cpg(tree).map_err(|e| {
+        error!("Failed to convert tree to CPG: {}", e);
+        e
+    })?;
+    debug!("Converted tree to CPG: {:?}", cpg);
 
     Ok(())
 }

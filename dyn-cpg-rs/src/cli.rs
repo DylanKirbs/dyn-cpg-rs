@@ -3,7 +3,7 @@ use glob::glob;
 use gremlin_client::ConnectionOptions;
 use url::Url;
 
-use dyn_cpg_rs::parser::RegisteredLanguage;
+use dyn_cpg_rs::languages::RegisteredLanguage;
 
 // --- CLI Argument Parsing --- //
 
