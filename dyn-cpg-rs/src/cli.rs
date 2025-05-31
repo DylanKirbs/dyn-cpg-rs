@@ -3,7 +3,7 @@ use glob::glob;
 use gremlin_client::ConnectionOptions;
 use url::Url;
 
-use dyn_cpg_rs::parser::Languages;
+use dyn_cpg_rs::parser::RegisteredLanguage;
 
 // --- CLI Argument Parsing --- //
 
@@ -18,7 +18,7 @@ pub struct Cli {
 
     /// Language of the source code
     #[arg(long)]
-    pub lang: Languages,
+    pub lang: RegisteredLanguage,
 
     /// Files/globs to parse
     #[arg(long, num_args = 1.., value_parser = parse_glob)]
