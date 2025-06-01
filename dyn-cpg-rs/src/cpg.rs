@@ -31,16 +31,31 @@ impl std::error::Error for CpgError {}
 
 #[derive(Debug, Clone, Display, PartialEq)]
 pub enum NodeType {
-    Unknown,
+    /// Language-implementation specific nodes
+    LanguageImplementation(String),
+
+    /// Represents an error in the source code
     Error(String),
 
-    TranslationUnit,
-    Method,
+    TranslationUnit, // The root of the CPG, representing the entire translation unit (e.g., a file)
+    Function,        // A function definition or declaration
+    Identifier,      // An identifier (variable, function name, etc.)
+    Statement,       // A statement that can be executed
+    Expression,      // An expression that can be evaluated
+    Type,            // A type definition or usage
+    Comment,         // A comment in the source code
+
+    // The weeds (should these be subtypes of statement, expression, etc. or their own types?)
+    Call,   // A function call expression
+    Return, // A return statement in a function
+    Block,  // Compound statement, e.g., a block of code enclosed in braces
 }
+
+pub type NodeId = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    pub id: String,
+    pub id: NodeId,
     pub type_: NodeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
 }
@@ -73,26 +88,28 @@ pub enum EdgeType {
     Listener(ListenerType),
 }
 
+pub type EdgeId = String;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
-    pub from: String,
-    pub to: String,
+    pub from: NodeId,
+    pub to: NodeId,
     pub type_: EdgeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
 }
 
 #[derive(Debug, Clone)]
 pub struct Cpg {
-    nodes: HashMap<String, Node>,
-    edges: HashMap<String, Vec<Edge>>,
+    nodes: HashMap<NodeId, Node>,
+    edges: HashMap<NodeId, Vec<Edge>>,
 }
 
 // Functionality to interact with the CPG
 
 impl Cpg {
     pub fn new(
-        nodes: Option<HashMap<String, Node>>,
-        edges: Option<HashMap<String, Vec<Edge>>>,
+        nodes: Option<HashMap<NodeId, Node>>,
+        edges: Option<HashMap<NodeId, Vec<Edge>>>,
     ) -> Self {
         Cpg {
             nodes: nodes.unwrap_or_default(),
@@ -111,20 +128,20 @@ impl Cpg {
             .push(edge);
     }
 
-    pub fn get_node(&self, id: &str) -> Option<&Node> {
+    pub fn get_node(&self, id: &NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
 
     /// Returns all edges from the given node.
     /// For more complex queries, use `EdgeQuery`.
-    pub fn get_outgoing_edges(&self, from: &str) -> Option<&Vec<Edge>> {
+    pub fn get_outgoing_edges(&self, from: &NodeId) -> Option<&Vec<Edge>> {
         self.edges.get(from)
     }
 }
 
 pub struct EdgeQuery<'a> {
-    from: Option<&'a str>,
-    to: Option<&'a str>,
+    from: Option<&'a NodeId>,
+    to: Option<&'a NodeId>,
     type_: Option<&'a EdgeType>,
 }
 
@@ -137,12 +154,12 @@ impl<'a> EdgeQuery<'a> {
         }
     }
 
-    pub fn from(mut self, from: &'a str) -> Self {
+    pub fn from(mut self, from: &'a NodeId) -> Self {
         self.from = Some(from);
         self
     }
 
-    pub fn to(mut self, to: &'a str) -> Self {
+    pub fn to(mut self, to: &'a NodeId) -> Self {
         self.to = Some(to);
         self
     }
@@ -160,7 +177,7 @@ impl<'a> EdgeQuery<'a> {
                 .into_iter()
                 .flat_map(move |edges| {
                     edges.iter().filter(move |edge| {
-                        self.to.map_or(true, |t| edge.to == t)
+                        self.to.map_or(true, |t| edge.to == t.clone())
                             && self.type_.map_or(true, |ty| edge.type_ == *ty)
                     })
                 })
@@ -171,7 +188,7 @@ impl<'a> EdgeQuery<'a> {
                 .iter()
                 .flat_map(move |(_, edges)| {
                     edges.iter().filter(move |edge| {
-                        self.to.map_or(true, |t| edge.to == t)
+                        self.to.map_or(true, |t| edge.to == t.clone())
                             && self.type_.map_or(true, |ty| edge.type_ == *ty)
                     })
                 })
@@ -200,7 +217,7 @@ mod tests {
             properties: HashMap::new(),
         };
         cpg.add_node(node.clone());
-        assert_eq!(cpg.get_node("node1"), Some(&node));
+        assert_eq!(cpg.get_node(&"node1".to_string()), Some(&node));
     }
 
     #[test]
@@ -213,7 +230,10 @@ mod tests {
             properties: HashMap::new(),
         };
         cpg.add_edge(edge.clone());
-        assert_eq!(cpg.get_outgoing_edges("node1").unwrap().len(), 1);
+        assert_eq!(
+            cpg.get_outgoing_edges(&"node1".to_string()).unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -234,8 +254,9 @@ mod tests {
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
 
+        let node_id = "node1".to_string();
         let query = EdgeQuery::new()
-            .from("node1")
+            .from(&node_id)
             .edge_type(&EdgeType::SyntaxChild);
         let results = query.query(&cpg);
         assert_eq!(results.len(), 1);
@@ -260,7 +281,8 @@ mod tests {
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
 
-        let query = EdgeQuery::new().to("node2");
+        let node_id = "node2".to_string();
+        let query = EdgeQuery::new().to(&node_id);
         let results = query.query(&cpg);
         assert_eq!(results.len(), 2);
     }

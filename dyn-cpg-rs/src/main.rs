@@ -1,5 +1,7 @@
+use std::{fs::File, io::Read};
+
 use clap::Parser as ClapParser;
-use gremlin_client::GremlinClient;
+// use gremlin_client::GremlinClient;
 use tracing::{debug, error, info};
 
 mod cli;
@@ -40,41 +42,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Connected to Gremlin server");
 
     // Lang + Parser
-    debug!("Language: {:?}", args.lang);
     let mut parser = args.lang.get_parser().map_err(|e| {
         error!("Error initializing parser: {}", e);
         e
     })?;
-    debug!("Parser initialized");
 
     // Files
     let files: Vec<String> = args.files.into_iter().flat_map(|v| v).collect();
-    debug!("Files: {:?}", files);
 
-    let old_files: Vec<String> = match (args.old_files, args.old_commit) {
+    let _old_files: Vec<String> = match (args.old_files, args.old_commit) {
         (Some(o_fs), None) => o_fs.into_iter().flat_map(|v| v).collect(),
         (None, Some(_commit)) => vec![], // TODO
         _ => return Err("Invalid combination of old_files and old_commit".into()),
     };
 
-    debug!("Old files: {:?}", old_files);
+    for file_path in &files {
+        debug!("Processing file: {}", file_path);
 
-    // Parse test
-    let tree = parser
-        .parse("int main() { return 0; }", None)
-        .ok_or_else(|| {
+        let mut file = File::open(file_path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        // Parse test
+        let tree = parser.parse(contents, None).ok_or_else(|| {
             error!("Failed to parse the code");
             "Parser returned None"
         })?;
 
-    debug!("Parsed tree: {:?}", tree);
+        debug!("Parsed tree");
 
-    // Convert tree to CPG
-    let cpg = args.lang.cst_to_cpg(tree).map_err(|e| {
-        error!("Failed to convert tree to CPG: {}", e);
-        e
-    })?;
-    debug!("Converted tree to CPG: {:?}", cpg);
+        // Convert tree to CPG
+        let _cpg = args.lang.cst_to_cpg(tree).map_err(|e| {
+            error!("Failed to convert tree to CPG: {}", e);
+            e
+        })?;
+        debug!("Converted tree to CPG");
+    }
 
     Ok(())
 }
