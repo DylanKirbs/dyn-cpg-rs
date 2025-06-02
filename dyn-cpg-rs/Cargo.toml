@@ -22,6 +22,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 flamegraph = "0.4"
 enum_dispatch = "0.3.13"
+blake3 = "1.8.2"
+once_cell = "1.21.3"
 
 [dev-dependencies]
 assert_cmd = "2.0.14"

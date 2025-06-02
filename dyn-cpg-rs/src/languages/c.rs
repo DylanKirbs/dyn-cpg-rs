@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use tracing::{debug, warn};
-use tracing_subscriber::field::debug;
 
 use crate::cpg::{Edge, EdgeType, Node, NodeId, NodeType};
 
