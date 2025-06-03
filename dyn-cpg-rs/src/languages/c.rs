@@ -75,7 +75,7 @@ fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<Node
 
     cpg.add_node(Node {
         id: id.clone(),
-        type_: type_,
+        type_,
         properties: HashMap::new(),
     });
 

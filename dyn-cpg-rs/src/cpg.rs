@@ -122,10 +122,7 @@ impl Cpg {
     }
 
     pub fn add_edge(&mut self, edge: Edge) {
-        self.edges
-            .entry(edge.from.clone())
-            .or_insert_with(Vec::new)
-            .push(edge);
+        self.edges.entry(edge.from.clone()).or_default().push(edge);
     }
 
     pub fn get_node(&self, id: &NodeId) -> Option<&Node> {
@@ -169,7 +166,7 @@ impl<'a> EdgeQuery<'a> {
         self
     }
 
-    pub fn query<'b>(self, graph: &'b Cpg) -> Vec<&'b Edge> {
+    pub fn query(self, graph: &Cpg) -> Vec<&Edge> {
         if let Some(from) = self.from {
             graph
                 .edges
@@ -177,8 +174,8 @@ impl<'a> EdgeQuery<'a> {
                 .into_iter()
                 .flat_map(move |edges| {
                     edges.iter().filter(move |edge| {
-                        self.to.map_or(true, |t| edge.to == t.clone())
-                            && self.type_.map_or(true, |ty| edge.type_ == *ty)
+                        self.to.is_none_or(|t| edge.to == t.clone())
+                            && self.type_.is_none_or(|ty| edge.type_ == *ty)
                     })
                 })
                 .collect::<Vec<_>>()
@@ -188,12 +185,18 @@ impl<'a> EdgeQuery<'a> {
                 .iter()
                 .flat_map(move |(_, edges)| {
                     edges.iter().filter(move |edge| {
-                        self.to.map_or(true, |t| edge.to == t.clone())
-                            && self.type_.map_or(true, |ty| edge.type_ == *ty)
+                        self.to.is_none_or(|t| edge.to == t.clone())
+                            && self.type_.is_none_or(|ty| edge.type_ == *ty)
                     })
                 })
                 .collect::<Vec<_>>()
         }
+    }
+}
+
+impl<'a> Default for EdgeQuery<'a> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

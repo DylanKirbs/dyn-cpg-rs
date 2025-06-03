@@ -40,7 +40,7 @@ impl Resource {
     /// Git paths will be truncated to be relative to the repository root internally, and must not be specified as relative to the root unless the repository root is the current working directory.
     pub fn new<P: Into<PathBuf>>(path: P) -> Result<Self, ResourceError> {
         Ok(Self {
-            path: fs::canonicalize(&path.into())?,
+            path: fs::canonicalize(path.into())?,
             source: Source::Worktree,
             repo: None,
             content_cache: OnceCell::new(),

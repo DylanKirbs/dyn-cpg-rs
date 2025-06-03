@@ -38,8 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: Vec<Resource> = args
         .files
         .into_iter()
-        .flat_map(|v| v)
-        .map(|path| Resource::new(path))
+        .flatten()
+        .map(Resource::new)
         .collect::<Result<Vec<_>, _>>()?;
 
     for file_resource in &mut files {
