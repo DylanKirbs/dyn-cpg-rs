@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .files
         .into_iter()
         .flat_map(|v| v)
-        .map(|file| Resource::new(file))
-        .collect();
+        .map(|path| Resource::new(path))
+        .collect::<Result<Vec<_>, _>>()?;
 
     for file_resource in &mut files {
         debug!("Processing file: {:?}", file_resource.raw_path());
