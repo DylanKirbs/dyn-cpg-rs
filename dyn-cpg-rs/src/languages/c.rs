@@ -71,8 +71,6 @@ fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<Node
     let id = format!("node_{}", node.id());
     let type_ = map_node_kind(&node);
 
-    debug!("Type: {:?}", type_);
-
     cpg.add_node(Node {
         id: id.clone(),
         type_,
