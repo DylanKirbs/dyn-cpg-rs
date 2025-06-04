@@ -1,12 +1,13 @@
+use std::collections::HashMap;
+
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::Cpg;
+use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 
 mod c;
-mod python;
 
 use c::C;
-use python::Python;
+use tracing::{debug, warn};
 
 // --- The Language Trait and Construction Macros --- //
 
@@ -21,15 +22,15 @@ trait Language: Default + std::fmt::Debug {
     /// Each call to this function returns a new parser instance.
     fn get_parser(&self) -> Result<tree_sitter::Parser, String>;
 
-    /// Convert a Tree-sitter syntax tree (CST) to a Code Property Graph (CPG).
-    fn cst_to_cpg(&self, tree: tree_sitter::Tree) -> Result<Cpg, String>;
+    /// Map a Tree-sitter node kind to a CPG node type.
+    fn map_node_kind(&self, node_kind: &'static str) -> NodeType;
 }
 
 #[macro_export]
 /// Macro to define a new language complying with the `Language` trait.
 macro_rules! define_language {
     (
-        $name:ident, [$($variant_names:expr),+], $lang:path, $cpg:expr
+        $name:ident, [$($variant_names:expr),+], $lang:path, $kind:expr
     ) => {
 
             #[derive(Debug, Clone)]
@@ -53,8 +54,8 @@ macro_rules! define_language {
                         .map_err(|e| format!("Failed to set parser for {}: {}", stringify!($name), e))
                 }
 
-                fn cst_to_cpg(&self, tree: tree_sitter::Tree) -> Result<Cpg, String> {
-                    $cpg(&self, tree)
+                fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
+                    $kind(self, node_kind)
                 }
             }
 
@@ -113,9 +114,15 @@ macro_rules! register_languages {
                 }
             }
 
+            pub fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
+                match self {
+                    $(RegisteredLanguage::$variant(language) => language.map_node_kind(node_kind),)+
+                }
+            }
+
             pub fn cst_to_cpg(&self, tree: tree_sitter::Tree) -> Result<Cpg, String> {
                 match self {
-                    $(RegisteredLanguage::$variant(language) => language.cst_to_cpg(tree),)+
+                    $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree),)+
                 }
             }
         }
@@ -124,7 +131,74 @@ macro_rules! register_languages {
 
 // --- Language Definitions --- //
 
-register_languages! { Python, C }
+register_languages! { C }
+
+// --- Generic Language Utilities --- //
+
+pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<Cpg, String> {
+    debug!("Converting CST to CPG for {:?}", lang);
+
+    let mut cpg = Cpg::new();
+    let mut cursor = tree.walk();
+
+    translate(lang, &mut cpg, &mut cursor).map_err(|e| {
+        warn!("Failed to translate CST: {}", e);
+        e
+    })?;
+
+    Ok(cpg)
+}
+
+fn translate(
+    lang: &RegisteredLanguage,
+    cpg: &mut Cpg,
+    cursor: &mut tree_sitter::TreeCursor,
+) -> Result<NodeId, String> {
+    let node = cursor.node();
+
+    let type_ = lang.map_node_kind(node.kind());
+
+    let id = cpg.add_node(Node {
+        type_,
+        properties: HashMap::new(),
+    });
+
+    if cursor.goto_first_child() {
+        let mut left_child_id: Option<NodeId> = None;
+
+        loop {
+            let child_id = translate(lang, cpg, cursor)?;
+
+            // Edge from parent to child
+            cpg.add_edge(Edge {
+                from: id.clone(),
+                to: child_id.clone(),
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+
+            // Edge from left sibling to current
+            if let Some(left_id) = &left_child_id {
+                cpg.add_edge(Edge {
+                    from: left_id.clone(),
+                    to: child_id.clone(),
+                    type_: EdgeType::SyntaxSibling,
+                    properties: HashMap::new(),
+                });
+            }
+
+            left_child_id = Some(child_id);
+
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        cursor.goto_parent();
+    }
+
+    Ok(id)
+}
 
 // --- Tests --- //
 
@@ -134,10 +208,9 @@ mod tests {
 
     fn check_generic_features(name: &str) {
         let lang: RegisteredLanguage = name.parse().expect("Failed to parse language");
-        assert_eq!(
+        assert!(
             lang.get_variant_names()
                 .contains(&name.to_lowercase().as_str()),
-            true,
             "Language {} not found in variants",
             name
         );

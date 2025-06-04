@@ -1,31 +1,28 @@
 /// # The CPG (Code Property Graph) module
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
-use std::collections::HashMap;
+use slotmap::{SlotMap, new_key_type};
+use std::collections::{BTreeMap, HashMap};
 use strum_macros::Display;
+use thiserror::Error;
+use tree_sitter::Range;
+
+use crate::diff::SourceEdit;
+
+new_key_type! {
+    pub struct NodeId;
+    pub struct EdgeId;
+}
 
 // Error handling for CPG operations
 
-#[derive(Debug)]
+#[derive(Debug, Display, Error)]
 pub enum CpgError {
     InvalidFormat(String),
     MissingField(String),
     ConversionError(String),
     QueryExecutionError(String),
 }
-
-impl std::fmt::Display for CpgError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CpgError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
-            CpgError::MissingField(field) => write!(f, "Missing required field: {}", field),
-            CpgError::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
-            CpgError::QueryExecutionError(msg) => write!(f, "Query execution error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for CpgError {}
 
 // The graph structure for the CPG
 
@@ -51,11 +48,8 @@ pub enum NodeType {
     Block,  // Compound statement, e.g., a block of code enclosed in braces
 }
 
-pub type NodeId = String;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    pub id: NodeId,
     pub type_: NodeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
 }
@@ -88,8 +82,6 @@ pub enum EdgeType {
     Listener(ListenerType),
 }
 
-pub type EdgeId = String;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
     pub from: NodeId,
@@ -100,39 +92,65 @@ pub struct Edge {
 
 #[derive(Debug, Clone)]
 pub struct Cpg {
-    nodes: HashMap<NodeId, Node>,
-    edges: HashMap<NodeId, Vec<Edge>>,
+    pub nodes: SlotMap<NodeId, Node>,
+    pub edges: SlotMap<EdgeId, Edge>,
+    pub outgoing: HashMap<NodeId, Vec<EdgeId>>,
+    pub spatial_index: BTreeMap<usize, NodeId>,
+}
+
+impl PartialEq for Cpg {
+    fn eq(&self, _other: &Self) -> bool {
+        // TODO: Implement a proper equality check for CPGs (maybe using a Merkle hash tree on the AST?)
+        // We only really care that they are semantically equivalent, so if (for example) node ids are different but the nodes are the same, we should still consider them equal.
+        false
+    }
 }
 
 // Functionality to interact with the CPG
 
 impl Cpg {
-    pub fn new(
-        nodes: Option<HashMap<NodeId, Node>>,
-        edges: Option<HashMap<NodeId, Vec<Edge>>>,
-    ) -> Self {
+    pub fn new() -> Self {
         Cpg {
-            nodes: nodes.unwrap_or_default(),
-            edges: edges.unwrap_or_default(),
+            nodes: SlotMap::with_key(),
+            edges: SlotMap::with_key(),
+            outgoing: HashMap::new(),
+            spatial_index: BTreeMap::new(),
         }
     }
 
-    pub fn add_node(&mut self, node: Node) {
-        self.nodes.insert(node.id.clone(), node);
+    pub fn add_node(&mut self, node: Node) -> NodeId {
+        self.nodes.insert(node)
     }
 
-    pub fn add_edge(&mut self, edge: Edge) {
-        self.edges.entry(edge.from.clone()).or_default().push(edge);
+    pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
+        let id = self.edges.insert(edge.clone());
+        self.outgoing.entry(edge.from).or_default().push(id);
+        id
     }
 
-    pub fn get_node(&self, id: &NodeId) -> Option<&Node> {
+    pub fn get_node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
 
-    /// Returns all edges from the given node.
-    /// For more complex queries, use `EdgeQuery`.
-    pub fn get_outgoing_edges(&self, from: &NodeId) -> Option<&Vec<Edge>> {
-        self.edges.get(from)
+    pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
+        self.outgoing
+            .get(&from)
+            .into_iter()
+            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
+            .collect()
+    }
+
+    /// Incrementally update the CPG from the CST edits
+    pub fn incremental_update(
+        &mut self,
+        edits: Vec<SourceEdit>,
+        changed_ranges: impl ExactSizeIterator<Item = Range>,
+    ) {
+        println!(
+            "Incremental update with {} edits and {} changed ranges",
+            edits.len(),
+            changed_ranges.len()
+        );
     }
 }
 
@@ -142,7 +160,7 @@ pub struct EdgeQuery<'a> {
     type_: Option<&'a EdgeType>,
 }
 
-impl<'a> EdgeQuery<'a> {
+impl<'query> EdgeQuery<'query> {
     pub fn new() -> Self {
         Self {
             from: None,
@@ -151,46 +169,37 @@ impl<'a> EdgeQuery<'a> {
         }
     }
 
-    pub fn from(mut self, from: &'a NodeId) -> Self {
+    pub fn from<'id>(mut self, from: &'id NodeId) -> Self
+    where
+        'id: 'query,
+    {
         self.from = Some(from);
         self
     }
 
-    pub fn to(mut self, to: &'a NodeId) -> Self {
+    pub fn to<'id>(mut self, to: &'id NodeId) -> Self
+    where
+        'id: 'query,
+    {
         self.to = Some(to);
         self
     }
 
-    pub fn edge_type(mut self, ty: &'a EdgeType) -> Self {
+    pub fn edge_type(mut self, ty: &'query EdgeType) -> Self {
         self.type_ = Some(ty);
         self
     }
 
-    pub fn query(self, graph: &Cpg) -> Vec<&Edge> {
-        if let Some(from) = self.from {
-            graph
-                .edges
-                .get(from)
-                .into_iter()
-                .flat_map(move |edges| {
-                    edges.iter().filter(move |edge| {
-                        self.to.is_none_or(|t| edge.to == t.clone())
-                            && self.type_.is_none_or(|ty| edge.type_ == *ty)
-                    })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            graph
-                .edges
-                .iter()
-                .flat_map(move |(_, edges)| {
-                    edges.iter().filter(move |edge| {
-                        self.to.is_none_or(|t| edge.to == t.clone())
-                            && self.type_.is_none_or(|ty| edge.type_ == *ty)
-                    })
-                })
-                .collect::<Vec<_>>()
-        }
+    pub fn query(self, graph: &'query Cpg) -> Vec<&'query Edge> {
+        graph
+            .edges
+            .values()
+            .filter(|edge| {
+                self.from.map_or(true, |f| edge.from == f.clone())
+                    && self.to.map_or(true, |t| edge.to == t.clone())
+                    && self.type_.map_or(true, |t| &edge.type_ == t)
+            })
+            .collect()
     }
 }
 
@@ -203,90 +212,163 @@ impl<'a> Default for EdgeQuery<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::incremental_parse;
+    use crate::languages::RegisteredLanguage;
+    use crate::resource::Resource;
 
     #[test]
     fn test_cpg_creation() {
-        let cpg = Cpg::new(None, None);
+        let cpg = Cpg::new();
         assert!(cpg.nodes.is_empty());
         assert!(cpg.edges.is_empty());
     }
 
     #[test]
     fn test_add_node() {
-        let mut cpg = Cpg::new(None, None);
+        let mut cpg = Cpg::new();
         let node = Node {
-            id: "node1".to_string(),
             type_: NodeType::TranslationUnit,
             properties: HashMap::new(),
         };
-        cpg.add_node(node.clone());
-        assert_eq!(cpg.get_node(&"node1".to_string()), Some(&node));
+        let node_id = cpg.add_node(node.clone());
+        assert_eq!(cpg.get_node(node_id), Some(&node));
     }
 
     #[test]
     fn test_add_edge() {
-        let mut cpg = Cpg::new(None, None);
+        let mut cpg = Cpg::new();
+        let node_id1 = cpg.add_node(Node {
+            type_: NodeType::Function,
+            properties: HashMap::new(),
+        });
+        let node_id2 = cpg.add_node(Node {
+            type_: NodeType::Identifier,
+            properties: HashMap::new(),
+        });
         let edge = Edge {
-            from: "node1".to_string(),
-            to: "node2".to_string(),
+            from: node_id1,
+            to: node_id2,
             type_: EdgeType::SyntaxChild,
             properties: HashMap::new(),
         };
-        cpg.add_edge(edge.clone());
-        assert_eq!(
-            cpg.get_outgoing_edges(&"node1".to_string()).unwrap().len(),
-            1
-        );
+
+        let edge_id = cpg.add_edge(edge.clone());
+        assert_eq!(cpg.edges.get(edge_id), Some(&edge));
     }
 
     #[test]
     fn test_complex_edge_query() {
-        let mut cpg = Cpg::new(None, None);
+        let mut cpg = Cpg::new();
+        let node1 = cpg.add_node(Node {
+            type_: NodeType::Function,
+            properties: HashMap::new(),
+        });
+        let node2 = cpg.add_node(Node {
+            type_: NodeType::Identifier,
+            properties: HashMap::new(),
+        });
+        let node3 = cpg.add_node(Node {
+            type_: NodeType::Identifier,
+            properties: HashMap::new(),
+        });
         let edge1 = Edge {
-            from: "node1".to_string(),
-            to: "node2".to_string(),
+            from: node1,
+            to: node2,
             type_: EdgeType::SyntaxChild,
             properties: HashMap::new(),
         };
         let edge2 = Edge {
-            from: "node1".to_string(),
-            to: "node3".to_string(),
+            from: node1,
+            to: node3,
             type_: EdgeType::ControlFlowTrue,
             properties: HashMap::new(),
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
-
-        let node_id = "node1".to_string();
         let query = EdgeQuery::new()
-            .from(&node_id)
+            .from(&node1)
             .edge_type(&EdgeType::SyntaxChild);
         let results = query.query(&cpg);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].to, "node2");
+        assert_eq!(results[0].to, node2);
     }
 
     #[test]
     fn test_all_incoming_edges() {
-        let mut cpg = Cpg::new(None, None);
+        let mut cpg = Cpg::new();
+        let node1 = cpg.add_node(Node {
+            type_: NodeType::Function,
+            properties: HashMap::new(),
+        });
+        let node2 = cpg.add_node(Node {
+            type_: NodeType::Identifier,
+            properties: HashMap::new(),
+        });
+        let node3 = cpg.add_node(Node {
+            type_: NodeType::Identifier,
+            properties: HashMap::new(),
+        });
         let edge1 = Edge {
-            from: "node1".to_string(),
-            to: "node2".to_string(),
+            from: node1,
+            to: node2,
             type_: EdgeType::SyntaxChild,
             properties: HashMap::new(),
         };
         let edge2 = Edge {
-            from: "node3".to_string(),
-            to: "node2".to_string(),
+            from: node3,
+            to: node2,
             type_: EdgeType::ControlFlowTrue,
             properties: HashMap::new(),
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
-
-        let node_id = "node2".to_string();
-        let query = EdgeQuery::new().to(&node_id);
+        let query = EdgeQuery::new().to(&node2);
         let results = query.query(&cpg);
         assert_eq!(results.len(), 2);
+        assert_eq!(results[0].from, node1);
+        assert_eq!(results[1].from, node3);
+    }
+
+    #[test]
+    fn test_incr_reparse() {
+        // Init the lang and parser
+        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+        let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+        // Load sample1.old.c and sample1.new.c from samples/
+        let s_orig = Resource::new("samples/sample1.old.c")
+            .expect("Failed to create resource for sample1.old.c");
+        let s_new = Resource::new("samples/sample1.new.c")
+            .expect("Failed to create resource for sample1.new.c");
+
+        // Read the contents of the files
+        let old_src = s_orig.read_bytes().expect("Failed to read sample1.old.c");
+        let new_src = s_new.read_bytes().expect("Failed to read sample1.new.c");
+
+        // Parse the original file
+        let mut old_tree = parser
+            .parse(old_src.clone(), None)
+            .expect("Failed to parse original file");
+
+        // Parse the new file
+        let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
+            .expect("Failed to incrementally parse new file");
+
+        // Changed ranges
+        let changed_ranges = old_tree.changed_ranges(&new_tree);
+        assert!(changed_ranges.len() != 0, "No changed ranges found");
+
+        let mut cpg = lang
+            .cst_to_cpg(old_tree)
+            .expect("Failed to convert old tree to CPG");
+
+        cpg.incremental_update(edits, changed_ranges);
+
+        let new_cpg = lang
+            .cst_to_cpg(new_tree)
+            .expect("Failed to convert new tree to CPG");
+
+        // Check if the CPGs are equal
+        assert_eq!(cpg, new_cpg, "CPGs are not equal after incremental update");
     }
 }
