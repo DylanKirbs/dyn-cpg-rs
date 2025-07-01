@@ -253,7 +253,10 @@ mod test {
         let git_content = git_resource.read_string().unwrap();
         let wt_content = wt_resource.read_string().unwrap();
 
-        assert_eq!(git_content, wt_content);
+        assert_eq!(
+            git_content, wt_content,
+            "Content of git resource should match worktree resource (if `main.rs` is committed)"
+        );
     }
 
     #[test]

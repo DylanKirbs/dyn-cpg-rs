@@ -95,6 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(Resource::new)
         .collect::<Result<Vec<_>, _>>()?;
 
+    debug!("Found {} files to process", files.len());
+
     for file_resource in &mut files {
         debug!("Processing file: {:?}", file_resource.raw_path());
 
@@ -108,6 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _cpg = args.lang.cst_to_cpg(tree)?;
         debug!("Converted tree to CPG");
     }
+
+    info!("Successfully processed all files");
 
     Ok(())
 }

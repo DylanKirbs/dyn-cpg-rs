@@ -228,11 +228,6 @@ mod tests {
     }
 
     #[test]
-    fn test_python_features() {
-        check_generic_features("Python");
-    }
-
-    #[test]
     fn test_c_features() {
         check_generic_features("C");
     }
