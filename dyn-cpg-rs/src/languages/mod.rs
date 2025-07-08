@@ -158,10 +158,14 @@ fn translate(
 
     let type_ = lang.map_node_kind(node.kind());
 
-    let id = cpg.add_node(Node {
-        type_,
-        properties: HashMap::new(),
-    });
+    let id = cpg.add_node(
+        Node {
+            type_,
+            properties: HashMap::new(),
+        },
+        node.start_byte(),
+        node.end_byte(),
+    );
 
     if cursor.goto_first_child() {
         let mut left_child_id: Option<NodeId> = None;

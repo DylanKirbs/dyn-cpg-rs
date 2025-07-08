@@ -5,6 +5,7 @@ use slotmap::{SlotMap, new_key_type};
 use std::collections::{BTreeMap, HashMap};
 use strum_macros::Display;
 use thiserror::Error;
+use tracing::debug;
 use tree_sitter::Range;
 
 use crate::diff::SourceEdit;
@@ -12,6 +13,40 @@ use crate::diff::SourceEdit;
 new_key_type! {
     pub struct NodeId;
     pub struct EdgeId;
+}
+
+// Spacial indexing
+
+#[derive(Debug, Clone, Default)]
+pub struct SpatialIndex {
+    map: BTreeMap<(usize, usize), NodeId>,
+}
+
+impl SpatialIndex {
+    pub fn new() -> Self {
+        Self {
+            map: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, start: usize, end: usize, node_id: NodeId) {
+        self.map.insert((start, end), node_id);
+    }
+
+    pub fn lookup_overlapping(&self, start: usize, end: usize) -> Vec<&NodeId> {
+        self.map
+            .range(..=(end, usize::MAX))
+            .filter(|(key, _)| {
+                let (s, e) = *key;
+                s < &end && e > &start
+            })
+            .map(|(_, id)| id)
+            .collect()
+    }
+
+    pub fn remove_by_node(&mut self, node_id: &NodeId) {
+        self.map.retain(|_, v| v != node_id);
+    }
 }
 
 // Error handling for CPG operations
@@ -95,15 +130,7 @@ pub struct Cpg {
     pub nodes: SlotMap<NodeId, Node>,
     pub edges: SlotMap<EdgeId, Edge>,
     pub outgoing: HashMap<NodeId, Vec<EdgeId>>,
-    pub spatial_index: BTreeMap<usize, NodeId>,
-}
-
-impl PartialEq for Cpg {
-    fn eq(&self, _other: &Self) -> bool {
-        // TODO: Implement a proper equality check for CPGs (maybe using a Merkle hash tree on the AST?)
-        // We only really care that they are semantically equivalent, so if (for example) node ids are different but the nodes are the same, we should still consider them equal.
-        false
-    }
+    pub spatial_index: SpatialIndex,
 }
 
 // Functionality to interact with the CPG
@@ -114,12 +141,15 @@ impl Cpg {
             nodes: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             outgoing: HashMap::new(),
-            spatial_index: BTreeMap::new(),
+            spatial_index: SpatialIndex::new(),
         }
     }
 
-    pub fn add_node(&mut self, node: Node) -> NodeId {
-        self.nodes.insert(node)
+    pub fn add_node(&mut self, node: Node, start_byte: usize, end_byte: usize) -> NodeId {
+        let node_id = self.nodes.insert(node);
+        self.spatial_index.insert(start_byte, end_byte, node_id);
+
+        node_id
     }
 
     pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
@@ -128,8 +158,13 @@ impl Cpg {
         id
     }
 
-    pub fn get_node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.get(id)
+    pub fn get_node_by_id(&self, id: &NodeId) -> Option<&Node> {
+        self.nodes.get(*id)
+    }
+
+    pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Option<&Node> {
+        let overlapping_ids = self.spatial_index.lookup_overlapping(start_byte, end_byte);
+        overlapping_ids.iter().find_map(|id| self.nodes.get(**id))
     }
 
     pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
@@ -146,11 +181,69 @@ impl Cpg {
         edits: Vec<SourceEdit>,
         changed_ranges: impl ExactSizeIterator<Item = Range>,
     ) {
-        println!(
+        debug!(
             "Incremental update with {} edits and {} changed ranges",
             edits.len(),
             changed_ranges.len()
         );
+
+        // TODO:
+        // 1. Mark everything within the edits and changed ranges as dirty
+        // 2. Rehydrate the AST of the CPG based on the dirty nodes
+        // 3. Update the Control Flow based on the AST changes
+        // 4. Update the Program Dependence based on the Control Flow changes
+
+        for edit in edits {
+            debug!("Applying edit: {:?}", edit);
+        }
+        for range in changed_ranges {
+            debug!("Changed range: {:?}", range);
+        }
+    }
+
+    /// Compare two CPGs for semantic equality
+    /// Returns an iterator over the roots of the subtrees that are mismatched (new, different, or missing)
+    pub fn compare(&self, other: &Cpg) -> Vec<NodeId> {
+        // We only really care that they are semantically equivalent, so if (for example) node ids are different but the nodes are the same, we should still consider them equal.
+        // So a Merkle tree is a good way to do this.
+
+        let mut mismatches = Vec::new();
+
+        // Compare nodes
+
+        return mismatches;
+    }
+
+    pub fn compute_merkle_hash(&self, node_id: &NodeId) -> Result<blake3::Hash, CpgError> {
+        let node = self.get_node_by_id(&node_id).ok_or_else(|| {
+            CpgError::InvalidFormat(format!("Node with ID {:?} not found", node_id))
+        })?;
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(node.type_.to_string().as_bytes());
+
+        // Sort property keys to ensure deterministic hash
+        let mut props: Vec<_> = node.properties.iter().collect();
+        props.sort();
+        for (k, v) in props {
+            hasher.update(k.as_bytes());
+            hasher.update(v.as_bytes());
+        }
+
+        // Recurse on children (AST-style edges only, sorted by destination to normalize sibling order)
+        let edges = self.get_outgoing_edges(node_id.clone());
+        let mut children: Vec<_> = edges
+            .iter()
+            .filter(|e| matches!(e.type_, EdgeType::SyntaxChild))
+            .map(|e| &e.to)
+            .collect();
+        children.sort();
+        for child_id in children {
+            let child_hash = self.compute_merkle_hash(child_id)?;
+            hasher.update(child_hash.as_bytes());
+        }
+
+        Ok(hasher.finalize())
     }
 }
 
@@ -230,21 +323,29 @@ mod tests {
             type_: NodeType::TranslationUnit,
             properties: HashMap::new(),
         };
-        let node_id = cpg.add_node(node.clone());
-        assert_eq!(cpg.get_node(node_id), Some(&node));
+        let node_id = cpg.add_node(node.clone(), 0, 10);
+        assert_eq!(cpg.get_node_by_id(&node_id), Some(&node));
     }
 
     #[test]
     fn test_add_edge() {
         let mut cpg = Cpg::new();
-        let node_id1 = cpg.add_node(Node {
-            type_: NodeType::Function,
-            properties: HashMap::new(),
-        });
-        let node_id2 = cpg.add_node(Node {
-            type_: NodeType::Identifier,
-            properties: HashMap::new(),
-        });
+        let node_id1 = cpg.add_node(
+            Node {
+                type_: NodeType::Function,
+                properties: HashMap::new(),
+            },
+            0,
+            1,
+        );
+        let node_id2 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            1,
+            2,
+        );
         let edge = Edge {
             from: node_id1,
             to: node_id2,
@@ -259,18 +360,30 @@ mod tests {
     #[test]
     fn test_complex_edge_query() {
         let mut cpg = Cpg::new();
-        let node1 = cpg.add_node(Node {
-            type_: NodeType::Function,
-            properties: HashMap::new(),
-        });
-        let node2 = cpg.add_node(Node {
-            type_: NodeType::Identifier,
-            properties: HashMap::new(),
-        });
-        let node3 = cpg.add_node(Node {
-            type_: NodeType::Identifier,
-            properties: HashMap::new(),
-        });
+        let node1 = cpg.add_node(
+            Node {
+                type_: NodeType::Function,
+                properties: HashMap::new(),
+            },
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            1,
+            2,
+        );
+        let node3 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            2,
+            3,
+        );
         let edge1 = Edge {
             from: node1,
             to: node2,
@@ -296,18 +409,30 @@ mod tests {
     #[test]
     fn test_all_incoming_edges() {
         let mut cpg = Cpg::new();
-        let node1 = cpg.add_node(Node {
-            type_: NodeType::Function,
-            properties: HashMap::new(),
-        });
-        let node2 = cpg.add_node(Node {
-            type_: NodeType::Identifier,
-            properties: HashMap::new(),
-        });
-        let node3 = cpg.add_node(Node {
-            type_: NodeType::Identifier,
-            properties: HashMap::new(),
-        });
+        let node1 = cpg.add_node(
+            Node {
+                type_: NodeType::Function,
+                properties: HashMap::new(),
+            },
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            1,
+            2,
+        );
+        let node3 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            2,
+            3,
+        );
         let edge1 = Edge {
             from: node1,
             to: node2,
@@ -330,7 +455,47 @@ mod tests {
     }
 
     #[test]
+    fn test_spatial_index() {
+        let mut cpg = Cpg::new();
+        let node_id1 = cpg.add_node(
+            Node {
+                type_: NodeType::Function,
+                properties: HashMap::new(),
+            },
+            0,
+            10,
+        );
+        let node_id2 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            5,
+            15,
+        );
+        let _node_id3 = cpg.add_node(
+            Node {
+                type_: NodeType::Identifier,
+                properties: HashMap::new(),
+            },
+            12,
+            20,
+        );
+
+        let overlapping = cpg.spatial_index.lookup_overlapping(8, 12);
+        assert_eq!(overlapping.len(), 2);
+        assert!(overlapping.contains(&&node_id1));
+        assert!(overlapping.contains(&&node_id2));
+
+        let non_overlapping = cpg.spatial_index.lookup_overlapping(21, 25);
+        assert!(non_overlapping.is_empty());
+        cpg.spatial_index.remove_by_node(&node_id2);
+    }
+
+    #[test]
     fn test_incr_reparse() {
+        crate::logging::init();
+
         // Init the lang and parser
         let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
         let mut parser = lang.get_parser().expect("Failed to get parser for C");
@@ -368,7 +533,12 @@ mod tests {
             .cst_to_cpg(new_tree)
             .expect("Failed to convert new tree to CPG");
 
-        // Check if the CPGs are equal
-        // assert_eq!(cpg, new_cpg, "CPGs are not equal after incremental update");
+        // Check the difference between the two CPGs
+        let diff = cpg.compare(&new_cpg);
+        assert!(
+            diff.is_empty(),
+            "CPGs should be semantically equivalent, but found differences: {:?}",
+            diff
+        );
     }
 }
