@@ -15,25 +15,43 @@ new_key_type! {
     pub struct EdgeId;
 }
 
+// fn to_sorted_vec(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
+//     let mut vec: Vec<_> = map.iter().collect();
+//     vec.sort();
+//     vec
+// }
+
+fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut vec: Vec<_> = properties
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    vec.sort_by(|a, b| a.0.cmp(&b.0));
+    vec
+}
+
 // Spacial indexing
 
 #[derive(Debug, Clone, Default)]
 pub struct SpatialIndex {
     map: BTreeMap<(usize, usize), NodeId>,
+    reverse: HashMap<NodeId, (usize, usize)>,
 }
 
 impl SpatialIndex {
     pub fn new() -> Self {
         Self {
             map: BTreeMap::new(),
+            reverse: HashMap::new(),
         }
     }
 
     pub fn insert(&mut self, start: usize, end: usize, node_id: NodeId) {
         self.map.insert((start, end), node_id);
+        self.reverse.insert(node_id, (start, end));
     }
 
-    pub fn lookup_overlapping(&self, start: usize, end: usize) -> Vec<&NodeId> {
+    pub fn lookup_nodes_from_range(&self, start: usize, end: usize) -> Vec<&NodeId> {
         self.map
             .range(..=(end, usize::MAX))
             .filter(|(key, _)| {
@@ -45,7 +63,13 @@ impl SpatialIndex {
     }
 
     pub fn remove_by_node(&mut self, node_id: &NodeId) {
-        self.map.retain(|_, v| v != node_id);
+        if let Some(range) = self.reverse.remove(node_id) {
+            self.map.remove(&range);
+        }
+    }
+
+    pub fn get_range_from_node(&self, node_id: &NodeId) -> Option<(usize, usize)> {
+        self.reverse.get(node_id).copied()
     }
 }
 
@@ -89,13 +113,13 @@ pub struct Node {
     pub properties: HashMap<String, String>, // As little as possible should be stored here
 }
 
-#[derive(Debug, Clone, Display, PartialEq)]
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum ListenerType {
     Unknown,
     // TODO: Figure out what we need here
 }
 
-#[derive(Debug, Clone, Display, PartialEq)]
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum EdgeType {
     Unknown,
 
@@ -127,10 +151,11 @@ pub struct Edge {
 
 #[derive(Debug, Clone)]
 pub struct Cpg {
-    pub nodes: SlotMap<NodeId, Node>,
-    pub edges: SlotMap<EdgeId, Edge>,
-    pub outgoing: HashMap<NodeId, Vec<EdgeId>>,
-    pub spatial_index: SpatialIndex,
+    root: Option<NodeId>,
+    nodes: SlotMap<NodeId, Node>,
+    edges: SlotMap<EdgeId, Edge>,
+    outgoing: HashMap<NodeId, Vec<EdgeId>>,
+    spatial_index: SpatialIndex,
 }
 
 // Functionality to interact with the CPG
@@ -138,6 +163,7 @@ pub struct Cpg {
 impl Cpg {
     pub fn new() -> Self {
         Cpg {
+            root: None,
             nodes: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             outgoing: HashMap::new(),
@@ -145,9 +171,23 @@ impl Cpg {
         }
     }
 
+    pub fn set_root(&mut self, root: NodeId) {
+        self.root = Some(root);
+    }
+
+    pub fn get_root(&self) -> Option<NodeId> {
+        self.root
+    }
+
+    /// Add a node to the CPG and update the spatial index
+    /// If no root is set, the first node added will be assumed to be the root, this can be overridden using `set_root`.
     pub fn add_node(&mut self, node: Node, start_byte: usize, end_byte: usize) -> NodeId {
         let node_id = self.nodes.insert(node);
         self.spatial_index.insert(start_byte, end_byte, node_id);
+
+        if self.root.is_none() {
+            self.set_root(node_id);
+        }
 
         node_id
     }
@@ -162,9 +202,15 @@ impl Cpg {
         self.nodes.get(*id)
     }
 
-    pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Option<&Node> {
-        let overlapping_ids = self.spatial_index.lookup_overlapping(start_byte, end_byte);
-        overlapping_ids.iter().find_map(|id| self.nodes.get(**id))
+    pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<&Node> {
+        let overlapping_ids = self
+            .spatial_index
+            .lookup_nodes_from_range(start_byte, end_byte);
+
+        overlapping_ids
+            .into_iter()
+            .filter_map(|id| self.nodes.get(*id))
+            .collect()
     }
 
     pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
@@ -203,47 +249,136 @@ impl Cpg {
 
     /// Compare two CPGs for semantic equality
     /// Returns an iterator over the roots of the subtrees that are mismatched (new, different, or missing)
-    pub fn compare(&self, other: &Cpg) -> Vec<NodeId> {
-        // We only really care that they are semantically equivalent, so if (for example) node ids are different but the nodes are the same, we should still consider them equal.
-        // So a Merkle tree is a good way to do this.
-
+    pub fn compare(&self, other: &Cpg) -> Result<Vec<(Option<NodeId>, Option<NodeId>)>, CpgError> {
         let mut mismatches = Vec::new();
 
-        // Compare nodes
+        let left_root = self.get_root();
+        let right_root = other.get_root();
 
-        return mismatches;
+        match (left_root, right_root) {
+            (None, None) => Ok(mismatches),
+            (None, Some(r)) => {
+                mismatches.push((None, Some(r)));
+                Ok(mismatches)
+            }
+            (Some(l), None) => {
+                mismatches.push((Some(l), None));
+                Ok(mismatches)
+            }
+            (Some(l), Some(r)) => {
+                self.compare_subtrees(other, &mut mismatches, l, r)?;
+                Ok(mismatches)
+            }
+        }
     }
 
-    pub fn compute_merkle_hash(&self, node_id: &NodeId) -> Result<blake3::Hash, CpgError> {
-        let node = self.get_node_by_id(&node_id).ok_or_else(|| {
-            CpgError::InvalidFormat(format!("Node with ID {:?} not found", node_id))
+    /// Compare two subtrees, updating a list of the NodeIds of the sub-subtrees that are mismatched
+    fn compare_subtrees(
+        &self,
+        other: &Cpg,
+        mismatches: &mut Vec<(Option<NodeId>, Option<NodeId>)>,
+        l_root: NodeId,
+        r_root: NodeId,
+    ) -> Result<(), CpgError> {
+        let l_node = self.get_node_by_id(&l_root).ok_or_else(|| {
+            CpgError::MissingField(format!("Node with id {:?} not found in left CPG", l_root))
         })?;
 
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(node.type_.to_string().as_bytes());
+        let r_node = other.get_node_by_id(&r_root).ok_or_else(|| {
+            CpgError::MissingField(format!("Node with id {:?} not found in right CPG", r_root))
+        })?;
 
-        // Sort property keys to ensure deterministic hash
-        let mut props: Vec<_> = node.properties.iter().collect();
-        props.sort();
-        for (k, v) in props {
-            hasher.update(k.as_bytes());
-            hasher.update(v.as_bytes());
+        if l_node != r_node {
+            mismatches.push((Some(l_root), Some(r_root)));
+            return Ok(());
         }
 
-        // Recurse on children (AST-style edges only, sorted by destination to normalize sibling order)
-        let edges = self.get_outgoing_edges(node_id.clone());
-        let mut children: Vec<_> = edges
+        let l_edges = self.get_outgoing_edges(l_root);
+        let r_edges = other.get_outgoing_edges(r_root);
+
+        use std::collections::HashMap;
+        let mut grouped_left: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
+        let mut grouped_right: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
+
+        for e in l_edges.iter() {
+            grouped_left
+                .entry((&e.type_, to_sorted_vec(&e.properties)))
+                .or_default()
+                .push(e);
+        }
+        for e in r_edges.iter() {
+            grouped_right
+                .entry((&e.type_, to_sorted_vec(&e.properties)))
+                .or_default()
+                .push(e);
+        }
+
+        for ((edge_type, props), left_group) in &grouped_left {
+            let right_group = grouped_right.get(&(*edge_type, props.clone()));
+            match right_group {
+                Some(rg) => {
+                    if **edge_type == EdgeType::SyntaxChild {
+                        let ordered_left = self.ordered_syntax_children(l_root);
+                        let ordered_right = other.ordered_syntax_children(r_root);
+
+                        if ordered_left.len() != ordered_right.len() {
+                            mismatches.push((Some(l_root), Some(r_root)));
+                            return Ok(());
+                        }
+
+                        for (lc, rc) in ordered_left.iter().zip(ordered_right.iter()) {
+                            self.compare_subtrees(other, mismatches, *lc, *rc)?;
+                        }
+                    } else {
+                        if left_group.len() != rg.len() {
+                            mismatches.push((Some(l_root), Some(r_root)));
+                            return Ok(());
+                        }
+
+                        for (l_edge, r_edge) in left_group.iter().zip(rg.iter()) {
+                            self.compare_subtrees(other, mismatches, l_edge.to, r_edge.to)?;
+                        }
+                    }
+                }
+                None => {
+                    mismatches.push((Some(l_root), Some(r_root)));
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
+        let edges = self.get_outgoing_edges(root);
+        let child_targets: Vec<NodeId> = edges
             .iter()
-            .filter(|e| matches!(e.type_, EdgeType::SyntaxChild))
-            .map(|e| &e.to)
+            .filter(|e| e.type_ == EdgeType::SyntaxChild)
+            .map(|e| e.to)
             .collect();
-        children.sort();
-        for child_id in children {
-            let child_hash = self.compute_merkle_hash(child_id)?;
-            hasher.update(child_hash.as_bytes());
+
+        let sibling_map: HashMap<NodeId, NodeId> = self
+            .edges
+            .iter()
+            .filter(|(_, e)| e.type_ == EdgeType::SyntaxSibling)
+            .map(|(_, e)| (e.from, e.to))
+            .collect();
+
+        let all_targets: std::collections::HashSet<_> = sibling_map.values().copied().collect();
+        let start = child_targets
+            .iter()
+            .find(|n| !all_targets.contains(n))
+            .copied();
+
+        let mut ordered = Vec::new();
+        let mut current = start;
+        while let Some(id) = current {
+            ordered.push(id);
+            current = sibling_map.get(&id).copied();
         }
 
-        Ok(hasher.finalize())
+        ordered
     }
 }
 
@@ -482,12 +617,12 @@ mod tests {
             20,
         );
 
-        let overlapping = cpg.spatial_index.lookup_overlapping(8, 12);
+        let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
         assert_eq!(overlapping.len(), 2);
         assert!(overlapping.contains(&&node_id1));
         assert!(overlapping.contains(&&node_id2));
 
-        let non_overlapping = cpg.spatial_index.lookup_overlapping(21, 25);
+        let non_overlapping = cpg.spatial_index.lookup_nodes_from_range(21, 25);
         assert!(non_overlapping.is_empty());
         cpg.spatial_index.remove_by_node(&node_id2);
     }
@@ -529,12 +664,12 @@ mod tests {
 
         cpg.incremental_update(edits, changed_ranges);
 
-        let new_cpg = lang
+        let mut new_cpg = lang
             .cst_to_cpg(new_tree)
             .expect("Failed to convert new tree to CPG");
 
         // Check the difference between the two CPGs
-        let diff = cpg.compare(&new_cpg);
+        let diff = cpg.compare(&mut new_cpg).expect("Failed to compare CPGs");
         assert!(
             diff.is_empty(),
             "CPGs should be semantically equivalent, but found differences: {:?}",
