@@ -2,7 +2,7 @@
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
 use slotmap::{SlotMap, new_key_type};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use strum_macros::Display;
 use thiserror::Error;
 use tracing::debug;
@@ -85,7 +85,7 @@ pub enum CpgError {
 
 // The graph structure for the CPG
 
-#[derive(Debug, Clone, Display, PartialEq)]
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum NodeType {
     /// Language-implementation specific nodes
     LanguageImplementation(String),
@@ -107,7 +107,7 @@ pub enum NodeType {
     Block,  // Compound statement, e.g., a block of code enclosed in braces
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub type_: NodeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
@@ -213,6 +213,14 @@ impl Cpg {
             .collect()
     }
 
+    pub fn get_node_ids_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<NodeId> {
+        self.spatial_index
+            .lookup_nodes_from_range(start_byte, end_byte)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
         self.outgoing
             .get(&from)
@@ -226,6 +234,7 @@ impl Cpg {
         &mut self,
         edits: Vec<SourceEdit>,
         changed_ranges: impl ExactSizeIterator<Item = Range>,
+        new_tree: &tree_sitter::Tree,
     ) {
         debug!(
             "Incremental update with {} edits and {} changed ranges",
@@ -234,16 +243,33 @@ impl Cpg {
         );
 
         // TODO:
-        // 1. Mark everything within the edits and changed ranges as dirty
-        // 2. Rehydrate the AST of the CPG based on the dirty nodes
-        // 3. Update the Control Flow based on the AST changes
-        // 4. Update the Program Dependence based on the Control Flow changes
+        // [x] Mark everything within the edits and changed ranges as dirty
+        // [ ] Rehydrate the AST of the CPG based on the dirty nodes
+        // [ ] Update the Control Flow based on the AST changes
+        // [ ] Update the Program Dependence based on the Control Flow changes
+
+        let mut dirty_nodes = HashSet::new();
+        for range in changed_ranges {
+            debug!("TS Changed range: {:?}", range);
+            for node_id in self.get_node_ids_by_offsets(range.start_byte, range.end_byte) {
+                dirty_nodes.insert(node_id.clone());
+            }
+        }
 
         for edit in edits {
-            debug!("Applying edit: {:?}", edit);
+            debug!("Textual edit: {:?}", edit);
+            for node_id in self.get_node_ids_by_offsets(edit.old_start, edit.old_end) {
+                dirty_nodes.insert(node_id.clone());
+            }
         }
-        for range in changed_ranges {
-            debug!("Changed range: {:?}", range);
+
+        debug!("Dirty nodes: {:?}", dirty_nodes);
+        for id in dirty_nodes {
+            if let Some(node) = self.nodes.get_mut(id) {
+                // Here we would rehydrate the node based on the CST edits
+                // For now, we just log it
+                debug!("Rehydrating node: {:?}", node);
+            }
         }
     }
 
@@ -381,6 +407,8 @@ impl Cpg {
         ordered
     }
 }
+
+// Edge query
 
 pub struct EdgeQuery<'a> {
     from: Option<&'a NodeId>,
@@ -662,7 +690,7 @@ mod tests {
             .cst_to_cpg(old_tree)
             .expect("Failed to convert old tree to CPG");
 
-        cpg.incremental_update(edits, changed_ranges);
+        cpg.incremental_update(edits, changed_ranges, &new_tree);
 
         let mut new_cpg = lang
             .cst_to_cpg(new_tree)
