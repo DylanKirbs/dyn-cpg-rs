@@ -221,6 +221,26 @@ impl Cpg {
             .collect()
     }
 
+    pub fn get_smallest_node_id_containing_range(
+        &self,
+        start_byte: usize,
+        end_byte: usize,
+    ) -> Option<NodeId> {
+        let overlapping_ids = self
+            .spatial_index
+            .lookup_nodes_from_range(start_byte, end_byte);
+        overlapping_ids
+            .into_iter()
+            .min_by_key(|id| {
+                let range = self
+                    .spatial_index
+                    .get_range_from_node(id)
+                    .expect("NodeId should have a range");
+                range.1 - range.0 // Return the size of the node
+            })
+            .cloned()
+    }
+
     pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
         self.outgoing
             .get(&from)
@@ -243,7 +263,7 @@ impl Cpg {
         );
 
         // TODO:
-        // [x] Mark everything within the edits and changed ranges as dirty
+        // [x] Mark everything within the edits and changed ranges as dirty (locate dirty nodes)
         // [ ] Rehydrate the AST of the CPG based on the dirty nodes
         // [ ] Update the Control Flow based on the AST changes
         // [ ] Update the Program Dependence based on the Control Flow changes
@@ -251,24 +271,42 @@ impl Cpg {
         let mut dirty_nodes = HashSet::new();
         for range in changed_ranges {
             debug!("TS Changed range: {:?}", range);
-            for node_id in self.get_node_ids_by_offsets(range.start_byte, range.end_byte) {
+            if let Some(node_id) =
+                self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
+            {
                 dirty_nodes.insert(node_id.clone());
+            } else {
+                debug!(
+                    "No node found for changed range: {:?}",
+                    (range.start_byte, range.end_byte)
+                );
             }
         }
 
         for edit in edits {
             debug!("Textual edit: {:?}", edit);
-            for node_id in self.get_node_ids_by_offsets(edit.old_start, edit.old_end) {
-                dirty_nodes.insert(node_id.clone());
+            if let Some(node_id) =
+                self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
+            {
+                dirty_nodes.insert(node_id);
+            } else {
+                debug!(
+                    "No node found for edit range: {:?}",
+                    (edit.old_end, edit.old_end)
+                );
             }
         }
 
         debug!("Dirty nodes: {:?}", dirty_nodes);
         for id in dirty_nodes {
             if let Some(node) = self.nodes.get_mut(id) {
-                // Here we would rehydrate the node based on the CST edits
-                // For now, we just log it
                 debug!("Rehydrating node: {:?}", node);
+
+                // TODO
+                // I have the ability to translate CST subtrees so can do this
+                // How do I then replace the old subtree with the new subtree
+                // and relink the edges? (Should only be the parent AST edge right?)
+                // CF and PD might be more complicated...
             }
         }
     }
