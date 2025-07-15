@@ -325,7 +325,15 @@ impl Cpg {
         }
 
         for (id, pos) in dirty_nodes {
-            self.rehydrate(id, pos, new_tree);
+            let new_node = self.rehydrate(id, pos, new_tree);
+            match new_node {
+                Ok(new_id) => {
+                    debug!("Rehydrated node {:?} to new id {:?}", id, new_id);
+                }
+                Err(e) => {
+                    debug!("Failed to rehydrate node {:?}: {}", id, e);
+                }
+            }
         }
     }
 
@@ -334,21 +342,25 @@ impl Cpg {
         id: NodeId,
         pos: (usize, usize, usize, usize),
         new_tree: &tree_sitter::Tree,
-    ) {
-        if let Some(node) = self.nodes.get_mut(id) {
-            debug!("Rehydrating node: {:?}@[{:?}]", node, pos);
+    ) -> Result<NodeId, CpgError> {
+        // Translate the new subtree from the new_tree based on the position
 
-            // TODO
-            // I have the ability to translate CST subtrees so can do this
-            // How do I then replace the old subtree with the new subtree
-            // and relink the edges? (Should only be the parent AST edge right?)
-            // CF and PD might be more complicated...
+        let mut cursor = new_tree
+            .root_node()
+            .descendant_for_byte_range(pos.2, pos.3)
+            .ok_or(CpgError::MissingField(format!(
+                "No subtree found for range {:?} in new tree",
+                (pos.2, pos.3)
+            )))?
+            .walk();
 
-            // self.get_language()
-            //     .cst_to_cpg(new_tree.root_node().descendant_for_byte_range(pos.2, pos.3));
-        } else {
-            debug!("Bad ID for rehydration: {:?}@[{:?}]", id, pos);
-        }
+        let new_subtree_root = crate::languages::translate(self, &mut cursor).map_err(|e| {
+            CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
+        })?;
+
+        // TODO link new subtree to existing CPG in place of old subtree
+
+        Ok(new_subtree_root)
     }
 
     /// Compare two CPGs for semantic equality

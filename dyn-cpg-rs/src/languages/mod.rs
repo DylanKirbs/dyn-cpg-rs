@@ -149,7 +149,7 @@ pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<
     Ok(cpg)
 }
 
-fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
+pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
     let node = cursor.node();
 
     let type_ = cpg.get_language().map_node_kind(node.kind());
