@@ -2,13 +2,16 @@
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
 use slotmap::{SlotMap, new_key_type};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    cmp::{max, min},
+    collections::{BTreeMap, HashMap, HashSet},
+};
 use strum_macros::Display;
 use thiserror::Error;
 use tracing::debug;
 use tree_sitter::Range;
 
-use crate::diff::SourceEdit;
+use crate::{diff::SourceEdit, languages::RegisteredLanguage};
 
 new_key_type! {
     pub struct NodeId;
@@ -156,18 +159,20 @@ pub struct Cpg {
     edges: SlotMap<EdgeId, Edge>,
     outgoing: HashMap<NodeId, Vec<EdgeId>>,
     spatial_index: SpatialIndex,
+    language: RegisteredLanguage,
 }
 
 // Functionality to interact with the CPG
 
 impl Cpg {
-    pub fn new() -> Self {
+    pub fn new(lang: RegisteredLanguage) -> Self {
         Cpg {
             root: None,
             nodes: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             outgoing: HashMap::new(),
             spatial_index: SpatialIndex::new(),
+            language: lang,
         }
     }
 
@@ -177,6 +182,10 @@ impl Cpg {
 
     pub fn get_root(&self) -> Option<NodeId> {
         self.root
+    }
+
+    pub fn get_language(&self) -> &RegisteredLanguage {
+        &self.language
     }
 
     /// Add a node to the CPG and update the spatial index
@@ -268,13 +277,21 @@ impl Cpg {
         // [ ] Update the Control Flow based on the AST changes
         // [ ] Update the Program Dependence based on the Control Flow changes
 
-        let mut dirty_nodes = HashSet::new();
+        let mut dirty_nodes = HashMap::new();
         for range in changed_ranges {
             debug!("TS Changed range: {:?}", range);
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
             {
-                dirty_nodes.insert(node_id.clone());
+                dirty_nodes.insert(
+                    node_id.clone(),
+                    (
+                        range.start_byte,
+                        range.end_byte,
+                        range.start_byte,
+                        range.end_byte,
+                    ),
+                );
             } else {
                 debug!(
                     "No node found for changed range: {:?}",
@@ -288,7 +305,17 @@ impl Cpg {
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
             {
-                dirty_nodes.insert(node_id);
+                dirty_nodes
+                    .entry(node_id)
+                    .and_modify(|existing_dirty| {
+                        *existing_dirty = (
+                            min(edit.old_start, existing_dirty.0),
+                            max(edit.old_end, existing_dirty.1),
+                            min(edit.new_start, existing_dirty.2),
+                            max(edit.new_end, existing_dirty.3),
+                        );
+                    })
+                    .or_insert((edit.old_start, edit.old_end, edit.new_start, edit.new_end));
             } else {
                 debug!(
                     "No node found for edit range: {:?}",
@@ -297,17 +324,30 @@ impl Cpg {
             }
         }
 
-        debug!("Dirty nodes: {:?}", dirty_nodes);
-        for id in dirty_nodes {
-            if let Some(node) = self.nodes.get_mut(id) {
-                debug!("Rehydrating node: {:?}", node);
+        for (id, pos) in dirty_nodes {
+            self.rehydrate(id, pos, new_tree);
+        }
+    }
 
-                // TODO
-                // I have the ability to translate CST subtrees so can do this
-                // How do I then replace the old subtree with the new subtree
-                // and relink the edges? (Should only be the parent AST edge right?)
-                // CF and PD might be more complicated...
-            }
+    fn rehydrate(
+        &mut self,
+        id: NodeId,
+        pos: (usize, usize, usize, usize),
+        new_tree: &tree_sitter::Tree,
+    ) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            debug!("Rehydrating node: {:?}@[{:?}]", node, pos);
+
+            // TODO
+            // I have the ability to translate CST subtrees so can do this
+            // How do I then replace the old subtree with the new subtree
+            // and relink the edges? (Should only be the parent AST edge right?)
+            // CF and PD might be more complicated...
+
+            // self.get_language()
+            //     .cst_to_cpg(new_tree.root_node().descendant_for_byte_range(pos.2, pos.3));
+        } else {
+            debug!("Bad ID for rehydration: {:?}@[{:?}]", id, pos);
         }
     }
 
@@ -512,14 +552,14 @@ mod tests {
 
     #[test]
     fn test_cpg_creation() {
-        let cpg = Cpg::new();
+        let cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         assert!(cpg.nodes.is_empty());
         assert!(cpg.edges.is_empty());
     }
 
     #[test]
     fn test_add_node() {
-        let mut cpg = Cpg::new();
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         let node = Node {
             type_: NodeType::TranslationUnit,
             properties: HashMap::new(),
@@ -530,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_add_edge() {
-        let mut cpg = Cpg::new();
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         let node_id1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -560,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_complex_edge_query() {
-        let mut cpg = Cpg::new();
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         let node1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -609,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_all_incoming_edges() {
-        let mut cpg = Cpg::new();
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         let node1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -657,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_spatial_index() {
-        let mut cpg = Cpg::new();
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
         let node_id1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,

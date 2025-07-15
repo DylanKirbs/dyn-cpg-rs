@@ -138,10 +138,10 @@ register_languages! { C }
 pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<Cpg, String> {
     debug!("Converting CST to CPG for {:?}", lang);
 
-    let mut cpg = Cpg::new();
+    let mut cpg = Cpg::new(lang.clone());
     let mut cursor = tree.walk();
 
-    translate(lang, &mut cpg, &mut cursor).map_err(|e| {
+    translate(&mut cpg, &mut cursor).map_err(|e| {
         warn!("Failed to translate CST: {}", e);
         e
     })?;
@@ -149,14 +149,10 @@ pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<
     Ok(cpg)
 }
 
-fn translate(
-    lang: &RegisteredLanguage,
-    cpg: &mut Cpg,
-    cursor: &mut tree_sitter::TreeCursor,
-) -> Result<NodeId, String> {
+fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
     let node = cursor.node();
 
-    let type_ = lang.map_node_kind(node.kind());
+    let type_ = cpg.get_language().map_node_kind(node.kind());
 
     let id = cpg.add_node(
         Node {
@@ -171,7 +167,7 @@ fn translate(
         let mut left_child_id: Option<NodeId> = None;
 
         loop {
-            let child_id = translate(lang, cpg, cursor)?;
+            let child_id = translate(cpg, cursor)?;
 
             // Edge from parent to child
             cpg.add_edge(Edge {
