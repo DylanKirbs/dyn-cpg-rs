@@ -226,6 +226,9 @@ pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
     // TODO
     // Maybe we should always traverse up to the nearest function node, and just compute the CF for the function subtree?
 
+    // We can probably also just over approximate these edges for the sake of proof of concept and simplicity.
+    // If needed this can defer to the specific language implementation (that's why it's in this file).
+
     Ok(())
 }
 
