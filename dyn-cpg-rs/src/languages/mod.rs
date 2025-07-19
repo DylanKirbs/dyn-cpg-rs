@@ -146,6 +146,24 @@ pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<
         e
     })?;
 
+    let root_opt = cpg.get_root();
+
+    if root_opt.is_none() {
+        return Err("CST translation resulted in an empty CPG".to_string());
+    }
+
+    let root = root_opt.expect("Root node must be present if it is not None");
+
+    cf_pass(&mut cpg, root).map_err(|e| {
+        warn!("Failed to compute control flow: {}", e);
+        e
+    })?;
+
+    data_dep_pass(&mut cpg, root).map_err(|e| {
+        warn!("Failed to compute data dependence: {}", e);
+        e
+    })?;
+
     Ok(cpg)
 }
 
@@ -198,6 +216,25 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
     }
 
     Ok(id)
+}
+
+// --- Control Flow & Data Dependence --- //
+
+/// Idempotent computation of the control flow for a subtree in the CPG.
+/// This pass assumes that the AST has been construed into a CPG.
+pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
+    // TODO
+    // Maybe we should always traverse up to the nearest function node, and just compute the CF for the function subtree?
+
+    Ok(())
+}
+
+/// Idempotent computation of the data dependence for a subtree in the CPG.
+/// This pass assumes that the control flow has already been computed.
+pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
+    // TODO
+
+    Ok(())
 }
 
 // --- Tests --- //

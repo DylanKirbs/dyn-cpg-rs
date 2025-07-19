@@ -1,22 +1,28 @@
 /// # The CPG (Code Property Graph) module
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
+use crate::{
+    diff::SourceEdit,
+    languages::{RegisteredLanguage, cf_pass, data_dep_pass},
+};
 use slotmap::{SlotMap, new_key_type};
 use std::{
     cmp::{max, min},
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
 };
 use strum_macros::Display;
 use thiserror::Error;
 use tracing::debug;
 use tree_sitter::Range;
 
-use crate::{diff::SourceEdit, languages::RegisteredLanguage};
+// --- SlotMap Key Types --- //
 
 new_key_type! {
     pub struct NodeId;
     pub struct EdgeId;
 }
+
+// --- Helper Functions --- //
 
 // fn to_sorted_vec(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
 //     let mut vec: Vec<_> = map.iter().collect();
@@ -33,7 +39,7 @@ fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> 
     vec
 }
 
-// Spacial indexing
+// --- Spacial indexing --- //
 
 #[derive(Debug, Clone, Default)]
 pub struct SpatialIndex {
@@ -76,7 +82,7 @@ impl SpatialIndex {
     }
 }
 
-// Error handling for CPG operations
+// --- Error handling for CPG operations --- //
 
 #[derive(Debug, Display, Error)]
 pub enum CpgError {
@@ -86,7 +92,7 @@ pub enum CpgError {
     QueryExecutionError(String),
 }
 
-// The graph structure for the CPG
+// --- The graph structure for the CPG --- //
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum NodeType {
@@ -157,6 +163,7 @@ pub struct Cpg {
     root: Option<NodeId>,
     nodes: SlotMap<NodeId, Node>,
     edges: SlotMap<EdgeId, Edge>,
+    incoming: HashMap<NodeId, Vec<EdgeId>>, // Maps NodeId to a list of EdgeIds that point to it
     outgoing: HashMap<NodeId, Vec<EdgeId>>,
     spatial_index: SpatialIndex,
     language: RegisteredLanguage,
@@ -170,6 +177,7 @@ impl Cpg {
             root: None,
             nodes: SlotMap::with_key(),
             edges: SlotMap::with_key(),
+            incoming: HashMap::new(),
             outgoing: HashMap::new(),
             spatial_index: SpatialIndex::new(),
             language: lang,
@@ -203,6 +211,7 @@ impl Cpg {
 
     pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
         let id = self.edges.insert(edge.clone());
+        self.incoming.entry(edge.to).or_default().push(id);
         self.outgoing.entry(edge.from).or_default().push(id);
         id
     }
@@ -250,6 +259,14 @@ impl Cpg {
             .cloned()
     }
 
+    pub fn get_incoming_edges(&self, to: NodeId) -> Vec<&Edge> {
+        self.incoming
+            .get(&to)
+            .into_iter()
+            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
+            .collect()
+    }
+
     pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
         self.outgoing
             .get(&from)
@@ -270,12 +287,6 @@ impl Cpg {
             edits.len(),
             changed_ranges.len()
         );
-
-        // TODO:
-        // [x] Mark everything within the edits and changed ranges as dirty (locate dirty nodes)
-        // [ ] Rehydrate the AST of the CPG based on the dirty nodes
-        // [ ] Update the Control Flow based on the AST changes
-        // [ ] Update the Program Dependence based on the Control Flow changes
 
         let mut dirty_nodes = HashMap::new();
         for range in changed_ranges {
@@ -324,17 +335,52 @@ impl Cpg {
             }
         }
 
+        debug!("Rehydrating dirty nodes: {:?}", dirty_nodes);
+        let mut rehydrated_nodes = Vec::new();
         for (id, pos) in dirty_nodes {
             let new_node = self.rehydrate(id, pos, new_tree);
             match new_node {
                 Ok(new_id) => {
                     debug!("Rehydrated node {:?} to new id {:?}", id, new_id);
+                    rehydrated_nodes.push(new_id);
                 }
                 Err(e) => {
                     debug!("Failed to rehydrate node {:?}: {}", id, e);
                 }
             }
         }
+
+        debug!(
+            "Computing control flow for {} rehydrated nodes",
+            rehydrated_nodes.len()
+        );
+        for new_node in rehydrated_nodes.clone() {
+            cf_pass(self, new_node)
+                .map_err(|e| {
+                    debug!(
+                        "Failed to recompute control flow for node {:?}: {}",
+                        new_node, e
+                    )
+                })
+                .ok();
+        }
+
+        debug!(
+            "Computing program dependence for {} rehydrated nodes",
+            rehydrated_nodes.len()
+        );
+        for new_node in rehydrated_nodes {
+            data_dep_pass(self, new_node)
+                .map_err(|e| {
+                    debug!(
+                        "Failed to recompute data dependence for node {:?}: {}",
+                        new_node, e
+                    )
+                })
+                .ok();
+        }
+
+        debug!("Incremental update complete");
     }
 
     fn rehydrate(
@@ -358,9 +404,78 @@ impl Cpg {
             CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
         })?;
 
-        // TODO link new subtree to existing CPG in place of old subtree
+        // Link new subtree to existing CPG in place of old subtree
+        let old_left_sibling_id = self
+            .get_incoming_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling);
+        if let Some(sibling_edge) = old_left_sibling_id {
+            self.add_edge(Edge {
+                from: sibling_edge.from,
+                to: new_subtree_root,
+                type_: EdgeType::SyntaxSibling,
+                properties: sibling_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
+            });
+        }
+
+        let old_right_sibling_id = self
+            .get_outgoing_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling);
+        if let Some(sibling_edge) = old_right_sibling_id {
+            self.add_edge(Edge {
+                from: new_subtree_root,
+                to: sibling_edge.to,
+                type_: EdgeType::SyntaxSibling,
+                properties: sibling_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
+            });
+        }
+
+        let old_parent_edge = self
+            .get_incoming_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxChild);
+        if let Some(parent_edge) = old_parent_edge {
+            self.add_edge(Edge {
+                from: parent_edge.from,
+                to: new_subtree_root,
+                type_: EdgeType::SyntaxChild,
+                properties: parent_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
+            });
+        } else {
+            debug!(
+                "No parent edge found for node {:?}, assuming it is a root node",
+                id
+            );
+            self.set_root(new_subtree_root);
+        }
+
+        // Remove the old subtree from the CPG
+        self.remove_subtree(id).map_err(|e| {
+            CpgError::ConversionError(format!("Failed to remove old subtree: {}", e))
+        })?;
 
         Ok(new_subtree_root)
+    }
+
+    /// Recursively removes a subtree from the CPG by its root node ID
+    fn remove_subtree(&mut self, root: NodeId) -> Result<(), CpgError> {
+        let edges: Vec<_> = self
+            .get_outgoing_edges(root)
+            .into_iter()
+            .filter(|e| e.type_ == EdgeType::SyntaxChild)
+            .cloned()
+            .collect();
+        for edge in edges {
+            self.remove_subtree(edge.to)?;
+        }
+        self.nodes.remove(root);
+        self.spatial_index.remove_by_node(&root);
+
+        // Might need a bit more work here to ensure all pointers are cleaned up
+        self.incoming.remove(&root);
+        self.outgoing.remove(&root);
+        Ok(())
     }
 
     /// Compare two CPGs for semantic equality
@@ -498,7 +613,7 @@ impl Cpg {
     }
 }
 
-// Edge query
+// --- Edge query --- //
 
 pub struct EdgeQuery<'a> {
     from: Option<&'a NodeId>,
@@ -554,6 +669,8 @@ impl<'a> Default for EdgeQuery<'a> {
         Self::new()
     }
 }
+
+// --- Tests --- //
 
 #[cfg(test)]
 mod tests {
@@ -780,8 +897,10 @@ mod tests {
             .cst_to_cpg(old_tree)
             .expect("Failed to convert old tree to CPG");
 
+        // Perform the incremental update
         cpg.incremental_update(edits, changed_ranges, &new_tree);
 
+        // Compute the reference CPG
         let mut new_cpg = lang
             .cst_to_cpg(new_tree)
             .expect("Failed to convert new tree to CPG");
