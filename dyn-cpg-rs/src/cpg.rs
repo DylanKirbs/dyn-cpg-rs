@@ -8,7 +8,7 @@ use crate::{
 use slotmap::{SlotMap, new_key_type};
 use std::{
     cmp::{max, min},
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
 };
 use strum_macros::Display;
 use thiserror::Error;
@@ -110,6 +110,17 @@ pub enum NodeType {
     Type,            // A type definition or usage
     Comment,         // A comment in the source code
 
+    // Control flow constructs
+    If,         // If statement
+    While,      // While loop
+    For,        // For loop
+    Condition,  // Condition expression (used in if/while/for)
+    ThenBranch, // Then branch of an if statement
+    ElseBranch, // Else branch of an if statement
+    LoopBody,   // Body of a loop
+    LoopInit,   // Initialization part of a for loop
+    LoopUpdate, // Update part of a for loop
+
     // The weeds (should these be subtypes of statement, expression, etc. or their own types?)
     Call,   // A function call expression
     Return, // A return statement in a function
@@ -159,14 +170,54 @@ pub struct Edge {
 }
 
 #[derive(Debug, Clone)]
+/// The Code Property Graph (CPG) structure
 pub struct Cpg {
+    /// The root node of the CPG, if set
     root: Option<NodeId>,
+    /// Maps NodeId to Node
     nodes: SlotMap<NodeId, Node>,
+    /// Maps EdgeId to Edge
     edges: SlotMap<EdgeId, Edge>,
-    incoming: HashMap<NodeId, Vec<EdgeId>>, // Maps NodeId to a list of EdgeIds that point to it
+    /// Maps NodeId to a list of EdgeIds that point to it
+    incoming: HashMap<NodeId, Vec<EdgeId>>,
+    /// Maps NodeId to a list of EdgeIds that point from it
     outgoing: HashMap<NodeId, Vec<EdgeId>>,
+    /// Spatial index for fast lookups by byte range
     spatial_index: SpatialIndex,
+    /// The language of the CPG
     language: RegisteredLanguage,
+}
+
+// --- Comparison Results --- //
+
+/// Detailed result of a CPG comparison
+#[derive(Debug, Clone, PartialEq)]
+pub enum DetailedComparisonResult {
+    /// The CPGs are semantically equivalent
+    Equivalent,
+    /// The CPGs have structural differences
+    StructuralMismatch {
+        /// Functions present only in the left CPG
+        only_in_left: Vec<String>,
+        /// Functions present only in the right CPG
+        only_in_right: Vec<String>,
+        /// Functions that exist in both but have differences
+        function_mismatches: Vec<FunctionComparisonResult>,
+    },
+}
+
+/// Result of comparing a single function between two CPGs
+#[derive(Debug, Clone, PartialEq)]
+pub enum FunctionComparisonResult {
+    /// The functions are equivalent
+    Equivalent,
+    /// The functions differ
+    Mismatch {
+        /// The name of the function
+        function_name: String,
+        /// Details about the mismatch
+        details: String,
+    },
 }
 
 // Functionality to interact with the CPG
@@ -459,48 +510,238 @@ impl Cpg {
     }
 
     /// Recursively removes a subtree from the CPG by its root node ID
+    /// This function now properly cleans up edges associated with the removed nodes.
     fn remove_subtree(&mut self, root: NodeId) -> Result<(), CpgError> {
-        let edges: Vec<_> = self
+        // 1. Recursively remove child subtrees first
+        // Collect edges to avoid borrowing issues
+        let child_edges: Vec<_> = self
             .get_outgoing_edges(root)
             .into_iter()
             .filter(|e| e.type_ == EdgeType::SyntaxChild)
-            .cloned()
+            .cloned() // Clone edges to avoid holding references
             .collect();
-        for edge in edges {
+
+        for edge in child_edges {
             self.remove_subtree(edge.to)?;
         }
+
+        // 2. Now remove the root node itself and its associated edges
+        // Remove the node data and spatial index entry
         self.nodes.remove(root);
         self.spatial_index.remove_by_node(&root);
 
-        // Might need a bit more work here to ensure all pointers are cleaned up
-        self.incoming.remove(&root);
-        self.outgoing.remove(&root);
+        // 3. Crucially: Remove all edges connected to this node
+        // Collect edge IDs to avoid borrowing issues while modifying the maps
+        let incoming_edge_ids: Vec<EdgeId> = self.incoming.remove(&root).unwrap_or_default();
+        let outgoing_edge_ids: Vec<EdgeId> = self.outgoing.remove(&root).unwrap_or_default();
+
+        // Remove the actual Edge structs from the main edges SlotMap
+        // And also remove them from the counterpart adjacency lists
+        for edge_id in incoming_edge_ids {
+            if let Some(edge) = self.edges.remove(edge_id) {
+                // Remove this edge from the outgoing list of its 'from' node
+                if let Some(outgoing_list) = self.outgoing.get_mut(&edge.from) {
+                    outgoing_list.retain(|&id| id != edge_id);
+                    // If the list becomes empty, we could optionally remove the key,
+                    // but keeping it is usually fine.
+                    // if outgoing_list.is_empty() { self.outgoing.remove(&edge.from); }
+                }
+            }
+        }
+
+        for edge_id in outgoing_edge_ids {
+            if let Some(edge) = self.edges.remove(edge_id) {
+                // Remove this edge from the incoming list of its 'to' node
+                if let Some(incoming_list) = self.incoming.get_mut(&edge.to) {
+                    incoming_list.retain(|&id| id != edge_id);
+                    // if incoming_list.is_empty() { self.incoming.remove(&edge.to); }
+                }
+            }
+        }
+
         Ok(())
     }
 
+    /// Get all of the Syntax Children of a node, ordered by their SyntaxSibling edges
+    /// (i.e. in the order they appear in the source code)
+    pub fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
+        let edges = self.get_outgoing_edges(root);
+        let child_targets: Vec<NodeId> = edges
+            .iter()
+            .filter(|e| e.type_ == EdgeType::SyntaxChild)
+            .map(|e| e.to)
+            .collect();
+
+        let sibling_map: HashMap<NodeId, NodeId> = self
+            .edges
+            .iter()
+            .filter(|(_, e)| e.type_ == EdgeType::SyntaxSibling)
+            .map(|(_, e)| (e.from, e.to))
+            .collect();
+
+        let all_targets: std::collections::HashSet<_> = sibling_map.values().copied().collect();
+        let start = child_targets
+            .iter()
+            .find(|n| !all_targets.contains(n))
+            .copied();
+
+        let mut ordered = Vec::new();
+        let mut current = start;
+        while let Some(id) = current {
+            ordered.push(id);
+            current = sibling_map.get(&id).copied();
+        }
+
+        ordered
+    }
+
     /// Compare two CPGs for semantic equality
-    /// Returns an iterator over the roots of the subtrees that are mismatched (new, different, or missing)
-    pub fn compare(&self, other: &Cpg) -> Result<Vec<(Option<NodeId>, Option<NodeId>)>, CpgError> {
-        let mut mismatches = Vec::new();
+    /// Returns a detailed comparison result indicating structural differences and function-level mismatches
+    pub fn compare(&self, other: &Cpg) -> Result<DetailedComparisonResult, CpgError> {
+        debug!(
+            "Comparing CPGs: left root = {:?}, right root = {:?}",
+            self.get_root(),
+            other.get_root()
+        );
 
         let left_root = self.get_root();
         let right_root = other.get_root();
 
         match (left_root, right_root) {
-            (None, None) => Ok(mismatches),
-            (None, Some(r)) => {
-                mismatches.push((None, Some(r)));
-                Ok(mismatches)
-            }
-            (Some(l), None) => {
-                mismatches.push((Some(l), None));
-                Ok(mismatches)
-            }
-            (Some(l), Some(r)) => {
-                self.compare_subtrees(other, &mut mismatches, l, r)?;
-                Ok(mismatches)
+            (None, None) => Ok(DetailedComparisonResult::Equivalent),
+            (None, Some(_)) => Ok(DetailedComparisonResult::StructuralMismatch {
+                only_in_left: vec![],
+                only_in_right: vec!["root".to_string()],
+                function_mismatches: vec![],
+            }),
+            (Some(_), None) => Ok(DetailedComparisonResult::StructuralMismatch {
+                only_in_left: vec!["root".to_string()],
+                only_in_right: vec![],
+                function_mismatches: vec![],
+            }),
+            (Some(l_root), Some(r_root)) => {
+                let l_node = self.get_node_by_id(&l_root).ok_or_else(|| {
+                    CpgError::MissingField(format!(
+                        "Node with id {:?} not found in left CPG",
+                        l_root
+                    ))
+                })?;
+                let r_node = other.get_node_by_id(&r_root).ok_or_else(|| {
+                    CpgError::MissingField(format!(
+                        "Node with id {:?} not found in right CPG",
+                        r_root
+                    ))
+                })?;
+
+                // Check if both roots are TranslationUnit nodes
+                if l_node.type_ != NodeType::TranslationUnit
+                    || r_node.type_ != NodeType::TranslationUnit
+                {
+                    // If roots aren't TranslationUnits, fall back to subtree comparison
+                    let mut mismatches = Vec::new();
+                    let mut visited = std::collections::HashSet::new();
+                    self.compare_subtrees(other, &mut mismatches, l_root, r_root, &mut visited)?;
+                    if mismatches.is_empty() {
+                        return Ok(DetailedComparisonResult::Equivalent);
+                    } else {
+                        return Ok(DetailedComparisonResult::StructuralMismatch {
+                            only_in_left: vec![],
+                            only_in_right: vec![],
+                            function_mismatches: vec![FunctionComparisonResult::Mismatch {
+                                function_name: "root".to_string(),
+                                details: "Root nodes differ".to_string(),
+                            }],
+                        });
+                    }
+                }
+
+                // Compare top-level structure
+                let left_functions = self.get_top_level_functions(l_root)?;
+                let right_functions = other.get_top_level_functions(r_root)?;
+
+                let mut only_in_left = Vec::new();
+                let mut only_in_right = Vec::new();
+                let mut function_mismatches = Vec::new();
+
+                // Find functions only in left CPG
+                for (name, _) in &left_functions {
+                    if !right_functions.contains_key(name) {
+                        only_in_left.push(name.clone());
+                    }
+                }
+
+                // Find functions only in right CPG
+                for (name, _) in &right_functions {
+                    if !left_functions.contains_key(name) {
+                        only_in_right.push(name.clone());
+                    }
+                }
+
+                // Compare functions present in both CPGs
+                for (name, left_func_id) in &left_functions {
+                    if let Some(right_func_id) = right_functions.get(name) {
+                        let mut mismatches = Vec::new();
+                        let mut visited = std::collections::HashSet::new();
+                        self.compare_subtrees(
+                            other,
+                            &mut mismatches,
+                            *left_func_id,
+                            *right_func_id,
+                            &mut visited,
+                        )?;
+
+                        if !mismatches.is_empty() {
+                            function_mismatches.push(FunctionComparisonResult::Mismatch {
+                                function_name: name.clone(),
+                                details: format!("Function {} has structural differences", name),
+                            });
+                        }
+                    }
+                }
+
+                // Check if there are any differences
+                if only_in_left.is_empty()
+                    && only_in_right.is_empty()
+                    && function_mismatches.is_empty()
+                {
+                    Ok(DetailedComparisonResult::Equivalent)
+                } else {
+                    Ok(DetailedComparisonResult::StructuralMismatch {
+                        only_in_left,
+                        only_in_right,
+                        function_mismatches,
+                    })
+                }
             }
         }
+    }
+    /// Get all top-level function definitions from a TranslationUnit
+    fn get_top_level_functions(&self, root: NodeId) -> Result<HashMap<String, NodeId>, CpgError> {
+        let mut functions = HashMap::new();
+
+        // Get all SyntaxChild edges from the root
+        let child_edges = self.get_outgoing_edges(root);
+
+        for edge in child_edges {
+            if edge.type_ == EdgeType::SyntaxChild {
+                let node = self.get_node_by_id(&edge.to).ok_or_else(|| {
+                    CpgError::MissingField(format!("Child node with id {:?} not found", edge.to))
+                })?;
+
+                // Check if this child is a Function node
+                if node.type_ == NodeType::Function {
+                    // Try to get the function name from properties
+                    let name = node
+                        .properties
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
+                    functions.insert(name, edge.to);
+                }
+            }
+        }
+
+        Ok(functions)
     }
 
     /// Compare two subtrees, updating a list of the NodeIds of the sub-subtrees that are mismatched
@@ -510,7 +751,13 @@ impl Cpg {
         mismatches: &mut Vec<(Option<NodeId>, Option<NodeId>)>,
         l_root: NodeId,
         r_root: NodeId,
+        visited: &mut HashSet<(NodeId, NodeId)>,
     ) -> Result<(), CpgError> {
+        // Avoid re-comparing the same pair of nodes
+        if !visited.insert((l_root, r_root)) {
+            return Ok(());
+        }
+
         let l_node = self.get_node_by_id(&l_root).ok_or_else(|| {
             CpgError::MissingField(format!("Node with id {:?} not found in left CPG", l_root))
         })?;
@@ -527,7 +774,6 @@ impl Cpg {
         let l_edges = self.get_outgoing_edges(l_root);
         let r_edges = other.get_outgoing_edges(r_root);
 
-        use std::collections::HashMap;
         let mut grouped_left: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
         let mut grouped_right: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
 
@@ -558,7 +804,7 @@ impl Cpg {
                         }
 
                         for (lc, rc) in ordered_left.iter().zip(ordered_right.iter()) {
-                            self.compare_subtrees(other, mismatches, *lc, *rc)?;
+                            self.compare_subtrees(other, mismatches, *lc, *rc, visited)?; // Pass visited
                         }
                     } else {
                         if left_group.len() != rg.len() {
@@ -567,7 +813,9 @@ impl Cpg {
                         }
 
                         for (l_edge, r_edge) in left_group.iter().zip(rg.iter()) {
-                            self.compare_subtrees(other, mismatches, l_edge.to, r_edge.to)?;
+                            self.compare_subtrees(
+                                other, mismatches, l_edge.to, r_edge.to, visited,
+                            )?; // Pass visited
                         }
                     }
                 }
@@ -579,37 +827,6 @@ impl Cpg {
         }
 
         Ok(())
-    }
-
-    fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
-        let edges = self.get_outgoing_edges(root);
-        let child_targets: Vec<NodeId> = edges
-            .iter()
-            .filter(|e| e.type_ == EdgeType::SyntaxChild)
-            .map(|e| e.to)
-            .collect();
-
-        let sibling_map: HashMap<NodeId, NodeId> = self
-            .edges
-            .iter()
-            .filter(|(_, e)| e.type_ == EdgeType::SyntaxSibling)
-            .map(|(_, e)| (e.from, e.to))
-            .collect();
-
-        let all_targets: std::collections::HashSet<_> = sibling_map.values().copied().collect();
-        let start = child_targets
-            .iter()
-            .find(|n| !all_targets.contains(n))
-            .copied();
-
-        let mut ordered = Vec::new();
-        let mut current = start;
-        while let Some(id) = current {
-            ordered.push(id);
-            current = sibling_map.get(&id).copied();
-        }
-
-        ordered
     }
 }
 
@@ -908,7 +1125,7 @@ mod tests {
         // Check the difference between the two CPGs
         let diff = cpg.compare(&mut new_cpg).expect("Failed to compare CPGs");
         assert!(
-            diff.is_empty(),
+            matches!(diff, DetailedComparisonResult::Equivalent),
             "CPGs should be semantically equivalent, but found differences: {:?}",
             diff
         );

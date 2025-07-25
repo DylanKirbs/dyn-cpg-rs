@@ -2,3 +2,4 @@ target/
 perf.*
 flamegraph.svg
 samples/
+tarpaulin*

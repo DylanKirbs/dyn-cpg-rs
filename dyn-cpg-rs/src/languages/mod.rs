@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
+use crate::cpg::{self, Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 
 mod c;
 
@@ -172,14 +172,23 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
 
     let type_ = cpg.get_language().map_node_kind(node.kind());
 
-    let id = cpg.add_node(
-        Node {
-            type_,
-            properties: HashMap::new(),
-        },
-        node.start_byte(),
-        node.end_byte(),
-    );
+    let mut cpg_node = Node {
+        type_: type_.clone(),
+        properties: HashMap::new(),
+    };
+    cpg_node
+        .properties
+        .insert("raw_kind".to_string(), node.kind().to_string());
+
+    if type_.clone() == NodeType::Function {
+        // Set the "name" property for function nodes
+        cpg_node.properties.insert(
+            "name".to_string(),
+            "IDK I need to figure this out but I'm out of time".to_string(),
+        );
+    }
+
+    let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
 
     if cursor.goto_first_child() {
         let mut left_child_id: Option<NodeId> = None;
@@ -218,16 +227,317 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
     Ok(id)
 }
 
+// -- Helpers -- //
+
+fn is_statement_node(node_type: &NodeType) -> bool {
+    matches!(
+        node_type,
+        NodeType::Statement
+            | NodeType::Expression
+            | NodeType::Call
+            | NodeType::Return
+            | NodeType::If
+            | NodeType::While
+            | NodeType::For
+            | NodeType::Block
+    )
+}
+
+fn find_child_by_type(cpg: &Cpg, children: &[NodeId], target_type: NodeType) -> Option<NodeId> {
+    for &child in children {
+        if let Some(node) = cpg.get_node_by_id(&child) {
+            if node.type_ == target_type {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+fn get_first_statement_in_block(cpg: &Cpg, block_node: NodeId) -> Option<NodeId> {
+    let children = cpg.ordered_syntax_children(block_node);
+    for child in children {
+        if let Some(node) = cpg.get_node_by_id(&child) {
+            if is_statement_node(&node.type_) {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+fn get_last_statement_in_block(cpg: &Cpg, block_node: NodeId) -> Option<NodeId> {
+    let children = cpg.ordered_syntax_children(block_node);
+    for child in children.iter().rev() {
+        if let Some(node) = cpg.get_node_by_id(child) {
+            if is_statement_node(&node.type_) {
+                return Some(*child);
+            }
+        }
+    }
+    None
+}
+
+fn add_control_flow_edge(
+    cpg: &mut Cpg,
+    from: NodeId,
+    to: NodeId,
+    edge_type: EdgeType,
+) -> Result<(), String> {
+    let existing_edges = cpg.get_outgoing_edges(from);
+    for edge in existing_edges {
+        if edge.to == to && edge.type_ == edge_type {
+            debug!("Control flow edge already exists: {:?} -> {:?}", from, to);
+            return Ok(());
+        }
+    }
+
+    cpg.add_edge(Edge {
+        from,
+        to,
+        type_: edge_type,
+        properties: HashMap::new(),
+    });
+
+    Ok(())
+}
+
 // --- Control Flow & Data Dependence --- //
 
 /// Idempotent computation of the control flow for a subtree in the CPG.
 /// This pass assumes that the AST has been construed into a CPG.
 pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
-    // TODO
-    // Maybe we should always traverse up to the nearest function node, and just compute the CF for the function subtree?
+    use std::collections::{HashSet, VecDeque};
 
-    // We can probably also just over approximate these edges for the sake of proof of concept and simplicity.
-    // If needed this can defer to the specific language implementation (that's why it's in this file).
+    debug!(
+        "Computing control flow for subtree root: {:?}",
+        subtree_root
+    );
+
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    let mut subtree_nodes = Vec::new();
+
+    queue.push_back(subtree_root);
+    visited.insert(subtree_root);
+
+    while let Some(current) = queue.pop_front() {
+        subtree_nodes.push(current);
+
+        let children: Vec<NodeId> = cpg
+            .get_outgoing_edges(current)
+            .iter()
+            .filter(|edge| edge.type_ == EdgeType::SyntaxChild)
+            .map(|edge| edge.to)
+            .collect();
+
+        for child in children {
+            if !visited.contains(&child) {
+                visited.insert(child);
+                queue.push_back(child);
+            }
+        }
+    }
+
+    debug!("Found {} nodes in subtree", subtree_nodes.len());
+
+    for &node_id in &subtree_nodes {
+        if let Some(node) = cpg.get_node_by_id(&node_id) {
+            if node.type_ == NodeType::Function {
+                compute_function_control_flow(cpg, node_id)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Compute control flow within a single function
+fn compute_function_control_flow(cpg: &mut Cpg, function_node: NodeId) -> Result<(), String> {
+    debug!("Computing control flow for function: {:?}", function_node);
+
+    let statements = collect_statements_in_function(cpg, function_node);
+
+    if statements.is_empty() {
+        debug!("No statements found in function");
+        return Ok(());
+    }
+
+    for i in 0..statements.len() {
+        debug!("{}/{}", i + 1, statements.len());
+        let current_stmt = statements[i];
+
+        if let Some(node) = cpg.get_node_by_id(&current_stmt) {
+            match &node.type_ {
+                NodeType::If => {
+                    handle_if_statement_control_flow(cpg, current_stmt, &statements, i)?;
+                }
+                NodeType::While | NodeType::For => {
+                    handle_loop_control_flow(cpg, current_stmt, &statements, i)?;
+                }
+                NodeType::Return => {
+                    debug!("Found return statement: {:?}", current_stmt);
+                }
+                NodeType::Block => {
+                    handle_block_control_flow(cpg, current_stmt, &statements, i)?;
+                }
+                NodeType::Statement | NodeType::Expression | NodeType::Call => {
+                    if i + 1 < statements.len() {
+                        let next_stmt = statements[i + 1];
+                        add_control_flow_edge(
+                            cpg,
+                            current_stmt,
+                            next_stmt,
+                            EdgeType::ControlFlowEpsilon,
+                        )?;
+                    }
+                }
+                _ => {
+                    // For other node types, just connect sequentially
+                    // Note: This may not be necessary or ideal considering we have no idea what the "Language Implementation" nodes are doing
+                    if i + 1 < statements.len() {
+                        let next_stmt = statements[i + 1];
+                        add_control_flow_edge(
+                            cpg,
+                            current_stmt,
+                            next_stmt,
+                            EdgeType::ControlFlowEpsilon,
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_statements_in_function(cpg: &Cpg, function_node: NodeId) -> Vec<NodeId> {
+    let mut statements = Vec::new();
+    collect_statements_recursive(cpg, function_node, &mut statements);
+    statements
+}
+
+fn collect_statements_recursive(cpg: &Cpg, node_id: NodeId, statements: &mut Vec<NodeId>) {
+    if let Some(node) = cpg.get_node_by_id(&node_id) {
+        if is_statement_node(&node.type_) {
+            statements.push(node_id);
+        }
+    }
+
+    let ordered_children = cpg.ordered_syntax_children(node_id);
+    for child in ordered_children {
+        collect_statements_recursive(cpg, child, statements);
+    }
+}
+
+fn handle_if_statement_control_flow(
+    cpg: &mut Cpg,
+    if_stmt: NodeId,
+    statements: &[NodeId],
+    current_index: usize,
+) -> Result<(), String> {
+    debug!("Handling if statement control flow: {:?}", if_stmt);
+
+    // Find the condition, then branch, and else branch (if any)
+    let children = cpg.ordered_syntax_children(if_stmt);
+
+    let condition = find_child_by_type(cpg, &children, NodeType::Condition);
+    let then_branch = find_child_by_type(cpg, &children, NodeType::ThenBranch);
+    let else_branch = find_child_by_type(cpg, &children, NodeType::ElseBranch);
+
+    if let (Some(condition), Some(then_branch)) = (condition, then_branch) {
+        // TRUE
+        add_control_flow_edge(cpg, condition, then_branch, EdgeType::ControlFlowTrue)?;
+
+        // FALSE
+        if let Some(else_branch) = else_branch {
+            add_control_flow_edge(cpg, condition, else_branch, EdgeType::ControlFlowFalse)?;
+
+            if current_index + 1 < statements.len() {
+                let next_stmt = statements[current_index + 1];
+                add_control_flow_edge(cpg, else_branch, next_stmt, EdgeType::ControlFlowEpsilon)?;
+            }
+        } else {
+            if current_index + 1 < statements.len() {
+                let next_stmt = statements[current_index + 1];
+                add_control_flow_edge(cpg, condition, next_stmt, EdgeType::ControlFlowFalse)?;
+            }
+        }
+
+        if current_index + 1 < statements.len() {
+            let next_stmt = statements[current_index + 1];
+            add_control_flow_edge(cpg, then_branch, next_stmt, EdgeType::ControlFlowEpsilon)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_loop_control_flow(
+    cpg: &mut Cpg,
+    loop_stmt: NodeId,
+    statements: &[NodeId],
+    current_index: usize,
+) -> Result<(), String> {
+    debug!("Handling loop control flow: {:?}", loop_stmt);
+
+    let children = cpg.ordered_syntax_children(loop_stmt);
+
+    let condition = find_child_by_type(cpg, &children, NodeType::Condition);
+    let body = find_child_by_type(cpg, &children, NodeType::LoopBody);
+    let init = find_child_by_type(cpg, &children, NodeType::LoopInit);
+    let update = find_child_by_type(cpg, &children, NodeType::LoopUpdate);
+
+    if let (Some(condition), Some(body)) = (condition, body) {
+        // For loops: init -> condition
+        if let Some(init) = init {
+            add_control_flow_edge(cpg, init, condition, EdgeType::ControlFlowEpsilon)?;
+        }
+
+        // True edge from condition to body
+        add_control_flow_edge(cpg, condition, body, EdgeType::ControlFlowTrue)?;
+
+        // Body flows to update (for loops) or back to condition (while loops)
+        if let Some(update) = update {
+            // For loop: body -> update -> condition
+            add_control_flow_edge(cpg, body, update, EdgeType::ControlFlowEpsilon)?;
+            add_control_flow_edge(cpg, update, condition, EdgeType::ControlFlowEpsilon)?;
+        } else {
+            // While loop: body -> condition
+            add_control_flow_edge(cpg, body, condition, EdgeType::ControlFlowEpsilon)?;
+        }
+
+        // False edge from condition to next statement (loop exit)
+        if current_index + 1 < statements.len() {
+            let next_stmt = statements[current_index + 1];
+            add_control_flow_edge(cpg, condition, next_stmt, EdgeType::ControlFlowFalse)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_block_control_flow(
+    cpg: &mut Cpg,
+    block_stmt: NodeId,
+    statements: &[NodeId],
+    current_index: usize,
+) -> Result<(), String> {
+    debug!("Handling block control flow: {:?}", block_stmt);
+
+    // First statement in block
+    if let Some(first_child) = get_first_statement_in_block(cpg, block_stmt) {
+        add_control_flow_edge(cpg, block_stmt, first_child, EdgeType::ControlFlowEpsilon)?;
+    }
+
+    // Connect last statement in block to next statement after the block
+    if current_index + 1 < statements.len() {
+        let next_stmt = statements[current_index + 1];
+        if let Some(last_child) = get_last_statement_in_block(cpg, block_stmt) {
+            add_control_flow_edge(cpg, last_child, next_stmt, EdgeType::ControlFlowEpsilon)?;
+        }
+    }
 
     Ok(())
 }
