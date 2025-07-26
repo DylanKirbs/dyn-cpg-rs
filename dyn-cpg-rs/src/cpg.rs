@@ -301,12 +301,20 @@ impl Cpg {
             .lookup_nodes_from_range(start_byte, end_byte);
         overlapping_ids
             .into_iter()
+            .filter(|id| {
+                // Only consider nodes that fully contain the range
+                let range = self
+                    .spatial_index
+                    .get_range_from_node(id)
+                    .expect("NodeId should have a range");
+                range.0 <= start_byte && range.1 >= end_byte
+            })
             .min_by_key(|id| {
                 let range = self
                     .spatial_index
                     .get_range_from_node(id)
                     .expect("NodeId should have a range");
-                range.1 - range.0 // Return the size of the node
+                range.1 - range.0
             })
             .cloned()
     }
@@ -441,8 +449,10 @@ impl Cpg {
         pos: (usize, usize, usize, usize),
         new_tree: &tree_sitter::Tree,
     ) -> Result<NodeId, CpgError> {
-        // Translate the new subtree from the new_tree based on the position
+        // Check if the node being rehydrated is the current root
+        let is_current_root = self.root == Some(id);
 
+        // Translate the new subtree from the new_tree based on the position
         let mut cursor = new_tree
             .root_node()
             .descendant_for_byte_range(pos.2, pos.3)
@@ -494,12 +504,17 @@ impl Cpg {
                 type_: EdgeType::SyntaxChild,
                 properties: parent_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
             });
-        } else {
+        } else if is_current_root {
             debug!(
-                "No parent edge found for node {:?}, assuming it is a root node",
-                id
+                "Rehydrating root node {:?}, setting new root to {:?}",
+                id, new_subtree_root
             );
             self.set_root(new_subtree_root);
+        } else {
+            debug!(
+                "No parent edge found for node {:?}, but it's not the root node - leaving root unchanged",
+                id
+            );
         }
 
         // Remove the old subtree from the CPG
@@ -650,7 +665,9 @@ impl Cpg {
                             only_in_right: vec![],
                             function_mismatches: vec![FunctionComparisonResult::Mismatch {
                                 function_name: "root".to_string(),
-                                details: "Root nodes differ".to_string(),
+                                details:
+                                    "Root nodes differ and one or both are not TranslationUnits"
+                                        .to_string(),
                             }],
                         });
                     }
@@ -897,43 +914,57 @@ mod tests {
     use crate::languages::RegisteredLanguage;
     use crate::resource::Resource;
 
+    // --- Helper functions for tests --- //
+
+    fn create_test_cpg() -> Cpg {
+        Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
+    }
+
+    fn create_test_node(node_type: NodeType, name: Option<&str>) -> Node {
+        let mut properties = HashMap::new();
+        if let Some(n) = name {
+            properties.insert("name".to_string(), n.to_string());
+        }
+        Node {
+            type_: node_type,
+            properties,
+        }
+    }
+
+    // --- Basic functionality tests --- //
+
     #[test]
     fn test_cpg_creation() {
         let cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         assert!(cpg.nodes.is_empty());
         assert!(cpg.edges.is_empty());
+        assert!(cpg.get_root().is_none());
     }
 
     #[test]
     fn test_add_node() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
-        let node = Node {
-            type_: NodeType::TranslationUnit,
-            properties: HashMap::new(),
-        };
+        let mut cpg = create_test_cpg();
+        let node = create_test_node(NodeType::TranslationUnit, None);
         let node_id = cpg.add_node(node.clone(), 0, 10);
+
         assert_eq!(cpg.get_node_by_id(&node_id), Some(&node));
+        assert_eq!(cpg.get_root(), Some(node_id));
+        assert_eq!(
+            cpg.spatial_index.get_range_from_node(&node_id),
+            Some((0, 10))
+        );
     }
 
     #[test]
     fn test_add_edge() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
+        let mut cpg = create_test_cpg();
         let node_id1 = cpg.add_node(
-            Node {
-                type_: NodeType::Function,
-                properties: HashMap::new(),
-            },
+            create_test_node(NodeType::Function, Some("test_func")),
             0,
             1,
         );
-        let node_id2 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            1,
-            2,
-        );
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier, Some("x")), 1, 2);
+
         let edge = Edge {
             from: node_id1,
             to: node_id2,
@@ -943,35 +974,103 @@ mod tests {
 
         let edge_id = cpg.add_edge(edge.clone());
         assert_eq!(cpg.edges.get(edge_id), Some(&edge));
+
+        // Test adjacency lists are updated
+        let outgoing = cpg.get_outgoing_edges(node_id1);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0], &edge);
+
+        let incoming = cpg.get_incoming_edges(node_id2);
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0], &edge);
     }
 
     #[test]
+    fn test_set_root_override() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
+        let node2 = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 1, 2);
+
+        assert_eq!(cpg.get_root(), Some(node1)); // First node becomes root
+
+        cpg.set_root(node2);
+        assert_eq!(cpg.get_root(), Some(node2)); // Root can be overridden
+    }
+
+    // --- Spatial index tests --- //
+
+    #[test]
+    fn test_spatial_index_basic() {
+        let mut cpg = create_test_cpg();
+        let node_id1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 15);
+        let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 12, 20);
+
+        let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
+        assert_eq!(overlapping.len(), 2);
+        assert!(overlapping.contains(&&node_id1));
+        assert!(overlapping.contains(&&node_id2));
+
+        let non_overlapping = cpg.spatial_index.lookup_nodes_from_range(21, 25);
+        assert!(non_overlapping.is_empty());
+
+        cpg.spatial_index.remove_by_node(&node_id2);
+        let after_removal = cpg.spatial_index.lookup_nodes_from_range(8, 12);
+        assert_eq!(after_removal.len(), 1);
+        assert!(after_removal.contains(&&node_id1));
+    }
+
+    #[test]
+    fn test_spatial_index_edge_cases() {
+        let mut cpg = create_test_cpg();
+
+        // Test zero-width ranges
+        let _node_id = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 5);
+        let overlapping = cpg.spatial_index.lookup_nodes_from_range(5, 5);
+        assert!(overlapping.is_empty()); // Zero-width ranges don't overlap
+
+        // Test exact boundaries
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let exact_match = cpg.spatial_index.lookup_nodes_from_range(0, 10);
+        // Note: The spatial index includes the first node added (root), so count should be 2
+        assert_eq!(exact_match.len(), 2);
+        assert!(exact_match.contains(&&node_id2));
+
+        // Test adjacent ranges
+        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement, None), 10, 20);
+        let adjacent = cpg.spatial_index.lookup_nodes_from_range(10, 10);
+        assert!(adjacent.is_empty()); // Adjacent ranges shouldn't overlap
+    }
+
+    #[test]
+    fn test_get_smallest_node_containing_range() {
+        let mut cpg = create_test_cpg();
+        let large_node = cpg.add_node(create_test_node(NodeType::Function, None), 0, 100);
+        let medium_node = cpg.add_node(create_test_node(NodeType::Block, None), 10, 50);
+        let small_node = cpg.add_node(create_test_node(NodeType::Identifier, None), 20, 30);
+
+        let result = cpg.get_smallest_node_id_containing_range(25, 26);
+        assert_eq!(result, Some(small_node));
+
+        let result2 = cpg.get_smallest_node_id_containing_range(15, 45);
+        assert_eq!(result2, Some(medium_node));
+
+        let result3 = cpg.get_smallest_node_id_containing_range(5, 95);
+        assert_eq!(result3, Some(large_node));
+
+        let result4 = cpg.get_smallest_node_id_containing_range(200, 300);
+        assert_eq!(result4, None);
+    }
+
+    // --- Edge query tests --- //
+
+    #[test]
     fn test_complex_edge_query() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
-        let node1 = cpg.add_node(
-            Node {
-                type_: NodeType::Function,
-                properties: HashMap::new(),
-            },
-            0,
-            1,
-        );
-        let node2 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            1,
-            2,
-        );
-        let node3 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            2,
-            3,
-        );
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 2, 3);
+
         let edge1 = Edge {
             from: node1,
             to: node2,
@@ -986,6 +1085,7 @@ mod tests {
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
+
         let query = EdgeQuery::new()
             .from(&node1)
             .edge_type(&EdgeType::SyntaxChild);
@@ -996,31 +1096,11 @@ mod tests {
 
     #[test]
     fn test_all_incoming_edges() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
-        let node1 = cpg.add_node(
-            Node {
-                type_: NodeType::Function,
-                properties: HashMap::new(),
-            },
-            0,
-            1,
-        );
-        let node2 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            1,
-            2,
-        );
-        let node3 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            2,
-            3,
-        );
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 2, 3);
+
         let edge1 = Edge {
             from: node1,
             to: node2,
@@ -1035,6 +1115,7 @@ mod tests {
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
+
         let query = EdgeQuery::new().to(&node2);
         let results = query.query(&cpg);
         assert_eq!(results.len(), 2);
@@ -1043,42 +1124,388 @@ mod tests {
     }
 
     #[test]
-    fn test_spatial_index() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
-        let node_id1 = cpg.add_node(
-            Node {
-                type_: NodeType::Function,
-                properties: HashMap::new(),
-            },
-            0,
-            10,
-        );
-        let node_id2 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            5,
-            15,
-        );
-        let _node_id3 = cpg.add_node(
-            Node {
-                type_: NodeType::Identifier,
-                properties: HashMap::new(),
-            },
-            12,
-            20,
-        );
+    fn test_edge_query_combinations() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 3);
 
-        let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
-        assert_eq!(overlapping.len(), 2);
-        assert!(overlapping.contains(&&node_id1));
-        assert!(overlapping.contains(&&node_id2));
+        // Add edges with properties
+        let mut edge_props = HashMap::new();
+        edge_props.insert("weight".to_string(), "high".to_string());
 
-        let non_overlapping = cpg.spatial_index.lookup_nodes_from_range(21, 25);
-        assert!(non_overlapping.is_empty());
-        cpg.spatial_index.remove_by_node(&node_id2);
+        let edge1 = Edge {
+            from: node1,
+            to: node2,
+            type_: EdgeType::SyntaxChild,
+            properties: edge_props.clone(),
+        };
+        let edge2 = Edge {
+            from: node2,
+            to: node3,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        };
+        cpg.add_edge(edge1);
+        cpg.add_edge(edge2);
+
+        // Query with multiple criteria
+        let all_syntax_child = EdgeQuery::new()
+            .edge_type(&EdgeType::SyntaxChild)
+            .query(&cpg);
+        assert_eq!(all_syntax_child.len(), 2);
+
+        // Query specific edge
+        let specific = EdgeQuery::new().from(&node1).to(&node2).query(&cpg);
+        assert_eq!(specific.len(), 1);
+        assert_eq!(specific[0].properties, edge_props);
     }
+
+    // --- Subtree removal tests --- //
+
+    #[test]
+    fn test_remove_subtree_simple() {
+        let mut cpg = create_test_cpg();
+        let root = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 5);
+        let child2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 6, 9);
+
+        cpg.add_edge(Edge {
+            from: root,
+            to: child1,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: root,
+            to: child2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        let initial_node_count = cpg.nodes.len();
+        let initial_edge_count = cpg.edges.len();
+
+        cpg.remove_subtree(child1)
+            .expect("Failed to remove subtree");
+
+        // Child1 should be removed
+        assert!(cpg.get_node_by_id(&child1).is_none());
+        assert_eq!(cpg.nodes.len(), initial_node_count - 1);
+        assert_eq!(cpg.edges.len(), initial_edge_count - 1);
+
+        // Root and child2 should remain
+        assert!(cpg.get_node_by_id(&root).is_some());
+        assert!(cpg.get_node_by_id(&child2).is_some());
+    }
+
+    #[test]
+    fn test_remove_subtree_recursive() {
+        let mut cpg = create_test_cpg();
+        let root = cpg.add_node(create_test_node(NodeType::Function, None), 0, 20);
+        let child1 = cpg.add_node(create_test_node(NodeType::Block, None), 1, 10);
+        let grandchild = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 8);
+        let child2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 11, 19);
+
+        cpg.add_edge(Edge {
+            from: root,
+            to: child1,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: child1,
+            to: grandchild,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: root,
+            to: child2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        cpg.remove_subtree(child1)
+            .expect("Failed to remove subtree");
+
+        // Both child1 and grandchild should be removed
+        assert!(cpg.get_node_by_id(&child1).is_none());
+        assert!(cpg.get_node_by_id(&grandchild).is_none());
+
+        // Root and child2 should remain
+        assert!(cpg.get_node_by_id(&root).is_some());
+        assert!(cpg.get_node_by_id(&child2).is_some());
+
+        // No dangling edges should remain
+        assert!(cpg.get_outgoing_edges(child1).is_empty());
+        assert!(cpg.get_incoming_edges(child1).is_empty());
+    }
+
+    #[test]
+    fn test_remove_subtree_edge_cleanup() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 5);
+        let node2 = cpg.add_node(create_test_node(NodeType::Statement, None), 6, 10);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 11, 15);
+
+        // Create a complex edge structure
+        let edge1 = cpg.add_edge(Edge {
+            from: node1,
+            to: node2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        let edge2 = cpg.add_edge(Edge {
+            from: node2,
+            to: node3,
+            type_: EdgeType::ControlFlowTrue,
+            properties: HashMap::new(),
+        });
+        let edge3 = cpg.add_edge(Edge {
+            from: node1,
+            to: node3,
+            type_: EdgeType::PDData("x".to_string()),
+            properties: HashMap::new(),
+        });
+
+        // Remove node2, which should clean up associated edges
+        cpg.remove_subtree(node2).expect("Failed to remove subtree");
+
+        // Check that edges involving node2 are removed
+        assert!(cpg.edges.get(edge1).is_none());
+        assert!(cpg.edges.get(edge2).is_none());
+        assert!(cpg.edges.get(edge3).is_some()); // This edge should remain
+
+        // Check adjacency lists are updated
+        assert!(cpg.get_outgoing_edges(node2).is_empty());
+        assert!(cpg.get_incoming_edges(node2).is_empty());
+
+        // Node1 should no longer have edge to node2
+        let node1_outgoing = cpg.get_outgoing_edges(node1);
+        assert_eq!(node1_outgoing.len(), 1);
+        assert_eq!(node1_outgoing[0].to, node3);
+    }
+
+    // --- Ordered syntax children tests --- //
+
+    #[test]
+    fn test_ordered_syntax_children() {
+        let mut cpg = create_test_cpg();
+        let parent = cpg.add_node(create_test_node(NodeType::Function, None), 0, 30);
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 10);
+        let child2 = cpg.add_node(create_test_node(NodeType::Statement, None), 11, 20);
+        let child3 = cpg.add_node(create_test_node(NodeType::Statement, None), 21, 29);
+
+        // Add syntax child edges
+        cpg.add_edge(Edge {
+            from: parent,
+            to: child1,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: parent,
+            to: child2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: parent,
+            to: child3,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        // Add sibling edges to establish order
+        cpg.add_edge(Edge {
+            from: child1,
+            to: child2,
+            type_: EdgeType::SyntaxSibling,
+            properties: HashMap::new(),
+        });
+        cpg.add_edge(Edge {
+            from: child2,
+            to: child3,
+            type_: EdgeType::SyntaxSibling,
+            properties: HashMap::new(),
+        });
+
+        let ordered = cpg.ordered_syntax_children(parent);
+        assert_eq!(ordered, vec![child1, child2, child3]);
+    }
+
+    #[test]
+    fn test_ordered_syntax_children_empty() {
+        let mut cpg = create_test_cpg();
+        let parent = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+
+        let ordered = cpg.ordered_syntax_children(parent);
+        assert!(ordered.is_empty());
+    }
+
+    // --- CPG comparison tests --- //
+
+    #[test]
+    fn test_compare_equivalent_cpgs() {
+        let mut cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
+
+        // Create identical structures
+        for cpg in [&mut cpg1, &mut cpg2] {
+            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
+            let func = cpg.add_node(create_test_node(NodeType::Function, Some("main")), 1, 19);
+
+            cpg.add_edge(Edge {
+                from: root,
+                to: func,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+        }
+
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        assert!(matches!(result, DetailedComparisonResult::Equivalent));
+    }
+
+    #[test]
+    fn test_compare_different_functions() {
+        let mut cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
+
+        // CPG1 has function "main"
+        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
+        let func1 = cpg1.add_node(create_test_node(NodeType::Function, Some("main")), 1, 19);
+        cpg1.add_edge(Edge {
+            from: root1,
+            to: func1,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        // CPG2 has function "test"
+        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
+        let func2 = cpg2.add_node(create_test_node(NodeType::Function, Some("test")), 1, 19);
+        cpg2.add_edge(Edge {
+            from: root2,
+            to: func2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        match result {
+            DetailedComparisonResult::StructuralMismatch {
+                only_in_left,
+                only_in_right,
+                ..
+            } => {
+                assert!(only_in_left.contains(&"main".to_string()));
+                assert!(only_in_right.contains(&"test".to_string()));
+            }
+            _ => panic!("Expected structural mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_compare_no_roots() {
+        let cpg1 = create_test_cpg();
+        let cpg2 = create_test_cpg();
+
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        assert!(matches!(result, DetailedComparisonResult::Equivalent));
+    }
+
+    #[test]
+    fn test_compare_one_empty() {
+        let cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
+        cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 10);
+
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        match result {
+            DetailedComparisonResult::StructuralMismatch { only_in_right, .. } => {
+                assert!(only_in_right.contains(&"root".to_string()));
+            }
+            _ => panic!("Expected structural mismatch"),
+        }
+    }
+
+    // --- Node offset query tests --- //
+
+    #[test]
+    fn test_get_node_by_offsets() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 15);
+
+        let nodes = cpg.get_node_by_offsets(8, 12);
+        assert_eq!(nodes.len(), 2);
+
+        let node_ids = cpg.get_node_ids_by_offsets(8, 12);
+        assert_eq!(node_ids.len(), 2);
+        assert!(node_ids.contains(&node1));
+        assert!(node_ids.contains(&node2));
+    }
+
+    // --- Error handling tests --- //
+
+    #[test]
+    fn test_remove_nonexistent_subtree() {
+        let mut cpg = create_test_cpg();
+        let node = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        cpg.nodes.remove(node); // Manually remove to create invalid state
+
+        // This should handle the case gracefully
+        let result = cpg.remove_subtree(node);
+        assert!(result.is_ok()); // Should not panic
+    }
+
+    // --- Performance and stress tests --- //
+
+    #[test]
+    fn test_large_graph_operations() {
+        let mut cpg = create_test_cpg();
+        let mut nodes = Vec::new();
+
+        // Create a larger graph structure
+        for i in 0..1000 {
+            let node = cpg.add_node(
+                create_test_node(NodeType::Statement, Some(&format!("stmt_{}", i))),
+                i * 10,
+                i * 10 + 9,
+            );
+            nodes.push(node);
+        }
+
+        // Add edges between consecutive nodes
+        for i in 0..999 {
+            cpg.add_edge(Edge {
+                from: nodes[i],
+                to: nodes[i + 1],
+                type_: EdgeType::ControlFlowEpsilon,
+                properties: HashMap::new(),
+            });
+        }
+
+        // Test spatial queries on large graph
+        let overlapping = cpg.get_node_ids_by_offsets(500, 600);
+        assert!(overlapping.len() > 0);
+
+        // Test edge queries
+        let all_control_flow = EdgeQuery::new()
+            .edge_type(&EdgeType::ControlFlowEpsilon)
+            .query(&cpg);
+        assert_eq!(all_control_flow.len(), 999);
+
+        // Test subtree removal on large graph
+        let subtree_root = nodes[500];
+        cpg.remove_subtree(subtree_root)
+            .expect("Failed to remove subtree");
+        assert!(cpg.get_node_by_id(&subtree_root).is_none());
+    }
+
+    // --- Original test with enhanced assertions --- //
 
     #[test]
     fn test_incr_reparse() {
@@ -1115,24 +1542,138 @@ mod tests {
             .cst_to_cpg(old_tree, new_src.clone())
             .expect("Failed to convert old tree to CPG");
 
+        // Store metrics before incremental update
+        let nodes_before = cpg.nodes.len();
+        let edges_before = cpg.edges.len();
+
         // Perform the incremental update
         cpg.incremental_update(edits, changed_ranges, &new_tree);
 
         // Compute the reference CPG
-        let mut new_cpg = lang
+        let new_cpg = lang
             .cst_to_cpg(new_tree, new_src)
             .expect("Failed to convert new tree to CPG");
 
         // Check the difference between the two CPGs
-        let diff = cpg.compare(&mut new_cpg).expect("Failed to compare CPGs");
+        let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
         assert!(
             matches!(diff, DetailedComparisonResult::Equivalent),
             "CPGs should be semantically equivalent, but found differences: {:?}",
             diff
         );
 
-        debug! {
-            "Incremental update test passed, CPGs are equivalent after reparse"
-        };
+        // Verify the graph is still internally consistent
+        assert!(cpg.nodes.len() > 0, "CPG should have nodes after update");
+        assert!(cpg.edges.len() > 0, "CPG should have edges after update");
+        assert!(
+            cpg.get_root().is_some(),
+            "CPG should have a root after update"
+        );
+
+        debug!(
+            "Incremental update test passed: nodes {} -> {}, edges {} -> {}",
+            nodes_before,
+            cpg.nodes.len(),
+            edges_before,
+            cpg.edges.len()
+        );
+    }
+
+    // --- Integration tests --- //
+
+    #[test]
+    fn test_multiple_incremental_updates() {
+        // Test multiple sequential incremental updates
+        let mut cpg = create_test_cpg();
+
+        // Start with a simple structure
+        let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 100);
+        let func = cpg.add_node(create_test_node(NodeType::Function, Some("test")), 10, 90);
+        cpg.add_edge(Edge {
+            from: root,
+            to: func,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        let initial_nodes = cpg.nodes.len();
+
+        // Simulate multiple updates by removing and adding subtrees
+        cpg.remove_subtree(func).expect("Failed to remove function");
+        assert_eq!(cpg.nodes.len(), initial_nodes - 1);
+
+        // Add it back with a different name
+        let new_func = cpg.add_node(
+            create_test_node(NodeType::Function, Some("test_new")),
+            10,
+            90,
+        );
+        cpg.add_edge(Edge {
+            from: root,
+            to: new_func,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        assert_eq!(cpg.nodes.len(), initial_nodes);
+
+        // Verify structure is still valid
+        let children = cpg.get_outgoing_edges(root);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].to, new_func);
+    }
+
+    #[test]
+    fn test_concurrent_modifications() {
+        // Test that the CPG maintains consistency under various operation sequences
+        let mut cpg = create_test_cpg();
+
+        // Create a complex structure
+        let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 1000);
+        let mut functions = Vec::new();
+
+        for i in 0..5 {
+            let func = cpg.add_node(
+                create_test_node(NodeType::Function, Some(&format!("func_{}", i))),
+                i * 200,
+                (i + 1) * 200 - 1,
+            );
+            functions.push(func);
+            cpg.add_edge(Edge {
+                from: root,
+                to: func,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+        }
+
+        // Perform various operations
+        let nodes_before = cpg.nodes.len();
+
+        // Remove a function in the middle
+        cpg.remove_subtree(functions[2])
+            .expect("Failed to remove function");
+
+        // Add a new function
+        let new_func = cpg.add_node(
+            create_test_node(NodeType::Function, Some("new_func")),
+            1001,
+            1100,
+        );
+        cpg.add_edge(Edge {
+            from: root,
+            to: new_func,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        // Verify consistency
+        assert_eq!(cpg.nodes.len(), nodes_before); // One removed, one added
+        assert!(cpg.get_node_by_id(&functions[2]).is_none());
+        assert!(cpg.get_node_by_id(&new_func).is_some());
+
+        // All remaining nodes should be reachable from root
+        let children = cpg.get_outgoing_edges(root);
+        assert_eq!(children.len(), 5); // 4 original + 1 new
     }
 }
