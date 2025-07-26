@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::{self, Cpg, Edge, EdgeType, Node, NodeId, NodeType};
+use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 
 mod c;
 
@@ -120,9 +120,9 @@ macro_rules! register_languages {
                 }
             }
 
-            pub fn cst_to_cpg(&self, tree: tree_sitter::Tree) -> Result<Cpg, String> {
+            pub fn cst_to_cpg(&self, tree: tree_sitter::Tree, source: Vec<u8>) -> Result<Cpg, String> {
                 match self {
-                    $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree),)+
+                    $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree, source),)+
                 }
             }
         }
@@ -135,10 +135,14 @@ register_languages! { C }
 
 // --- Generic Language Utilities --- //
 
-pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<Cpg, String> {
+pub fn cst_to_cpg(
+    lang: &RegisteredLanguage,
+    tree: tree_sitter::Tree,
+    source: Vec<u8>,
+) -> Result<Cpg, String> {
     debug!("Converting CST to CPG for {:?}", lang);
 
-    let mut cpg = Cpg::new(lang.clone());
+    let mut cpg = Cpg::new(lang.clone(), source);
     let mut cursor = tree.walk();
 
     translate(&mut cpg, &mut cursor).map_err(|e| {
@@ -167,8 +171,49 @@ pub fn cst_to_cpg(lang: &RegisteredLanguage, tree: tree_sitter::Tree) -> Result<
     Ok(cpg)
 }
 
+fn get_fn_name(cpg: &Cpg, node: &tree_sitter::Node) -> Option<String> {
+    // Try to get name directly from a field named "name" or "identifier"
+    // Different languages use different field names for function names
+    let name_node = node
+        .child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("identifier"))
+        .or_else(|| {
+            // If no direct name field, look for the first identifier child
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
+                    if child.kind() == "identifier" {
+                        return Some(child);
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            None
+        });
+
+    // Extract the text from the name node if we found one
+    name_node
+        .and_then(|n| n.utf8_text(&cpg.get_source()).ok())
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
 pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
     let node = cursor.node();
+    let source_len = cpg.get_source().len();
+
+    // Validate node range is within source bounds
+    if node.start_byte() > source_len || node.end_byte() > source_len {
+        return Err(format!(
+            "Node range ({}, {}) exceeds source length {}",
+            node.start_byte(),
+            node.end_byte(),
+            source_len
+        ));
+    }
 
     let type_ = cpg.get_language().map_node_kind(node.kind());
 
@@ -181,11 +226,17 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         .insert("raw_kind".to_string(), node.kind().to_string());
 
     if type_.clone() == NodeType::Function {
-        // Set the "name" property for function nodes
-        cpg_node.properties.insert(
-            "name".to_string(),
-            "IDK I need to figure this out but I'm out of time".to_string(),
-        );
+        if node.start_byte() < node.end_byte() {
+            cpg_node.properties.insert(
+                "name".to_string(),
+                get_fn_name(cpg, &node).unwrap_or_else(|| "unknown".to_string()),
+            );
+            debug!(
+                "Function node found: {:?} with name: {}",
+                node.kind(),
+                cpg_node.properties["name"]
+            );
+        }
     }
 
     let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
@@ -544,8 +595,8 @@ fn handle_block_control_flow(
 
 /// Idempotent computation of the data dependence for a subtree in the CPG.
 /// This pass assumes that the control flow has already been computed.
-pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
-    // TODO
+pub fn data_dep_pass(_cpg: &mut Cpg, _subtree_root: NodeId) -> Result<(), String> {
+    // TODO: Implement data dependence analysis
 
     Ok(())
 }

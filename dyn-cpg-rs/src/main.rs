@@ -101,13 +101,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         debug!("Processing file: {:?}", file_resource.raw_path());
 
         let content = file_resource.read_bytes()?;
-        let tree = parser.parse(content, None).ok_or(
+        let tree = parser.parse(&content, None).ok_or(
             "Failed to parse file content. Ensure the file is valid for the specified language.",
         )?;
         debug!("Parsed tree");
 
         // Convert tree to CPG
-        let _cpg = args.lang.cst_to_cpg(tree)?;
+        let _cpg = args.lang.cst_to_cpg(tree, content)?;
         debug!("Converted tree to CPG");
     }
 

@@ -24,12 +24,6 @@ new_key_type! {
 
 // --- Helper Functions --- //
 
-// fn to_sorted_vec(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
-//     let mut vec: Vec<_> = map.iter().collect();
-//     vec.sort();
-//     vec
-// }
-
 fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> {
     let mut vec: Vec<_> = properties
         .iter()
@@ -186,6 +180,8 @@ pub struct Cpg {
     spatial_index: SpatialIndex,
     /// The language of the CPG
     language: RegisteredLanguage,
+    /// The source that the tree/CPG was parsed from
+    source: Vec<u8>,
 }
 
 // --- Comparison Results --- //
@@ -223,7 +219,7 @@ pub enum FunctionComparisonResult {
 // Functionality to interact with the CPG
 
 impl Cpg {
-    pub fn new(lang: RegisteredLanguage) -> Self {
+    pub fn new(lang: RegisteredLanguage, source: Vec<u8>) -> Self {
         Cpg {
             root: None,
             nodes: SlotMap::with_key(),
@@ -232,6 +228,7 @@ impl Cpg {
             outgoing: HashMap::new(),
             spatial_index: SpatialIndex::new(),
             language: lang,
+            source: source,
         }
     }
 
@@ -245,6 +242,10 @@ impl Cpg {
 
     pub fn get_language(&self) -> &RegisteredLanguage {
         &self.language
+    }
+
+    pub fn get_source(&self) -> &Vec<u8> {
+        &self.source
     }
 
     /// Add a node to the CPG and update the spatial index
@@ -898,14 +899,14 @@ mod tests {
 
     #[test]
     fn test_cpg_creation() {
-        let cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         assert!(cpg.nodes.is_empty());
         assert!(cpg.edges.is_empty());
     }
 
     #[test]
     fn test_add_node() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         let node = Node {
             type_: NodeType::TranslationUnit,
             properties: HashMap::new(),
@@ -916,7 +917,7 @@ mod tests {
 
     #[test]
     fn test_add_edge() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         let node_id1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -946,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_complex_edge_query() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         let node1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -995,7 +996,7 @@ mod tests {
 
     #[test]
     fn test_all_incoming_edges() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         let node1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -1043,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_spatial_index() {
-        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"));
+        let mut cpg = Cpg::new("C".parse().expect("Failed to parse language"), Vec::new());
         let node_id1 = cpg.add_node(
             Node {
                 type_: NodeType::Function,
@@ -1111,7 +1112,7 @@ mod tests {
         assert!(changed_ranges.len() != 0, "No changed ranges found");
 
         let mut cpg = lang
-            .cst_to_cpg(old_tree)
+            .cst_to_cpg(old_tree, new_src.clone())
             .expect("Failed to convert old tree to CPG");
 
         // Perform the incremental update
@@ -1119,7 +1120,7 @@ mod tests {
 
         // Compute the reference CPG
         let mut new_cpg = lang
-            .cst_to_cpg(new_tree)
+            .cst_to_cpg(new_tree, new_src)
             .expect("Failed to convert new tree to CPG");
 
         // Check the difference between the two CPGs
@@ -1129,5 +1130,9 @@ mod tests {
             "CPGs should be semantically equivalent, but found differences: {:?}",
             diff
         );
+
+        debug! {
+            "Incremental update test passed, CPGs are equivalent after reparse"
+        };
     }
 }

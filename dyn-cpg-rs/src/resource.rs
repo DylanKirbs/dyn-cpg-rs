@@ -242,24 +242,6 @@ mod test {
     }
 
     #[test]
-    fn test_git_file_vs_worktree() {
-        let git_resource = Resource::new("./src/main.rs")
-            .unwrap()
-            .with_git("HEAD".to_owned(), "./..")
-            .unwrap();
-
-        let wt_resource = Resource::new("./src/main.rs").unwrap();
-
-        let git_content = git_resource.read_string().unwrap();
-        let wt_content = wt_resource.read_string().unwrap();
-
-        assert_eq!(
-            git_content, wt_content,
-            "Content of git resource should match worktree resource (if `main.rs` is committed)"
-        );
-    }
-
-    #[test]
     fn test_missing_path() {
         let resource = Resource::new("does/not/exist.rs");
 

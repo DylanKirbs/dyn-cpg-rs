@@ -10,7 +10,7 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
     match node_kind {
         "translation_unit" => NodeType::TranslationUnit,
 
-        "function_definition" | "function_declarator" => NodeType::Function,
+        "function_declarator" => NodeType::Function,
 
         "identifier" => NodeType::Identifier,
 
