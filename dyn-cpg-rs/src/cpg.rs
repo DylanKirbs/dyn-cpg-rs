@@ -604,29 +604,38 @@ impl Cpg {
         self.spatial_index.remove_by_node(&root);
 
         // 3. Crucially: Remove all edges connected to this node
-        // Collect edge IDs to avoid borrowing issues while modifying the maps
-        let incoming_edge_ids: Vec<EdgeId> = self.incoming.remove(&root).unwrap_or_default();
-        let outgoing_edge_ids: Vec<EdgeId> = self.outgoing.remove(&root).unwrap_or_default();
+        // First collect ALL edge IDs that reference this node from the main edges SlotMap
+        let mut edges_to_remove = Vec::new();
+        for (edge_id, edge) in self.edges.iter() {
+            if edge.from == root || edge.to == root {
+                edges_to_remove.push(edge_id);
+            }
+        }
 
-        // Remove the actual Edge structs from the main edges SlotMap
-        // And also remove them from the counterpart adjacency lists
-        for edge_id in incoming_edge_ids {
+        // Remove each edge and update adjacency lists
+        for edge_id in edges_to_remove {
             if let Some(edge) = self.edges.remove(edge_id) {
-                // Remove this edge from the outgoing list of its 'from' node
+                // Remove from outgoing list of the 'from' node
                 if let Some(outgoing_list) = self.outgoing.get_mut(&edge.from) {
                     outgoing_list.retain(|&id| id != edge_id);
+                    if outgoing_list.is_empty() {
+                        self.outgoing.remove(&edge.from);
+                    }
+                }
+
+                // Remove from incoming list of the 'to' node
+                if let Some(incoming_list) = self.incoming.get_mut(&edge.to) {
+                    incoming_list.retain(|&id| id != edge_id);
+                    if incoming_list.is_empty() {
+                        self.incoming.remove(&edge.to);
+                    }
                 }
             }
         }
 
-        for edge_id in outgoing_edge_ids {
-            if let Some(edge) = self.edges.remove(edge_id) {
-                // Remove this edge from the incoming list of its 'to' node
-                if let Some(incoming_list) = self.incoming.get_mut(&edge.to) {
-                    incoming_list.retain(|&id| id != edge_id);
-                }
-            }
-        }
+        // 4. Finally, remove any empty adjacency lists for the removed node
+        self.incoming.remove(&root);
+        self.outgoing.remove(&root);
 
         Ok(())
     }
@@ -951,6 +960,81 @@ impl Cpg {
         }
 
         Ok(())
+    }
+
+    pub fn emit_dot(&self) -> String {
+        let mut dot = String::new();
+        dot.push_str("digraph CPG {\n");
+        dot.push_str("  rankdir=TB;\n");
+        dot.push_str("  node [shape=box];\n");
+
+        let mut visited = HashSet::new();
+        fn emit_edge(dot: &mut String, edge: &Edge) {
+            let from = format!("{:?}", edge.from)
+                .replace("NodeId(", "")
+                .replace(")", "");
+            let to = format!("{:?}", edge.to)
+                .replace("NodeId(", "")
+                .replace(")", "");
+
+            let col = match edge.type_ {
+                EdgeType::Unknown => "black",
+                EdgeType::SyntaxChild => "blue",
+                EdgeType::SyntaxSibling => "green",
+                EdgeType::ControlFlowEpsilon => "red",
+                EdgeType::ControlFlowTrue => "orange",
+                EdgeType::ControlFlowFalse => "purple",
+                EdgeType::PDControlTrue => "cyan",
+                EdgeType::PDControlFalse => "magenta",
+                EdgeType::PDData(_) => "brown",
+                EdgeType::Listener(_) => "gray",
+            };
+
+            dot.push_str(&format!(
+                "  {:?} -> {:?} [label=\"{}\", color=\"{}\"];\n",
+                from,
+                to,
+                edge.type_
+                    .to_string()
+                    .replace("EdgeType::", "")
+                    .replace("_", " "),
+                col
+            ));
+        }
+        fn emit_node(dot: &mut String, cpg: &Cpg, node_id: NodeId, visited: &mut HashSet<NodeId>) {
+            if !visited.insert(node_id) {
+                return; // Already visited this node
+            }
+
+            let node = cpg.get_node_by_id(&node_id).expect("Node should exist");
+            let id_s = format!("{:?}", node_id)
+                .replace("NodeId(", "")
+                .replace(")", "");
+            dot.push_str(&format!(
+                "  {:?} [label=\"{}\"];\n",
+                id_s,
+                node.type_.to_string()
+            ));
+
+            for edge in cpg.get_outgoing_edges(node_id) {
+                emit_node(dot, cpg, edge.to, visited);
+            }
+        }
+
+        // Recursive walk emitting nodes
+        if let Some(root) = self.get_root() {
+            emit_node(&mut dot, self, root, &mut visited);
+        } else {
+            dot.push_str("  // No root node set\n");
+        }
+
+        // Emit edges
+        for edge in self.edges.values() {
+            emit_edge(&mut dot, edge);
+        }
+
+        dot.push_str("}\n");
+        dot
     }
 }
 

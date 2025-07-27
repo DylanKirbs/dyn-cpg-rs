@@ -53,6 +53,8 @@ fn test_incremental_reparse() {
         .expect("Failed to convert new tree to CPG");
 
     // Compare the incrementally updated CPG with the reference CPG
+    std::fs::write("tmp_old.dot", cpg.emit_dot()).expect("Failed to write tmp_old.dot");
+    std::fs::write("tmp_new.dot", new_cpg.emit_dot()).expect("Failed to write tmp_new.dot");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     assert!(
         matches!(diff, DetailedComparisonResult::Equivalent),

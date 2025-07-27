@@ -3,3 +3,4 @@ perf.*
 flamegraph.svg
 samples/
 tarpaulin*
+*.dot*
