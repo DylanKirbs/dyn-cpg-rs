@@ -581,27 +581,44 @@ impl Cpg {
     /// Get all of the Syntax Children of a node, ordered by their SyntaxSibling edges
     /// (i.e. in the order they appear in the source code)
     pub fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
-        let edges = self.get_outgoing_edges(root);
-        let child_targets: Vec<NodeId> = edges
-            .iter()
-            .filter(|e| e.type_ == EdgeType::SyntaxChild)
-            .map(|e| e.to)
-            .collect();
+        // Guard against no edges
+        let outgoing_edges = self.get_outgoing_edges(root);
+        if outgoing_edges.is_empty() {
+            return Vec::new();
+        }
 
-        let sibling_map: HashMap<NodeId, NodeId> = self
-            .edges
-            .iter()
-            .filter(|(_, e)| e.type_ == EdgeType::SyntaxSibling)
-            .map(|(_, e)| (e.from, e.to))
-            .collect();
+        let mut child_nodes = Vec::new();
+        let mut sibling_map = HashMap::new();
+        let mut has_incoming_sibling = HashSet::new();
 
-        let all_targets: std::collections::HashSet<_> = sibling_map.values().copied().collect();
-        let start = child_targets
+        for edge in outgoing_edges {
+            if edge.type_ == EdgeType::SyntaxChild {
+                child_nodes.push(edge.to);
+            }
+        }
+
+        // Guard against no children
+        if child_nodes.is_empty() {
+            return Vec::new();
+        }
+
+        for &child in &child_nodes {
+            let child_outgoing = self.get_outgoing_edges(child);
+            for edge in child_outgoing {
+                if edge.type_ == EdgeType::SyntaxSibling {
+                    sibling_map.insert(edge.from, edge.to);
+                    has_incoming_sibling.insert(edge.to);
+                    break; // Each node has at most one outgoing sibling edge
+                }
+            }
+        }
+
+        let start = child_nodes
             .iter()
-            .find(|n| !all_targets.contains(n))
+            .find(|&&node| !has_incoming_sibling.contains(&node))
             .copied();
 
-        let mut ordered = Vec::new();
+        let mut ordered = Vec::with_capacity(child_nodes.len());
         let mut current = start;
         while let Some(id) = current {
             ordered.push(id);
