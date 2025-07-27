@@ -24,13 +24,16 @@ trait Language: Default + std::fmt::Debug {
 
     /// Map a Tree-sitter node kind to a CPG node type.
     fn map_node_kind(&self, node_kind: &'static str) -> NodeType;
+
+    /// Get the function name from a Tree-sitter node.
+    fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String>;
 }
 
 #[macro_export]
 /// Macro to define a new language complying with the `Language` trait.
 macro_rules! define_language {
     (
-        $name:ident, [$($variant_names:expr),+], $lang:path, $kind:expr
+        $name:ident, [$($variant_names:expr),+], $lang:path, $map_kind:expr, $get_fn_name:expr
     ) => {
 
             #[derive(Debug, Clone)]
@@ -55,7 +58,11 @@ macro_rules! define_language {
                 }
 
                 fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
-                    $kind(self, node_kind)
+                    $map_kind(self, node_kind)
+                }
+
+                fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String> {
+                    $get_fn_name(node, source)
                 }
             }
 
@@ -125,6 +132,12 @@ macro_rules! register_languages {
                     $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree, source),)+
                 }
             }
+
+            pub fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String> {
+                match self {
+                    $(RegisteredLanguage::$variant(language) => language.get_fn_name(node, source),)+
+                }
+            }
         }
     };
 }
@@ -171,36 +184,6 @@ pub fn cst_to_cpg(
     Ok(cpg)
 }
 
-fn get_fn_name(cpg: &Cpg, node: &tree_sitter::Node) -> Option<String> {
-    // Try to get name directly from a field named "name" or "identifier"
-    // Different languages use different field names for function names
-    let name_node = node
-        .child_by_field_name("name")
-        .or_else(|| node.child_by_field_name("identifier"))
-        .or_else(|| {
-            // If no direct name field, look for the first identifier child
-            let mut cursor = node.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    let child = cursor.node();
-                    if child.kind() == "identifier" {
-                        return Some(child);
-                    }
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-            None
-        });
-
-    // Extract the text from the name node if we found one
-    name_node
-        .and_then(|n| n.utf8_text(&cpg.get_source()).ok())
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-}
-
 pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
     let node = cursor.node();
     let source_len = cpg.get_source().len();
@@ -229,7 +212,9 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         if node.start_byte() < node.end_byte() {
             cpg_node.properties.insert(
                 "name".to_string(),
-                get_fn_name(cpg, &node).unwrap_or_else(|| "unknown".to_string()),
+                cpg.get_language()
+                    .get_fn_name(&node, cpg.get_source())
+                    .unwrap_or_else(|| "unknown".to_string()),
             );
             debug!(
                 "Function node found: {:?} with name: {}",

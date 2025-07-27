@@ -248,6 +248,16 @@ impl Cpg {
         &self.source
     }
 
+    /// Get the number of nodes in the CPG
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Get the number of edges in the CPG
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
     /// Add a node to the CPG and update the spatial index
     /// If no root is set, the first node added will be assumed to be the root, this can be overridden using `set_root`.
     pub fn add_node(&mut self, node: Node, start_byte: usize, end_byte: usize) -> NodeId {
@@ -390,19 +400,34 @@ impl Cpg {
             } else {
                 debug!(
                     "No node found for edit range: {:?}",
-                    (edit.old_end, edit.old_end)
+                    (edit.old_start, edit.old_end)
                 );
             }
         }
 
         debug!("Rehydrating dirty nodes: {:?}", dirty_nodes);
         let mut rehydrated_nodes = Vec::new();
+        let mut affected_functions = HashSet::new();
+
+        // Collect all functions that contain dirty nodes before rehydration
+        for (id, _) in &dirty_nodes {
+            if let Some(function_id) = self.find_containing_function(*id) {
+                affected_functions.insert(function_id);
+            }
+        }
+
+        // Rehydrate dirty nodes
         for (id, pos) in dirty_nodes {
             let new_node = self.rehydrate(id, pos, new_tree);
             match new_node {
                 Ok(new_id) => {
                     debug!("Rehydrated node {:?} to new id {:?}", id, new_id);
                     rehydrated_nodes.push(new_id);
+
+                    // Also find the function that contains the new node
+                    if let Some(function_id) = self.find_containing_function(new_id) {
+                        affected_functions.insert(function_id);
+                    }
                 }
                 Err(e) => {
                     debug!("Failed to rehydrate node {:?}: {}", id, e);
@@ -411,36 +436,68 @@ impl Cpg {
         }
 
         debug!(
-            "Computing control flow for {} rehydrated nodes",
-            rehydrated_nodes.len()
+            "Computing control flow for {} affected functions",
+            affected_functions.len()
         );
-        for new_node in rehydrated_nodes.clone() {
-            cf_pass(self, new_node)
+        for function_id in affected_functions.clone() {
+            cf_pass(self, function_id)
                 .map_err(|e| {
                     debug!(
-                        "Failed to recompute control flow for node {:?}: {}",
-                        new_node, e
+                        "Failed to recompute control flow for function {:?}: {}",
+                        function_id, e
                     )
                 })
                 .ok();
         }
 
         debug!(
-            "Computing program dependence for {} rehydrated nodes",
-            rehydrated_nodes.len()
+            "Computing program dependence for {} affected functions",
+            affected_functions.len()
         );
-        for new_node in rehydrated_nodes {
-            data_dep_pass(self, new_node)
+        for function_id in affected_functions {
+            data_dep_pass(self, function_id)
                 .map_err(|e| {
                     debug!(
-                        "Failed to recompute data dependence for node {:?}: {}",
-                        new_node, e
+                        "Failed to recompute data dependence for function {:?}: {}",
+                        function_id, e
                     )
                 })
                 .ok();
         }
 
         debug!("Incremental update complete");
+    }
+
+    /// Find the function node that contains the given node
+    fn find_containing_function(&self, node_id: NodeId) -> Option<NodeId> {
+        let mut current = node_id;
+        let mut visited = HashSet::new();
+
+        // Traverse up the syntax tree looking for a function node
+        while !visited.contains(&current) {
+            visited.insert(current);
+
+            if let Some(node) = self.get_node_by_id(&current) {
+                if node.type_ == NodeType::Function {
+                    return Some(current);
+                }
+            }
+
+            // Find parent via SyntaxChild edge
+            let parent_edges: Vec<_> = self
+                .get_incoming_edges(current)
+                .into_iter()
+                .filter(|e| e.type_ == EdgeType::SyntaxChild)
+                .collect();
+
+            if let Some(parent_edge) = parent_edges.first() {
+                current = parent_edge.from;
+            } else {
+                break;
+            }
+        }
+
+        None
     }
 
     fn rehydrate(
@@ -527,7 +584,7 @@ impl Cpg {
 
     /// Recursively removes a subtree from the CPG by its root node ID
     /// This function now properly cleans up edges associated with the removed nodes.
-    fn remove_subtree(&mut self, root: NodeId) -> Result<(), CpgError> {
+    pub fn remove_subtree(&mut self, root: NodeId) -> Result<(), CpgError> {
         // 1. Recursively remove child subtrees first
         // Collect edges to avoid borrowing issues
         let child_edges: Vec<_> = self
@@ -558,9 +615,6 @@ impl Cpg {
                 // Remove this edge from the outgoing list of its 'from' node
                 if let Some(outgoing_list) = self.outgoing.get_mut(&edge.from) {
                     outgoing_list.retain(|&id| id != edge_id);
-                    // If the list becomes empty, we could optionally remove the key,
-                    // but keeping it is usually fine.
-                    // if outgoing_list.is_empty() { self.outgoing.remove(&edge.from); }
                 }
             }
         }
@@ -570,7 +624,6 @@ impl Cpg {
                 // Remove this edge from the incoming list of its 'to' node
                 if let Some(incoming_list) = self.incoming.get_mut(&edge.to) {
                     incoming_list.retain(|&id| id != edge_id);
-                    // if incoming_list.is_empty() { self.incoming.remove(&edge.to); }
                 }
             }
         }
@@ -682,9 +735,16 @@ impl Cpg {
                             only_in_right: vec![],
                             function_mismatches: vec![FunctionComparisonResult::Mismatch {
                                 function_name: "root".to_string(),
-                                details:
-                                    "Root nodes differ and one or both are not TranslationUnits"
-                                        .to_string(),
+                                details: format!(
+                                    "Root nodes differ [Root not TranslationUnit (left={},right={})]: {}",
+                                    l_node.type_ != NodeType::TranslationUnit,
+                                    r_node.type_ != NodeType::TranslationUnit,
+                                    mismatches
+                                        .iter()
+                                        .map(|(l, r)| format!("Left: {:?}, Right: {:?}", l, r))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
                             }],
                         });
                     }
@@ -728,7 +788,15 @@ impl Cpg {
                         if !mismatches.is_empty() {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
-                                details: format!("Function {} has structural differences", name),
+                                details: format!(
+                                    "Function {} has structural differences: {}",
+                                    name,
+                                    mismatches
+                                        .iter()
+                                        .map(|(l, r)| format!("Left: {:?}, Right: {:?}", l, r))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
                             });
                         }
                     }
@@ -750,18 +818,33 @@ impl Cpg {
             }
         }
     }
+
     /// Get all top-level function definitions from a TranslationUnit
-    fn get_top_level_functions(&self, root: NodeId) -> Result<HashMap<String, NodeId>, CpgError> {
+    pub fn get_top_level_functions(
+        &self,
+        root: NodeId,
+    ) -> Result<HashMap<String, NodeId>, CpgError> {
         let mut functions = HashMap::new();
 
         // Get all SyntaxChild edges from the root
         let child_edges = self.get_outgoing_edges(root);
+
+        debug!(
+            "Looking for functions in {} child edges from root {:?}",
+            child_edges.len(),
+            root
+        );
 
         for edge in child_edges {
             if edge.type_ == EdgeType::SyntaxChild {
                 let node = self.get_node_by_id(&edge.to).ok_or_else(|| {
                     CpgError::MissingField(format!("Child node with id {:?} not found", edge.to))
                 })?;
+
+                debug!(
+                    "Child node type: {:?}, properties: {:?}",
+                    node.type_, node.properties
+                );
 
                 // Check if this child is a Function node
                 if node.type_ == NodeType::Function {
@@ -771,11 +854,17 @@ impl Cpg {
                         .get("name")
                         .cloned()
                         .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
+                    debug!("Found function with name: {}", name);
                     functions.insert(name, edge.to);
                 }
             }
         }
 
+        debug!(
+            "Found {} functions: {:?}",
+            functions.len(),
+            functions.keys().collect::<Vec<_>>()
+        );
         Ok(functions)
     }
 
@@ -927,9 +1016,6 @@ impl<'a> Default for EdgeQuery<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::incremental_parse;
-    use crate::languages::RegisteredLanguage;
-    use crate::resource::Resource;
 
     // --- Helper functions for tests --- //
 
@@ -1476,221 +1562,5 @@ mod tests {
         // This should handle the case gracefully
         let result = cpg.remove_subtree(node);
         assert!(result.is_ok()); // Should not panic
-    }
-
-    // --- Performance and stress tests --- //
-
-    #[test]
-    fn test_large_graph_operations() {
-        let mut cpg = create_test_cpg();
-        let mut nodes = Vec::new();
-
-        // Create a larger graph structure
-        for i in 0..1000 {
-            let node = cpg.add_node(
-                create_test_node(NodeType::Statement, Some(&format!("stmt_{}", i))),
-                i * 10,
-                i * 10 + 9,
-            );
-            nodes.push(node);
-        }
-
-        // Add edges between consecutive nodes
-        for i in 0..999 {
-            cpg.add_edge(Edge {
-                from: nodes[i],
-                to: nodes[i + 1],
-                type_: EdgeType::ControlFlowEpsilon,
-                properties: HashMap::new(),
-            });
-        }
-
-        // Test spatial queries on large graph
-        let overlapping = cpg.get_node_ids_by_offsets(500, 600);
-        assert!(overlapping.len() > 0);
-
-        // Test edge queries
-        let all_control_flow = EdgeQuery::new()
-            .edge_type(&EdgeType::ControlFlowEpsilon)
-            .query(&cpg);
-        assert_eq!(all_control_flow.len(), 999);
-
-        // Test subtree removal on large graph
-        let subtree_root = nodes[500];
-        cpg.remove_subtree(subtree_root)
-            .expect("Failed to remove subtree");
-        assert!(cpg.get_node_by_id(&subtree_root).is_none());
-    }
-
-    // --- Original test with enhanced assertions --- //
-
-    #[test]
-    fn test_incr_reparse() {
-        crate::logging::init();
-
-        // Init the lang and parser
-        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
-        let mut parser = lang.get_parser().expect("Failed to get parser for C");
-
-        // Load sample1.old.c and sample1.new.c from samples/
-        let s_orig = Resource::new("samples/sample1.old.c")
-            .expect("Failed to create resource for sample1.old.c");
-        let s_new = Resource::new("samples/sample1.new.c")
-            .expect("Failed to create resource for sample1.new.c");
-
-        // Read the contents of the files
-        let old_src = s_orig.read_bytes().expect("Failed to read sample1.old.c");
-        let new_src = s_new.read_bytes().expect("Failed to read sample1.new.c");
-
-        // Parse the original file
-        let mut old_tree = parser
-            .parse(old_src.clone(), None)
-            .expect("Failed to parse original file");
-
-        // Parse the new file
-        let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
-            .expect("Failed to incrementally parse new file");
-
-        // Changed ranges
-        let changed_ranges = old_tree.changed_ranges(&new_tree);
-        assert!(changed_ranges.len() != 0, "No changed ranges found");
-
-        let mut cpg = lang
-            .cst_to_cpg(old_tree, new_src.clone())
-            .expect("Failed to convert old tree to CPG");
-
-        // Store metrics before incremental update
-        let nodes_before = cpg.nodes.len();
-        let edges_before = cpg.edges.len();
-
-        // Perform the incremental update
-        cpg.incremental_update(edits, changed_ranges, &new_tree);
-
-        // Compute the reference CPG
-        let new_cpg = lang
-            .cst_to_cpg(new_tree, new_src)
-            .expect("Failed to convert new tree to CPG");
-
-        // Check the difference between the two CPGs
-        let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
-        assert!(
-            matches!(diff, DetailedComparisonResult::Equivalent),
-            "CPGs should be semantically equivalent, but found differences: {:?}",
-            diff
-        );
-
-        // Verify the graph is still internally consistent
-        assert!(cpg.nodes.len() > 0, "CPG should have nodes after update");
-        assert!(cpg.edges.len() > 0, "CPG should have edges after update");
-        assert!(
-            cpg.get_root().is_some(),
-            "CPG should have a root after update"
-        );
-
-        debug!(
-            "Incremental update test passed: nodes {} -> {}, edges {} -> {}",
-            nodes_before,
-            cpg.nodes.len(),
-            edges_before,
-            cpg.edges.len()
-        );
-    }
-
-    // --- Integration tests --- //
-
-    #[test]
-    fn test_multiple_incremental_updates() {
-        // Test multiple sequential incremental updates
-        let mut cpg = create_test_cpg();
-
-        // Start with a simple structure
-        let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 100);
-        let func = cpg.add_node(create_test_node(NodeType::Function, Some("test")), 10, 90);
-        cpg.add_edge(Edge {
-            from: root,
-            to: func,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        });
-
-        let initial_nodes = cpg.nodes.len();
-
-        // Simulate multiple updates by removing and adding subtrees
-        cpg.remove_subtree(func).expect("Failed to remove function");
-        assert_eq!(cpg.nodes.len(), initial_nodes - 1);
-
-        // Add it back with a different name
-        let new_func = cpg.add_node(
-            create_test_node(NodeType::Function, Some("test_new")),
-            10,
-            90,
-        );
-        cpg.add_edge(Edge {
-            from: root,
-            to: new_func,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        });
-
-        assert_eq!(cpg.nodes.len(), initial_nodes);
-
-        // Verify structure is still valid
-        let children = cpg.get_outgoing_edges(root);
-        assert_eq!(children.len(), 1);
-        assert_eq!(children[0].to, new_func);
-    }
-
-    #[test]
-    fn test_concurrent_modifications() {
-        // Test that the CPG maintains consistency under various operation sequences
-        let mut cpg = create_test_cpg();
-
-        // Create a complex structure
-        let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 1000);
-        let mut functions = Vec::new();
-
-        for i in 0..5 {
-            let func = cpg.add_node(
-                create_test_node(NodeType::Function, Some(&format!("func_{}", i))),
-                i * 200,
-                (i + 1) * 200 - 1,
-            );
-            functions.push(func);
-            cpg.add_edge(Edge {
-                from: root,
-                to: func,
-                type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
-            });
-        }
-
-        // Perform various operations
-        let nodes_before = cpg.nodes.len();
-
-        // Remove a function in the middle
-        cpg.remove_subtree(functions[2])
-            .expect("Failed to remove function");
-
-        // Add a new function
-        let new_func = cpg.add_node(
-            create_test_node(NodeType::Function, Some("new_func")),
-            1001,
-            1100,
-        );
-        cpg.add_edge(Edge {
-            from: root,
-            to: new_func,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        });
-
-        // Verify consistency
-        assert_eq!(cpg.nodes.len(), nodes_before); // One removed, one added
-        assert!(cpg.get_node_by_id(&functions[2]).is_none());
-        assert!(cpg.get_node_by_id(&new_func).is_some());
-
-        // All remaining nodes should be reachable from root
-        let children = cpg.get_outgoing_edges(root);
-        assert_eq!(children.len(), 5); // 4 original + 1 new
     }
 }
