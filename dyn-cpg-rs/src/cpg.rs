@@ -750,7 +750,25 @@ impl Cpg {
                                     r_node.type_ != NodeType::TranslationUnit,
                                     mismatches
                                         .iter()
-                                        .map(|(l, r)| format!("Left: {:?}, Right: {:?}", l, r))
+                                        .map(|(ol, or)| {
+                                            format!(
+                                                "Left: {:?}, Right: {:?}",
+                                                ol.and_then(|l| self.nodes.get(l).and_then(|n| {
+                                                    Some((
+                                                        l,
+                                                        n.type_.clone(),
+                                                        self.spatial_index.get_range_from_node(&l),
+                                                    ))
+                                                })),
+                                                or.and_then(|r| other.nodes.get(r).and_then(|n| {
+                                                    Some((
+                                                        r,
+                                                        n.type_.clone(),
+                                                        other.spatial_index.get_range_from_node(&r),
+                                                    ))
+                                                }))
+                                            )
+                                        })
                                         .collect::<Vec<_>>()
                                         .join(", ")
                                 ),
@@ -802,7 +820,25 @@ impl Cpg {
                                     name,
                                     mismatches
                                         .iter()
-                                        .map(|(l, r)| format!("Left: {:?}, Right: {:?}", l, r))
+                                        .map(|(ol, or)| {
+                                            format!(
+                                                "Left: {:?}, Right: {:?}",
+                                                ol.and_then(|l| self.nodes.get(l).and_then(|n| {
+                                                    Some((
+                                                        l,
+                                                        n.type_.clone(),
+                                                        self.spatial_index.get_range_from_node(&l),
+                                                    ))
+                                                })),
+                                                or.and_then(|r| other.nodes.get(r).and_then(|n| {
+                                                    Some((
+                                                        r,
+                                                        n.type_.clone(),
+                                                        other.spatial_index.get_range_from_node(&r),
+                                                    ))
+                                                }))
+                                            )
+                                        })
                                         .collect::<Vec<_>>()
                                         .join(", ")
                                 ),
@@ -969,6 +1005,7 @@ impl Cpg {
         dot.push_str("  node [shape=box];\n");
 
         let mut visited = HashSet::new();
+
         fn emit_edge(dot: &mut String, edge: &Edge) {
             let from = format!("{:?}", edge.from)
                 .replace("NodeId(", "")
@@ -1001,6 +1038,7 @@ impl Cpg {
                 col
             ));
         }
+
         fn emit_node(dot: &mut String, cpg: &Cpg, node_id: NodeId, visited: &mut HashSet<NodeId>) {
             if !visited.insert(node_id) {
                 return; // Already visited this node
@@ -1010,10 +1048,30 @@ impl Cpg {
             let id_s = format!("{:?}", node_id)
                 .replace("NodeId(", "")
                 .replace(")", "");
+
+            let pos = cpg
+                .spatial_index
+                .get_range_from_node(&node_id)
+                .map_or("unknown".to_string(), |(start, end)| {
+                    format!("{}-{}", start, end)
+                });
+
             dot.push_str(&format!(
-                "  {:?} [label=\"{}\"];\n",
+                "  {:?} [label=\"{} {} {}\" color={}];\n",
                 id_s,
-                node.type_.to_string()
+                node.type_
+                    .to_string()
+                    .replace("NodeType::", "")
+                    .replace("_", " "),
+                pos,
+                node.properties
+                    .get("raw_kind")
+                    .cloned()
+                    .unwrap_or_else(|| "unnamed".to_string()),
+                match node.type_ {
+                    NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
+                    _ => "black",
+                }
             ));
 
             for edge in cpg.get_outgoing_edges(node_id) {

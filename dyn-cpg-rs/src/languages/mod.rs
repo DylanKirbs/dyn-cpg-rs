@@ -269,9 +269,9 @@ fn is_statement_node(node_type: &NodeType) -> bool {
     matches!(
         node_type,
         NodeType::Statement
-            | NodeType::Expression
+            //| NodeType::Expression
             | NodeType::Call
-            | NodeType::Return
+            //| NodeType::Return
             | NodeType::If
             | NodeType::While
             | NodeType::For

@@ -15,7 +15,11 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
 
         "identifier" => NodeType::Identifier,
 
-        "if_statement" | "for_statement" | "expression_statement" => NodeType::Statement,
+        "if_statement" => NodeType::If,
+        "for_statement" => NodeType::For,
+        "while_statement" => NodeType::While,
+
+        "expression_statement" | "declaration" => NodeType::Statement,
 
         "call_expression" => NodeType::Call,
 
@@ -31,12 +35,8 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         | "parenthesized_expression"
         | "parameter_list"
         | "argument_list"
-        | "number_literal"
-        | "string_literal"
         | "field_expression"
         | "binary_expression"
-        | "string_content"
-        | "escape_sequence"
         | "init_declarator"
         | "conditional_expression" => NodeType::Expression,
 
