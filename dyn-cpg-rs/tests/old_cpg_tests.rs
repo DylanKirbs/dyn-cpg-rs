@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
 use dyn_cpg_rs::{
-    cpg::{Cpg, DetailedComparisonResult, Edge, EdgeQuery, EdgeType, Node, NodeType},
+    cpg::{
+        Cpg, DescendantTraversal, DetailedComparisonResult, Edge, EdgeQuery, EdgeType, Node,
+        NodeType,
+    },
+    desc_trav,
     diff::incremental_parse,
     languages::RegisteredLanguage,
     resource::Resource,
@@ -13,14 +17,10 @@ fn create_test_cpg() -> Cpg {
     Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
 }
 
-fn create_test_node(node_type: NodeType, name: Option<&str>) -> Node {
-    let mut properties = HashMap::new();
-    if let Some(n) = name {
-        properties.insert("name".to_string(), n.to_string());
-    }
+fn create_test_node(node_type: NodeType) -> Node {
     Node {
         type_: node_type,
-        properties,
+        properties: HashMap::new(),
     }
 }
 
@@ -33,11 +33,7 @@ fn test_large_graph_operations() {
 
     // Create a larger graph structure
     for i in 0..1000 {
-        let node = cpg.add_node(
-            create_test_node(NodeType::Statement, Some(&format!("stmt_{}", i))),
-            i * 10,
-            i * 10 + 9,
-        );
+        let node = cpg.add_node(create_test_node(NodeType::Statement), i * 10, i * 10 + 9);
         nodes.push(node);
     }
 
@@ -136,8 +132,15 @@ fn test_multiple_incremental_updates() {
     let mut cpg = create_test_cpg();
 
     // Start with a simple structure
-    let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 100);
-    let func = cpg.add_node(create_test_node(NodeType::Function, Some("test")), 10, 90);
+    let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 100);
+    let func = cpg.add_node(
+        create_test_node(NodeType::Function {
+            name_traversal: desc_trav![],
+            name: Some("test".to_string()),
+        }),
+        10,
+        90,
+    );
     cpg.add_edge(Edge {
         from: root,
         to: func,
@@ -153,7 +156,10 @@ fn test_multiple_incremental_updates() {
 
     // Add it back with a different name
     let new_func = cpg.add_node(
-        create_test_node(NodeType::Function, Some("test_new")),
+        create_test_node(NodeType::Function {
+            name_traversal: desc_trav![],
+            name: Some("test_new".to_string()),
+        }),
         10,
         90,
     );
@@ -178,12 +184,15 @@ fn test_concurrent_modifications() {
     let mut cpg = create_test_cpg();
 
     // Create a complex structure
-    let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 1000);
+    let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 1000);
     let mut functions = Vec::new();
 
     for i in 0..5 {
         let func = cpg.add_node(
-            create_test_node(NodeType::Function, Some(&format!("func_{}", i))),
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some(format!("func_{}", i).to_string()),
+            }),
             i * 200,
             (i + 1) * 200 - 1,
         );
@@ -205,7 +214,10 @@ fn test_concurrent_modifications() {
 
     // Add a new function
     let new_func = cpg.add_node(
-        create_test_node(NodeType::Function, Some("new_func")),
+        create_test_node(NodeType::Function {
+            name_traversal: desc_trav![],
+            name: Some("new_func".to_string()),
+        }),
         1001,
         1100,
     );

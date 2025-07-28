@@ -1,23 +1,41 @@
 use super::super::define_language;
 use super::Language;
-use crate::cpg::NodeType;
+use crate::{
+    cpg::{ChildReference, DescendantTraversal, NodeType},
+    desc_trav,
+};
 
 define_language! {
-    C, ["c", "h", "c++", "cpp", "clang"], tree_sitter_c::LANGUAGE, map_node_kind, get_fn_name
+    C, ["c", "h", "c++", "cpp", "clang"], tree_sitter_c::LANGUAGE, map_node_kind
 }
 
 fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
     match node_kind {
         "translation_unit" => NodeType::TranslationUnit,
 
-        "function_definition" => NodeType::Function,
-        "function_declarator" => NodeType::Identifier,
+        "function_definition" => NodeType::Function {
+            name_traversal: desc_trav![
+                ("declarator", "function_declarator"),
+                ("declarator", "identifier")
+            ],
+            name: None,
+        },
 
         "identifier" => NodeType::Identifier,
 
-        "if_statement" => NodeType::If,
-        "for_statement" => NodeType::For,
-        "while_statement" => NodeType::While,
+        "if_statement" => NodeType::Conditional {
+            condition: desc_trav!("condition"),
+            then_branch: desc_trav!(("consequence", "compound_statement")),
+            else_branch: desc_trav!(("alternative", "compound_statement")),
+        },
+        "for_statement" => NodeType::Loop {
+            condition: desc_trav!["condition"],
+            body: desc_trav![("body", "compound_statement")],
+        },
+        "while_statement" => NodeType::Loop {
+            condition: desc_trav!["condition"],
+            body: desc_trav![("body", "compound_statement")],
+        },
 
         "expression_statement" | "declaration" => NodeType::Statement,
 
@@ -45,27 +63,4 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         // Since TS returns a CST, we have the whole parse tree, so named tokens are lumped into language implementation nodes
         other => NodeType::LanguageImplementation(other.to_string()),
     }
-}
-
-pub fn get_fn_name(node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String> {
-    // function_definition -> declarator -> function_declarator -> declarator -> identifier
-    if node.kind() != "function_definition" {
-        return None;
-    }
-
-    let declarator = node.child_by_field_name("declarator")?;
-    if declarator.kind() != "function_declarator" {
-        return None;
-    }
-
-    let inner_declarator = declarator.child_by_field_name("declarator")?;
-    if inner_declarator.kind() != "identifier" {
-        return None;
-    }
-
-    inner_declarator
-        .utf8_text(&source)
-        .ok()
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
 }

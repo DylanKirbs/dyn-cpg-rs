@@ -86,6 +86,110 @@ pub enum CpgError {
     QueryExecutionError(String),
 }
 
+// --- Traversal Aid for Language Agnosticism --- //
+
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
+/// Represents either a named or an offset to a child in the source code.
+pub enum ChildReference {
+    /// Unknown child, used when the child is not specified or does not exist.
+    Unknown,
+    /// A field name and kind, used to reference a specific child by its field name and expected kind.
+    FieldNameAndKind((String, String)),
+    /// Just a field name, used to reference a child by its field name without specifying the kind.
+    Field(String),
+    /// An offset to a child, used when the exact child is not known but its order with respect to its siblings is known.
+    Offset(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Represents a traversal path through the descendants of a node in the syntax tree.
+/// Used to navigate from a subtree root, to a specific descendant node.
+/// *This aids in the "language agnosticism" of the control flow pass.*
+pub struct DescendantTraversal {
+    traversal: Vec<ChildReference>,
+}
+
+impl DescendantTraversal {
+    pub fn new(traversal: Vec<ChildReference>) -> Self {
+        DescendantTraversal { traversal }
+    }
+
+    pub fn get_ts_descendant(self, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+        let mut current_node = node;
+        for step in self.traversal {
+            match step {
+                ChildReference::Unknown => return None,
+                ChildReference::FieldNameAndKind((field, kind)) => {
+                    let mut cursor = current_node.walk();
+                    let mut found = false;
+                    for child in current_node.children_by_field_name(&field, &mut cursor) {
+                        if child.kind() == kind {
+                            current_node = child;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        return None;
+                    }
+                }
+                ChildReference::Field(field) => {
+                    if let Some(child) = current_node.child_by_field_name(&field) {
+                        current_node = child;
+                    } else {
+                        return None;
+                    }
+                }
+                ChildReference::Offset(offset) => {
+                    if let Some(child) = current_node.child(offset) {
+                        current_node = child;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(current_node)
+    }
+}
+
+#[macro_export]
+/// A macro to create a `DescendantTraversal` from a list of child references.
+/// It supports different forms:
+/// - Named fields with kind: `("field_name", "kind")`
+/// - Offset: `#(3)`
+/// - Just a field name: `"field_name"`
+/// Example usage:
+/// ```
+/// use crate::desc_trav;
+/// let traversal = desc_trav![
+///   ("declarator", "function_declarator"),
+///   #3,
+/// ]
+/// ```
+macro_rules! desc_trav {
+    ( $( $x:tt ),* $(,)? ) => {
+        DescendantTraversal::new(vec![
+            $( desc_trav!(@expand $x) ),*
+        ])
+    };
+
+    // Tuple form: ("field", "kind")
+    (@expand ($field:expr, $kind:expr)) => {
+        ChildReference::FieldNameAndKind(($field.to_string(), $kind.to_string()))
+    };
+
+    // Offset form: #(3)
+    (@expand #($offset:expr)) => {
+        ChildReference::Offset($offset)
+    };
+
+    // Just a field name: "field"
+    (@expand $field:expr) => {
+        ChildReference::Field($field.to_string())
+    };
+}
+
 // --- The graph structure for the CPG --- //
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
@@ -96,24 +200,45 @@ pub enum NodeType {
     /// Represents an error in the source code
     Error(String),
 
-    TranslationUnit, // The root of the CPG, representing the entire translation unit (e.g., a file)
-    Function,        // A function definition or declaration
-    Identifier,      // An identifier (variable, function name, etc.)
-    Statement,       // A statement that can be executed
-    Expression,      // An expression that can be evaluated
-    Type,            // A type definition or usage
-    Comment,         // A comment in the source code
+    /// The root of the CPG, representing the entire translation unit (e.g., a file)
+    TranslationUnit,
 
-    // Control flow constructs
-    If,         // If statement
-    While,      // While loop
-    For,        // For loop
-    Condition,  // Condition expression (used in if/while/for)
-    ThenBranch, // Then branch of an if statement
-    ElseBranch, // Else branch of an if statement
-    LoopBody,   // Body of a loop
-    LoopInit,   // Initialization part of a for loop
-    LoopUpdate, // Update part of a for loop
+    /// A function definition or declaration
+    Function {
+        name_traversal: DescendantTraversal,
+        /// Optional name, can be derived from the traversal
+        name: Option<String>,
+    },
+
+    /// An identifier (variable, etc.)
+    Identifier,
+
+    /// A statement that can be executed
+    Statement,
+
+    /// An expression that can be evaluated
+    Expression,
+
+    /// A type definition or usage
+    Type,
+
+    /// A comment in the source code
+    Comment,
+
+    /// Conditional branching constructs
+    Conditional {
+        // The "instructions" to find to the important descendants of the conditional node
+        // i.e., for C, this would be the `parenthesized_expression` node, `compound_statement` for the then branch, and `compound_statement` for the else branch
+        condition: DescendantTraversal,
+        then_branch: DescendantTraversal,
+        else_branch: DescendantTraversal,
+    },
+
+    /// Loop constructs
+    Loop {
+        condition: DescendantTraversal, // The condition of the loop
+        body: DescendantTraversal,      // The body of the loop
+    },
 
     // The weeds (should these be subtypes of statement, expression, etc. or their own types?)
     Call,   // A function call expression
@@ -478,8 +603,11 @@ impl Cpg {
             visited.insert(current);
 
             if let Some(node) = self.get_node_by_id(&current) {
-                if node.type_ == NodeType::Function {
-                    return Some(current);
+                match node.type_ {
+                    NodeType::Function { .. } => {
+                        return Some(current);
+                    }
+                    _ => {}
                 }
             }
 
@@ -892,15 +1020,18 @@ impl Cpg {
                 );
 
                 // Check if this child is a Function node
-                if node.type_ == NodeType::Function {
-                    // Try to get the function name from properties
-                    let name = node
-                        .properties
-                        .get("name")
-                        .cloned()
-                        .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
-                    debug!("Found function with name: {}", name);
-                    functions.insert(name, edge.to);
+                match node.type_ {
+                    NodeType::Function { .. } => {
+                        // Try to get the function name from properties
+                        let name = node
+                            .properties
+                            .get("name")
+                            .cloned()
+                            .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
+                        debug!("Found function with name: {}", name);
+                        functions.insert(name, edge.to);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1165,14 +1296,21 @@ mod tests {
         Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
     }
 
-    fn create_test_node(node_type: NodeType, name: Option<&str>) -> Node {
-        let mut properties = HashMap::new();
-        if let Some(n) = name {
-            properties.insert("name".to_string(), n.to_string());
-        }
+    fn create_test_node(node_type: NodeType) -> Node {
         Node {
-            type_: node_type,
-            properties,
+            type_: node_type.clone(),
+            properties: {
+                let mut prop = HashMap::new();
+                match &node_type {
+                    NodeType::Function { name, .. } => {
+                        if let Some(n) = name {
+                            prop.insert("name".to_string(), n.clone());
+                        }
+                    }
+                    _ => {}
+                }
+                prop
+            },
         }
     }
 
@@ -1189,7 +1327,7 @@ mod tests {
     #[test]
     fn test_add_node() {
         let mut cpg = create_test_cpg();
-        let node = create_test_node(NodeType::TranslationUnit, None);
+        let node = create_test_node(NodeType::TranslationUnit);
         let node_id = cpg.add_node(node.clone(), 0, 10);
 
         assert_eq!(cpg.get_node_by_id(&node_id), Some(&node));
@@ -1204,11 +1342,14 @@ mod tests {
     fn test_add_edge() {
         let mut cpg = create_test_cpg();
         let node_id1 = cpg.add_node(
-            create_test_node(NodeType::Function, Some("test_func")),
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("text_func".to_string()),
+            }),
             0,
             1,
         );
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier, Some("x")), 1, 2);
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
 
         let edge = Edge {
             from: node_id1,
@@ -1233,8 +1374,15 @@ mod tests {
     #[test]
     fn test_set_root_override() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
-        let node2 = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 1, 2);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("test".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::TranslationUnit), 1, 2);
 
         assert_eq!(cpg.get_root(), Some(node1)); // First node becomes root
 
@@ -1247,9 +1395,16 @@ mod tests {
     #[test]
     fn test_spatial_index_basic() {
         let mut cpg = create_test_cpg();
-        let node_id1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 15);
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 12, 20);
+        let node_id1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
+        let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier), 12, 20);
 
         let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
         assert_eq!(overlapping.len(), 2);
@@ -1270,19 +1425,26 @@ mod tests {
         let mut cpg = create_test_cpg();
 
         // Test zero-width ranges
-        let _node_id = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 5);
+        let _node_id = cpg.add_node(create_test_node(NodeType::Identifier), 5, 5);
         let overlapping = cpg.spatial_index.lookup_nodes_from_range(5, 5);
         assert!(overlapping.is_empty()); // Zero-width ranges don't overlap
 
         // Test exact boundaries
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let node_id2 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
         let exact_match = cpg.spatial_index.lookup_nodes_from_range(0, 10);
         // Note: The spatial index includes the first node added (root), so count should be 2
         assert_eq!(exact_match.len(), 2);
         assert!(exact_match.contains(&&node_id2));
 
         // Test adjacent ranges
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement, None), 10, 20);
+        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement), 10, 20);
         let adjacent = cpg.spatial_index.lookup_nodes_from_range(10, 10);
         assert!(adjacent.is_empty()); // Adjacent ranges shouldn't overlap
     }
@@ -1290,9 +1452,16 @@ mod tests {
     #[test]
     fn test_get_smallest_node_containing_range() {
         let mut cpg = create_test_cpg();
-        let large_node = cpg.add_node(create_test_node(NodeType::Function, None), 0, 100);
-        let medium_node = cpg.add_node(create_test_node(NodeType::Block, None), 10, 50);
-        let small_node = cpg.add_node(create_test_node(NodeType::Identifier, None), 20, 30);
+        let large_node = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            100,
+        );
+        let medium_node = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
+        let small_node = cpg.add_node(create_test_node(NodeType::Identifier), 20, 30);
 
         let result = cpg.get_smallest_node_id_containing_range(25, 26);
         assert_eq!(result, Some(small_node));
@@ -1312,9 +1481,16 @@ mod tests {
     #[test]
     fn test_complex_edge_query() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 2, 3);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
 
         let edge1 = Edge {
             from: node1,
@@ -1342,9 +1518,16 @@ mod tests {
     #[test]
     fn test_all_incoming_edges() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 2, 3);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
 
         let edge1 = Edge {
             from: node1,
@@ -1371,9 +1554,16 @@ mod tests {
     #[test]
     fn test_edge_query_combinations() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 1);
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 3);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Statement), 2, 3);
 
         // Add edges with properties
         let mut edge_props = HashMap::new();
@@ -1411,9 +1601,16 @@ mod tests {
     #[test]
     fn test_remove_subtree_simple() {
         let mut cpg = create_test_cpg();
-        let root = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
-        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 5);
-        let child2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 6, 9);
+        let root = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement), 1, 5);
+        let child2 = cpg.add_node(create_test_node(NodeType::Identifier), 6, 9);
 
         cpg.add_edge(Edge {
             from: root,
@@ -1447,10 +1644,17 @@ mod tests {
     #[test]
     fn test_remove_subtree_recursive() {
         let mut cpg = create_test_cpg();
-        let root = cpg.add_node(create_test_node(NodeType::Function, None), 0, 20);
-        let child1 = cpg.add_node(create_test_node(NodeType::Block, None), 1, 10);
-        let grandchild = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 8);
-        let child2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 11, 19);
+        let root = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            20,
+        );
+        let child1 = cpg.add_node(create_test_node(NodeType::Block), 1, 10);
+        let grandchild = cpg.add_node(create_test_node(NodeType::Statement), 2, 8);
+        let child2 = cpg.add_node(create_test_node(NodeType::Identifier), 11, 19);
 
         cpg.add_edge(Edge {
             from: root,
@@ -1490,9 +1694,16 @@ mod tests {
     #[test]
     fn test_remove_subtree_edge_cleanup() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 5);
-        let node2 = cpg.add_node(create_test_node(NodeType::Statement, None), 6, 10);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier, None), 11, 15);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            5,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Statement), 6, 10);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 11, 15);
 
         // Create a complex edge structure
         let edge1 = cpg.add_edge(Edge {
@@ -1537,10 +1748,17 @@ mod tests {
     #[test]
     fn test_ordered_syntax_children() {
         let mut cpg = create_test_cpg();
-        let parent = cpg.add_node(create_test_node(NodeType::Function, None), 0, 30);
-        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 10);
-        let child2 = cpg.add_node(create_test_node(NodeType::Statement, None), 11, 20);
-        let child3 = cpg.add_node(create_test_node(NodeType::Statement, None), 21, 29);
+        let parent = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            30,
+        );
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement), 1, 10);
+        let child2 = cpg.add_node(create_test_node(NodeType::Statement), 11, 20);
+        let child3 = cpg.add_node(create_test_node(NodeType::Statement), 21, 29);
 
         // Add syntax child edges
         cpg.add_edge(Edge {
@@ -1583,7 +1801,14 @@ mod tests {
     #[test]
     fn test_ordered_syntax_children_empty() {
         let mut cpg = create_test_cpg();
-        let parent = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let parent = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
 
         let ordered = cpg.ordered_syntax_children(parent);
         assert!(ordered.is_empty());
@@ -1598,8 +1823,15 @@ mod tests {
 
         // Create identical structures
         for cpg in [&mut cpg1, &mut cpg2] {
-            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
-            let func = cpg.add_node(create_test_node(NodeType::Function, Some("main")), 1, 19);
+            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+            let func = cpg.add_node(
+                create_test_node(NodeType::Function {
+                    name_traversal: desc_trav![],
+                    name: Some("main".to_string()),
+                }),
+                1,
+                19,
+            );
 
             cpg.add_edge(Edge {
                 from: root,
@@ -1619,8 +1851,15 @@ mod tests {
         let mut cpg2 = create_test_cpg();
 
         // CPG1 has function "main"
-        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
-        let func1 = cpg1.add_node(create_test_node(NodeType::Function, Some("main")), 1, 19);
+        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let func1 = cpg1.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            1,
+            19,
+        );
         cpg1.add_edge(Edge {
             from: root1,
             to: func1,
@@ -1629,8 +1868,15 @@ mod tests {
         });
 
         // CPG2 has function "test"
-        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
-        let func2 = cpg2.add_node(create_test_node(NodeType::Function, Some("test")), 1, 19);
+        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let func2 = cpg2.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("test".to_string()),
+            }),
+            1,
+            19,
+        );
         cpg2.add_edge(Edge {
             from: root2,
             to: func2,
@@ -1665,7 +1911,7 @@ mod tests {
     fn test_compare_one_empty() {
         let cpg1 = create_test_cpg();
         let mut cpg2 = create_test_cpg();
-        cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 10);
+        cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 10);
 
         let result = cpg1.compare(&cpg2).expect("Comparison failed");
         match result {
@@ -1681,8 +1927,15 @@ mod tests {
     #[test]
     fn test_get_node_by_offsets() {
         let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier, None), 5, 15);
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
 
         let nodes = cpg.get_node_by_offsets(8, 12);
         assert_eq!(nodes.len(), 2);
@@ -1698,7 +1951,14 @@ mod tests {
     #[test]
     fn test_remove_nonexistent_subtree() {
         let mut cpg = create_test_cpg();
-        let node = cpg.add_node(create_test_node(NodeType::Function, None), 0, 10);
+        let node = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            10,
+        );
         cpg.nodes.remove(node); // Manually remove to create invalid state
 
         // This should handle the case gracefully

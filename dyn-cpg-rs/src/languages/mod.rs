@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
+use crate::cpg::{Cpg, DescendantTraversal, Edge, EdgeType, Node, NodeId, NodeType};
 
 mod c;
 
@@ -24,16 +24,13 @@ trait Language: Default + std::fmt::Debug {
 
     /// Map a Tree-sitter node kind to a CPG node type.
     fn map_node_kind(&self, node_kind: &'static str) -> NodeType;
-
-    /// Get the function name from a Tree-sitter node.
-    fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String>;
 }
 
 #[macro_export]
 /// Macro to define a new language complying with the `Language` trait.
 macro_rules! define_language {
     (
-        $name:ident, [$($variant_names:expr),+], $lang:path, $map_kind:expr, $get_fn_name:expr
+        $name:ident, [$($variant_names:expr),+], $lang:path, $map_kind:expr
     ) => {
 
             #[derive(Debug, Clone)]
@@ -59,10 +56,6 @@ macro_rules! define_language {
 
                 fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
                     $map_kind(self, node_kind)
-                }
-
-                fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String> {
-                    $get_fn_name(node, source)
                 }
             }
 
@@ -130,12 +123,6 @@ macro_rules! register_languages {
             pub fn cst_to_cpg(&self, tree: tree_sitter::Tree, source: Vec<u8>) -> Result<Cpg, String> {
                 match self {
                     $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree, source),)+
-                }
-            }
-
-            pub fn get_fn_name(&self, node: &tree_sitter::Node, source: &Vec<u8>) -> Option<String> {
-                match self {
-                    $(RegisteredLanguage::$variant(language) => language.get_fn_name(node, source),)+
                 }
             }
         }
@@ -208,20 +195,32 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         .properties
         .insert("raw_kind".to_string(), node.kind().to_string());
 
-    if type_.clone() == NodeType::Function {
-        if node.start_byte() < node.end_byte() {
-            cpg_node.properties.insert(
-                "name".to_string(),
-                cpg.get_language()
-                    .get_fn_name(&node, cpg.get_source())
-                    .unwrap_or_else(|| "unknown".to_string()),
-            );
-            debug!(
-                "Function node found: {:?} with name: {}",
-                node.kind(),
-                cpg_node.properties["name"]
-            );
+    let mut fn_name = None;
+    match type_ {
+        NodeType::Function {
+            name_traversal,
+            name: None,
+        } => {
+            let id_node = name_traversal.get_ts_descendant(node);
+            if let Some(id_node) = id_node {
+                fn_name = id_node
+                    .utf8_text(&cpg.get_source())
+                    .map(|s| s.to_string())
+                    .ok();
+            }
         }
+        NodeType::Function { name, .. } => {
+            fn_name = name.clone();
+        }
+        _ => {}
+    }
+    if let Some(name) = fn_name {
+        cpg_node.properties.insert("name".to_string(), name.clone());
+        debug!(
+            "Node found: {:?} with name: {}",
+            node.kind(),
+            cpg_node.properties["name"]
+        );
     }
 
     let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
@@ -269,13 +268,11 @@ fn is_statement_node(node_type: &NodeType) -> bool {
     matches!(
         node_type,
         NodeType::Statement
-            //| NodeType::Expression
+            // | NodeType::Expression
             | NodeType::Call
-            //| NodeType::Return
-            | NodeType::If
-            | NodeType::While
-            | NodeType::For
             | NodeType::Block
+            | NodeType::Conditional { .. }
+            | NodeType::Loop { .. }
     )
 }
 
@@ -379,8 +376,11 @@ pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
 
     for &node_id in &subtree_nodes {
         if let Some(node) = cpg.get_node_by_id(&node_id) {
-            if node.type_ == NodeType::Function {
-                compute_function_control_flow(cpg, node_id)?;
+            match node.type_ {
+                NodeType::Function { .. } => {
+                    compute_function_control_flow(cpg, node_id)?;
+                }
+                _ => {}
             }
         }
     }
@@ -405,10 +405,22 @@ fn compute_function_control_flow(cpg: &mut Cpg, function_node: NodeId) -> Result
 
         if let Some(node) = cpg.get_node_by_id(&current_stmt) {
             match &node.type_ {
-                NodeType::If => {
-                    handle_if_statement_control_flow(cpg, current_stmt, &statements, i)?;
+                NodeType::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    handle_if_statement_control_flow(
+                        cpg,
+                        current_stmt,
+                        &statements,
+                        i,
+                        condition.clone(),
+                        then_branch.clone(),
+                        else_branch.clone(),
+                    )?;
                 }
-                NodeType::While | NodeType::For => {
+                NodeType::Loop { condition, body } => {
                     handle_loop_control_flow(cpg, current_stmt, &statements, i)?;
                 }
                 NodeType::Return => {
@@ -472,15 +484,18 @@ fn handle_if_statement_control_flow(
     if_stmt: NodeId,
     statements: &[NodeId],
     current_index: usize,
+    condition_traversal: DescendantTraversal,
+    then_branch_traversal: DescendantTraversal,
+    else_branch_traversal: DescendantTraversal,
 ) -> Result<(), String> {
     debug!("Handling if statement control flow: {:?}", if_stmt);
 
     // Find the condition, then branch, and else branch (if any)
     let children = cpg.ordered_syntax_children(if_stmt);
 
-    let condition = find_child_by_type(cpg, &children, NodeType::Condition);
-    let then_branch = find_child_by_type(cpg, &children, NodeType::ThenBranch);
-    let else_branch = find_child_by_type(cpg, &children, NodeType::ElseBranch);
+    let condition = None; //find_child_by_type(cpg, &children, NodeType::Condition);
+    let then_branch = None; //find_child_by_type(cpg, &children, NodeType::ThenBranch);
+    let else_branch = None; // find_child_by_type(cpg, &children, NodeType::ElseBranch);
 
     if let (Some(condition), Some(then_branch)) = (condition, then_branch) {
         // TRUE
@@ -520,10 +535,10 @@ fn handle_loop_control_flow(
 
     let children = cpg.ordered_syntax_children(loop_stmt);
 
-    let condition = find_child_by_type(cpg, &children, NodeType::Condition);
-    let body = find_child_by_type(cpg, &children, NodeType::LoopBody);
-    let init = find_child_by_type(cpg, &children, NodeType::LoopInit);
-    let update = find_child_by_type(cpg, &children, NodeType::LoopUpdate);
+    let condition = None; //find_child_by_type(cpg, &children, NodeType::Condition);
+    let body = None; // find_child_by_type(cpg, &children, NodeType::LoopBody);
+    let init = None; // find_child_by_type(cpg, &children, NodeType::LoopInit);
+    let update = None; // find_child_by_type(cpg, &children, NodeType::LoopUpdate);
 
     if let (Some(condition), Some(body)) = (condition, body) {
         // For loops: init -> condition
