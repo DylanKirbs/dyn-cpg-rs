@@ -1,7 +1,7 @@
 use super::super::define_language;
 use super::Language;
 use crate::{
-    cpg::{ChildReference, DescendantTraversal, NodeType},
+    cpg::{DescendantTraversal, NodeType},
     desc_trav,
 };
 
@@ -14,27 +14,25 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         "translation_unit" => NodeType::TranslationUnit,
 
         "function_definition" => NodeType::Function {
-            name_traversal: desc_trav![
-                ("declarator", "function_declarator"),
-                ("declarator", "identifier")
-            ],
+            name_traversal: desc_trav![1, 0],
             name: None,
         },
 
         "identifier" => NodeType::Identifier,
 
         "if_statement" => NodeType::Branch {
-            condition: desc_trav!("condition"),
-            then_branch: desc_trav!(("consequence", "compound_statement")),
-            else_branch: desc_trav!(("alternative", "compound_statement")),
-        },
+            condition: desc_trav![1],
+            then_branch: desc_trav![2],
+            else_branch: desc_trav![3],
+        }, // TODO: Figure out switch
+
         "for_statement" => NodeType::Loop {
-            condition: desc_trav!["condition"],
-            body: desc_trav![("body", "compound_statement")],
+            condition: desc_trav![3],
+            body: desc_trav![7],
         },
         "while_statement" => NodeType::Loop {
-            condition: desc_trav!["condition"],
-            body: desc_trav![("body", "compound_statement")],
+            condition: desc_trav![1],
+            body: desc_trav![2],
         },
 
         "break" | "continue" => NodeType::Statement, // TODO: Possible add more specific node type to handle this
@@ -56,7 +54,9 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         | "parameter_list"
         | "argument_list"
         | "field_expression"
+        | "assignment_expression"
         | "binary_expression"
+        | "update_expression"
         | "init_declarator"
         | "conditional_expression" => NodeType::Expression,
 

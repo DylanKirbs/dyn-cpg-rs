@@ -185,7 +185,7 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         ));
     }
 
-    let mut type_ = cpg.get_language().map_node_kind(node.kind());
+    let type_ = cpg.get_language().map_node_kind(node.kind());
 
     let mut cpg_node = Node {
         type_: type_.clone(),
@@ -194,34 +194,6 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
     cpg_node
         .properties
         .insert("raw_kind".to_string(), node.kind().to_string());
-
-    let mut fn_name = None;
-    match type_.clone() {
-        NodeType::Function {
-            name_traversal,
-            name: None,
-        } => {
-            let id_node = name_traversal.get_ts_descendant(node);
-            if let Some(id_node) = id_node {
-                fn_name = id_node
-                    .utf8_text(&cpg.get_source())
-                    .map(|s| s.to_string())
-                    .ok();
-            }
-        }
-        NodeType::Function { name, .. } => {
-            fn_name = name.clone();
-        }
-        _ => {}
-    }
-    if let Some(name) = fn_name {
-        cpg_node.properties.insert("name".to_string(), name.clone());
-        debug!(
-            "Node found: {:?} with name: {}",
-            node.kind(),
-            cpg_node.properties["name"]
-        );
-    }
 
     let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
 
@@ -260,24 +232,26 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
     }
 
     // Node post processing now that we have the children as well
-    match &mut type_ {
-        NodeType::Branch {
-            condition,
-            then_branch,
-            else_branch,
+    match type_.clone() {
+        NodeType::Function {
+            name_traversal,
+            name: None,
         } => {
-            condition.set_cpg_node_id(condition.clone().get_cpg_descendant(node, id, cpg));
-            then_branch.set_cpg_node_id(then_branch.clone().get_cpg_descendant(node, id, cpg));
-            else_branch.set_cpg_node_id(else_branch.clone().get_cpg_descendant(node, id, cpg));
-        }
-        NodeType::Loop { condition, body } => {
-            condition.set_cpg_node_id(condition.clone().get_cpg_descendant(node, id, cpg));
-            body.set_cpg_node_id(body.clone().get_cpg_descendant(node, id, cpg));
+            let id_node = name_traversal.get_descendent(cpg, &id);
+            if let Some(id_node) = id_node {
+                let name = cpg.get_node_source(&id_node);
+
+                let n = cpg
+                    .get_node_by_id_mut(&id)
+                    .and_then(|f| f.properties.insert("name".to_string(), name));
+                debug!("Node found: {:?} {:?}", node.kind(), n);
+
+                cpg.get_node_by_id_mut(&id)
+                    .and_then(|n| n.update_type(type_.clone()));
+            }
         }
         _ => {}
-    }
-    cpg.get_node_by_id_mut(&id)
-        .and_then(|n| n.update_type(type_.clone()));
+    };
 
     Ok(id)
 }
@@ -380,51 +354,28 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
         .get_node_by_id(&node_id)
         .ok_or_else(|| format!("Node not found: {:?}", node_id))?;
 
-    debug!("Processing node: {:?} of type: {:?}", node_id, node.type_);
-
     match &node.type_ {
-        NodeType::Branch { .. } => {
-            // Find condition, then-block, and else-block among children
-            let children = cpg.ordered_syntax_children(node_id);
-            let mut condition = None;
-            let mut then_block = None;
-            let mut else_block = None;
-
-            // First statement-like child is condition
-            // Next two blocks are then and else (if present)
-            let mut block_count = 0;
-            for child in children {
-                if let Some(stmt_child) = find_first_processable_descendant(cpg, child) {
-                    if condition.is_none() {
-                        condition = Some(stmt_child);
-                    } else if block_count == 0 {
-                        then_block = Some(stmt_child);
-                        block_count += 1;
-                    } else if block_count == 1 {
-                        else_block = Some(stmt_child);
-                        break;
-                    }
-                }
-            }
+        NodeType::Branch {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let condition = condition.clone().get_descendent(cpg, &node_id);
+            let then_block = then_branch.clone().get_descendent(cpg, &node_id);
+            let else_block = else_branch.clone().get_descendent(cpg, &node_id);
 
             let condition = condition.ok_or_else(|| {
-                let bytes: (usize, usize) = cpg.get_node_offsets_by_id(&node_id).unwrap_or((0, 0));
                 format!(
-                    "Branch missing condition: {:?} [{:?}] '{:?}'",
+                    "Branch missing condition: {:?} [{:?}]",
                     node_id,
-                    bytes,
-                    String::from_utf8_lossy(cpg.get_source().get(bytes.0..bytes.1).unwrap_or(&[]))
-                        .to_string(),
+                    cpg.get_node_source(&node_id),
                 )
             })?;
             let then_block = then_block.ok_or_else(|| {
-                let bytes: (usize, usize) = cpg.get_node_offsets_by_id(&node_id).unwrap_or((0, 0));
                 format!(
-                    "Branch missing then block: {:?} [{:?}] '{:?}'",
+                    "Branch missing then block: {:?} [{:?}]",
                     node_id,
-                    bytes,
-                    String::from_utf8_lossy(cpg.get_source().get(bytes.0..bytes.1).unwrap_or(&[]))
-                        .to_string(),
+                    cpg.get_node_source(&node_id),
                 )
             })?;
 
@@ -458,43 +409,24 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
             Ok(branch_exits)
         }
 
-        NodeType::Loop { .. } => {
+        NodeType::Loop { condition, body } => {
             // TODO: Handle break/continue statements properly
-            let children = cpg.ordered_syntax_children(node_id);
-            let mut condition = None;
-            let mut body = None;
 
-            // Similar to branch - find condition and body
-            for child in children {
-                if let Some(stmt_child) = find_first_processable_descendant(cpg, child) {
-                    if condition.is_none() {
-                        condition = Some(stmt_child);
-                    } else {
-                        body = Some(stmt_child);
-                        break;
-                    }
-                }
-            }
+            let condition = condition.clone().get_descendent(cpg, &node_id);
+            let body = body.clone().get_descendent(cpg, &node_id);
 
-            return Ok(vec![]);
             let condition = condition.ok_or_else(|| {
-                let bytes: (usize, usize) = cpg.get_node_offsets_by_id(&node_id).unwrap_or((0, 0));
                 format!(
-                    "Loop missing condition: {:?} [{:?}] '{:?}'",
+                    "Loop missing condition: {:?} [{:?}]",
                     node_id,
-                    bytes,
-                    String::from_utf8_lossy(cpg.get_source().get(bytes.0..bytes.1).unwrap_or(&[]))
-                        .to_string(),
+                    cpg.get_node_source(&node_id),
                 )
             })?;
             let body = body.ok_or_else(|| {
-                let bytes: (usize, usize) = cpg.get_node_offsets_by_id(&node_id).unwrap_or((0, 0));
                 format!(
-                    "Loop missing body: {:?} [{:?}] '{:?}'",
+                    "Loop missing body: {:?} [{:?}]",
                     node_id,
-                    bytes,
-                    String::from_utf8_lossy(cpg.get_source().get(bytes.0..bytes.1).unwrap_or(&[]))
-                        .to_string(),
+                    cpg.get_node_source(&node_id),
                 )
             })?;
 
@@ -526,7 +458,6 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
 
         // For other statement types (expressions, calls, etc.)
         _ if should_descend(&node.type_) => {
-            debug!("Processing sequential descent: {:?}", node_id);
             // Process any statement children first (post-order)
             let statement_children = get_descent_children(cpg, node_id);
             if !statement_children.is_empty() {
@@ -538,10 +469,6 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
         }
 
         _ => {
-            debug!(
-                "Fallthrough for non-sequential descent nodes: {:?}",
-                node_id
-            );
             let non_seq_children = cpg.ordered_syntax_children(node_id);
             for node in &non_seq_children {
                 if let Some(stmt_child) = find_first_processable_descendant(cpg, *node) {
@@ -563,25 +490,15 @@ fn process_sequential_statements(
         return Ok(vec![]);
     }
 
-    debug!("Processing {} sequential statements", statements.len());
-
     let mut current_exits = vec![];
 
-    for (i, &stmt) in statements.iter().enumerate() {
-        debug!(
-            "Processing statement {}/{}: {:?}",
-            i + 1,
-            statements.len(),
-            stmt
-        );
-
+    for &stmt in statements.iter() {
         // Connect previous exits to this statement
         for &prev_exit in &current_exits {
             add_control_flow_edge(cpg, prev_exit, stmt, EdgeType::ControlFlowEpsilon)?;
         }
 
         // Process this statement
-        debug!("Descending into statement: {:?}", stmt);
         let stmt_exits = compute_control_flow_postorder(cpg, stmt)?;
 
         // If this statement has no exits (e.g., return), stop processing

@@ -14,6 +14,7 @@ use strum_macros::Display;
 use thiserror::Error;
 use tracing::debug;
 use tree_sitter::Range;
+
 // --- SlotMap Key Types --- //
 
 new_key_type! {
@@ -87,194 +88,110 @@ pub enum CpgError {
 
 // --- Traversal Aid for Language Agnosticism --- //
 
-#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
-/// Represents either a named or an offset to a child in the source code.
-pub enum ChildReference {
-    /// Unknown child, used when the child is not specified or does not exist.
-    Unknown,
-    /// A field name and kind, used to reference a specific child by its field name and expected kind.
-    FieldNameAndKind((String, String)),
-    /// Just a field name, used to reference a child by its field name without specifying the kind.
-    Field(String),
-    /// An offset to a child, used when the exact child is not known but its order with respect to its siblings is known.
-    Offset(usize),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Represents a traversal path through the descendants of a node in the syntax tree.
 /// Used to navigate from a subtree root, to a specific descendant node.
 /// *This aids in the "language agnosticism" of the control flow pass.*
 pub struct DescendantTraversal {
-    traversal: Vec<ChildReference>,
-    cpg_node_id: Option<NodeId>,
+    traversal: Vec<usize>,
 }
 
 impl DescendantTraversal {
-    pub fn new(traversal: Vec<ChildReference>) -> Self {
-        DescendantTraversal {
-            traversal,
-            cpg_node_id: None,
-        }
+    pub fn new(traversal: Vec<usize>) -> Self {
+        DescendantTraversal { traversal }
     }
 
-    pub fn get_ts_descendant(self, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
-        let mut current_node = node;
+    // pub fn get_cpg_descendant(
+    //     &self,
+    //     ts_node: tree_sitter::Node,
+    //     cpg_node_id: NodeId,
+    //     cpg: &mut Cpg,
+    // ) -> Option<NodeId> {
+    //     // Parallel traversal of ts and cpg to get the corresponding cpg node
+
+    //     let mut current_node = ts_node;
+    //     let mut curr_cpg_node = cpg_node_id;
+
+    //     for step in &self.traversal {
+    //         match step {
+    //             ChildReference::Unknown => return None,
+    //             ChildReference::FieldNameAndKind((field, kind)) => {
+    //                 let mut cursor = current_node.walk();
+    //                 let mut found = false;
+    //                 for child in current_node.children_by_field_name(&field, &mut cursor) {
+    //                     if child.kind() == kind {
+    //                         current_node = child;
+    //                         found = true;
+    //                         break;
+    //                     }
+    //                 }
+    //                 if !found {
+    //                     return None;
+    //                 }
+    //                 // If found, traverse the cpg node to the ts node
+    //                 let idx = cursor.descendant_index();
+    //                 match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
+    //                     Some(node_id) => curr_cpg_node = *node_id,
+    //                     None => return None,
+    //                 }
+    //             }
+    //             ChildReference::Field(field) => {
+    //                 let mut cursor = current_node.walk();
+    //                 let mut found = false;
+    //                 for child in current_node.children_by_field_name(&field, &mut cursor) {
+    //                     current_node = child;
+    //                     found = true;
+    //                     break;
+    //                 }
+    //                 if !found {
+    //                     return None;
+    //                 }
+    //                 // If found, traverse the cpg node to the ts node
+    //                 let idx = cursor.descendant_index();
+    //                 match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
+    //                     Some(node_id) => curr_cpg_node = *node_id,
+    //                     None => return None,
+    //                 }
+    //             }
+    //             ChildReference::Offset(offset) => {
+    //                 if let Some(child) = current_node.child(*offset) {
+    //                     current_node = child;
+    //                 } else {
+    //                     return None;
+    //                 }
+    //                 // If found, traverse the cpg node to the ts node
+    //                 match cpg.ordered_syntax_children(curr_cpg_node).get(*offset) {
+    //                     Some(node_id) => curr_cpg_node = *node_id,
+    //                     None => return None,
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     debug!(
+    //         "Found CPG node {:?} for TS node {:?} with traversal {:?}",
+    //         curr_cpg_node,
+    //         ts_node.id(),
+    //         self.traversal
+    //     );
+
+    //     Some(curr_cpg_node)
+    // }
+
+    pub fn get_descendent(self, cpg: &Cpg, node: &NodeId) -> Option<NodeId> {
+        let mut curr_node = *node;
         for step in &self.traversal {
-            match step {
-                ChildReference::Unknown => return None,
-                ChildReference::FieldNameAndKind((field, kind)) => {
-                    let mut cursor = current_node.walk();
-                    let mut found = false;
-                    for child in current_node.children_by_field_name(&field, &mut cursor) {
-                        if child.kind() == kind {
-                            current_node = child;
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        return None;
-                    }
-                }
-                ChildReference::Field(field) => {
-                    if let Some(child) = current_node.child_by_field_name(&field) {
-                        current_node = child;
-                    } else {
-                        return None;
-                    }
-                }
-                ChildReference::Offset(offset) => {
-                    if let Some(child) = current_node.child(*offset) {
-                        current_node = child;
-                    } else {
-                        return None;
-                    }
-                }
-            }
+            let children = cpg.ordered_syntax_children(curr_node);
+            curr_node = *children.get(*step)?;
         }
-        Some(current_node)
-    }
-
-    pub fn get_cpg_descendant(
-        &self,
-        ts_node: tree_sitter::Node,
-        cpg_node_id: NodeId,
-        cpg: &mut Cpg,
-    ) -> Option<NodeId> {
-        // Parallel traversal of ts and cpg to get the corresponding cpg node
-
-        let mut current_node = ts_node;
-        let mut curr_cpg_node = cpg_node_id;
-
-        for step in &self.traversal {
-            match step {
-                ChildReference::Unknown => return None,
-                ChildReference::FieldNameAndKind((field, kind)) => {
-                    let mut cursor = current_node.walk();
-                    let mut found = false;
-                    for child in current_node.children_by_field_name(&field, &mut cursor) {
-                        if child.kind() == kind {
-                            current_node = child;
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        return None;
-                    }
-                    // If found, traverse the cpg node to the ts node
-                    let idx = cursor.descendant_index();
-                    match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
-                        Some(node_id) => curr_cpg_node = *node_id,
-                        None => return None,
-                    }
-                }
-                ChildReference::Field(field) => {
-                    let mut cursor = current_node.walk();
-                    let mut found = false;
-                    for child in current_node.children_by_field_name(&field, &mut cursor) {
-                        current_node = child;
-                        found = true;
-                        break;
-                    }
-                    if !found {
-                        return None;
-                    }
-                    // If found, traverse the cpg node to the ts node
-                    let idx = cursor.descendant_index();
-                    match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
-                        Some(node_id) => curr_cpg_node = *node_id,
-                        None => return None,
-                    }
-                }
-                ChildReference::Offset(offset) => {
-                    if let Some(child) = current_node.child(*offset) {
-                        current_node = child;
-                    } else {
-                        return None;
-                    }
-                    // If found, traverse the cpg node to the ts node
-                    match cpg.ordered_syntax_children(curr_cpg_node).get(*offset) {
-                        Some(node_id) => curr_cpg_node = *node_id,
-                        None => return None,
-                    }
-                }
-            }
-        }
-
-        debug!(
-            "Found CPG node {:?} for TS node {:?} with traversal {:?}",
-            curr_cpg_node,
-            ts_node.id(),
-            self.traversal
-        );
-
-        Some(curr_cpg_node)
-    }
-
-    pub fn get_cpg_node_id(&self) -> Option<NodeId> {
-        self.cpg_node_id
-    }
-
-    pub fn set_cpg_node_id(&mut self, id: Option<NodeId>) {
-        self.cpg_node_id = id;
+        Some(curr_node)
     }
 }
 
 #[macro_export]
-/// A macro to create a `DescendantTraversal` from a list of child references.
-/// It supports different forms:
-/// - Named fields with kind: `("field_name", "kind")`
-/// - Offset: `#(3)` [0 indicates the first child]
-/// - Just a field name: `"field_name"`
-/// Example usage:
-/// ```
-/// use dyn_cpg_rs::{desc_trav, cpg::ChildReference, cpg::DescendantTraversal};
-/// let traversal = desc_trav![
-///   ("declarator", "function_declarator"),
-///   3,
-/// ];
-/// ```
 macro_rules! desc_trav {
-    ( $( $x:tt ),* $(,)? ) => {
-        DescendantTraversal::new(vec![
-            $( desc_trav!(@expand $x) ),*
-        ])
-    };
-
-    // Tuple form: ("field", "kind")
-    (@expand ($field:expr, $kind:expr)) => {
-        ChildReference::FieldNameAndKind(($field.to_string(), $kind.to_string()))
-    };
-
-    // Offset form: #(3)
-    (@expand #($offset:expr)) => {
-        ChildReference::Offset($offset)
-    };
-
-    // Just a field name: "field"
-    (@expand $field:expr) => {
-        ChildReference::Field($field.to_string())
+    ($($step:expr),*) => {
+        DescendantTraversal::new(vec![$($step),*])
     };
 }
 
@@ -533,6 +450,11 @@ impl Cpg {
 
     pub fn get_node_offsets_by_id(&self, id: &NodeId) -> Option<(usize, usize)> {
         self.spatial_index.get_range_from_node(id)
+    }
+
+    pub fn get_node_source(&self, node: &NodeId) -> String {
+        let bytes: (usize, usize) = self.get_node_offsets_by_id(&node).unwrap_or((0, 0));
+        String::from_utf8_lossy(self.get_source().get(bytes.0..bytes.1).unwrap_or(&[])).to_string()
     }
 
     pub fn get_smallest_node_id_containing_range(
@@ -1304,11 +1226,18 @@ impl Cpg {
                     .replace("NodeType::", "")
                     .replace("_", " "),
                 pos,
-                node.properties
-                    .get("raw_kind")
-                    .cloned()
-                    .unwrap_or_else(|| "unnamed".to_string())
-                    .replace('"', "\\\""),
+                format!(
+                    "{} {}",
+                    node.properties
+                        .get("raw_kind")
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string())
+                        .replace('"', "\\\""),
+                    node.properties
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| "".to_string())
+                ),
                 match node.type_ {
                     NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
                     _ => "black",
