@@ -23,7 +23,7 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
 
         "identifier" => NodeType::Identifier,
 
-        "if_statement" => NodeType::Conditional {
+        "if_statement" => NodeType::Branch {
             condition: desc_trav!("condition"),
             then_branch: desc_trav!(("consequence", "compound_statement")),
             else_branch: desc_trav!(("alternative", "compound_statement")),

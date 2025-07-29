@@ -107,16 +107,20 @@ pub enum ChildReference {
 /// *This aids in the "language agnosticism" of the control flow pass.*
 pub struct DescendantTraversal {
     traversal: Vec<ChildReference>,
+    cpg_node_id: Option<NodeId>,
 }
 
 impl DescendantTraversal {
     pub fn new(traversal: Vec<ChildReference>) -> Self {
-        DescendantTraversal { traversal }
+        DescendantTraversal {
+            traversal,
+            cpg_node_id: None,
+        }
     }
 
     pub fn get_ts_descendant(self, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
         let mut current_node = node;
-        for step in self.traversal {
+        for step in &self.traversal {
             match step {
                 ChildReference::Unknown => return None,
                 ChildReference::FieldNameAndKind((field, kind)) => {
@@ -141,7 +145,7 @@ impl DescendantTraversal {
                     }
                 }
                 ChildReference::Offset(offset) => {
-                    if let Some(child) = current_node.child(offset) {
+                    if let Some(child) = current_node.child(*offset) {
                         current_node = child;
                     } else {
                         return None;
@@ -151,13 +155,98 @@ impl DescendantTraversal {
         }
         Some(current_node)
     }
+
+    pub fn get_cpg_descendant(
+        &self,
+        ts_node: tree_sitter::Node,
+        cpg_node_id: NodeId,
+        cpg: &mut Cpg,
+    ) -> Option<NodeId> {
+        // Parallel traversal of ts and cpg to get the corresponding cpg node
+
+        let mut current_node = ts_node;
+        let mut curr_cpg_node = cpg_node_id;
+
+        for step in &self.traversal {
+            match step {
+                ChildReference::Unknown => return None,
+                ChildReference::FieldNameAndKind((field, kind)) => {
+                    let mut cursor = current_node.walk();
+                    let mut found = false;
+                    for child in current_node.children_by_field_name(&field, &mut cursor) {
+                        if child.kind() == kind {
+                            current_node = child;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        return None;
+                    }
+                    // If found, traverse the cpg node to the ts node
+                    let idx = cursor.descendant_index();
+                    match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
+                        Some(node_id) => curr_cpg_node = *node_id,
+                        None => return None,
+                    }
+                }
+                ChildReference::Field(field) => {
+                    let mut cursor = current_node.walk();
+                    let mut found = false;
+                    for child in current_node.children_by_field_name(&field, &mut cursor) {
+                        current_node = child;
+                        found = true;
+                        break;
+                    }
+                    if !found {
+                        return None;
+                    }
+                    // If found, traverse the cpg node to the ts node
+                    let idx = cursor.descendant_index();
+                    match cpg.ordered_syntax_children(curr_cpg_node).get(idx) {
+                        Some(node_id) => curr_cpg_node = *node_id,
+                        None => return None,
+                    }
+                }
+                ChildReference::Offset(offset) => {
+                    if let Some(child) = current_node.child(*offset) {
+                        current_node = child;
+                    } else {
+                        return None;
+                    }
+                    // If found, traverse the cpg node to the ts node
+                    match cpg.ordered_syntax_children(curr_cpg_node).get(*offset) {
+                        Some(node_id) => curr_cpg_node = *node_id,
+                        None => return None,
+                    }
+                }
+            }
+        }
+
+        debug!(
+            "Found CPG node {:?} for TS node {:?} with traversal {:?}",
+            curr_cpg_node,
+            ts_node.id(),
+            self.traversal
+        );
+
+        Some(curr_cpg_node)
+    }
+
+    pub fn get_cpg_node_id(&self) -> Option<NodeId> {
+        self.cpg_node_id
+    }
+
+    pub fn set_cpg_node_id(&mut self, id: Option<NodeId>) {
+        self.cpg_node_id = id;
+    }
 }
 
 #[macro_export]
 /// A macro to create a `DescendantTraversal` from a list of child references.
 /// It supports different forms:
 /// - Named fields with kind: `("field_name", "kind")`
-/// - Offset: `#(3)`
+/// - Offset: `#(3)` [0 indicates the first child]
 /// - Just a field name: `"field_name"`
 /// Example usage:
 /// ```
@@ -226,9 +315,7 @@ pub enum NodeType {
     Comment,
 
     /// Conditional branching constructs
-    Conditional {
-        // The "instructions" to find to the important descendants of the conditional node
-        // i.e., for C, this would be the `parenthesized_expression` node, `compound_statement` for the then branch, and `compound_statement` for the else branch
+    Branch {
         condition: DescendantTraversal,
         then_branch: DescendantTraversal,
         else_branch: DescendantTraversal,
@@ -236,20 +323,35 @@ pub enum NodeType {
 
     /// Loop constructs
     Loop {
-        condition: DescendantTraversal, // The condition of the loop
-        body: DescendantTraversal,      // The body of the loop
+        condition: DescendantTraversal,
+        body: DescendantTraversal,
     },
 
-    // The weeds (should these be subtypes of statement, expression, etc. or their own types?)
-    Call,   // A function call expression
-    Return, // A return statement in a function
-    Block,  // Compound statement, e.g., a block of code enclosed in braces
+    /// Compound statement, e.g., a block of code enclosed in braces
+    Block,
+
+    /// A function call expression
+    Call,
+
+    /// A return statement in a function
+    Return,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub type_: NodeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
+}
+
+impl Node {
+    pub fn update_type(&mut self, type_: NodeType) -> Option<()> {
+        if self.type_ != type_ {
+            self.type_ = type_;
+            Some(())
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
@@ -405,6 +507,10 @@ impl Cpg {
 
     pub fn get_node_by_id(&self, id: &NodeId) -> Option<&Node> {
         self.nodes.get(*id)
+    }
+
+    pub fn get_node_by_id_mut(&mut self, id: &NodeId) -> Option<&mut Node> {
+        self.nodes.get_mut(*id)
     }
 
     pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<&Node> {

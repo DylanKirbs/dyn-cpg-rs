@@ -8,6 +8,9 @@ use tracing::debug;
 /// This test verifies that incremental updates produce semantically equivalent CPGs
 #[test]
 fn test_incremental_reparse() {
+    dyn_cpg_rs::logging::init();
+    debug!("Starting incremental reparse test");
+
     // Init the lang and parser
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
@@ -56,11 +59,13 @@ fn test_incremental_reparse() {
     std::fs::write("tmp_old.dot", cpg.emit_dot()).expect("Failed to write tmp_old.dot");
     std::fs::write("tmp_new.dot", new_cpg.emit_dot()).expect("Failed to write tmp_new.dot");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
-    assert!(
-        matches!(diff, DetailedComparisonResult::Equivalent),
-        "CPGs should be semantically equivalent, but found differences: {:?}",
-        diff
-    );
+    match diff {
+        DetailedComparisonResult::Equivalent => {}
+        _ => panic!(
+            "CPGs should be semantically equivalent, but found differences: {:?}",
+            diff
+        ),
+    }
 
     // Verify the graph is still internally consistent
     assert!(cpg.node_count() > 0, "CPG should have nodes after update");
