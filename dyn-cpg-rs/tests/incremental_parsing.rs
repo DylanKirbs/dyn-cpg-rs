@@ -8,7 +8,7 @@ use tracing::debug;
 /// This test verifies that incremental updates produce semantically equivalent CPGs
 #[test]
 fn test_incremental_reparse() {
-    // dyn_cpg_rs::logging::init();
+    dyn_cpg_rs::logging::init();
     debug!("Starting incremental reparse test");
 
     // Init the lang and parser

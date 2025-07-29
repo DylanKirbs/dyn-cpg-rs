@@ -561,64 +561,151 @@ impl Cpg {
             }
         }
 
-        debug!("Rehydrating dirty nodes: {:?}", dirty_nodes);
-        let mut rehydrated_nodes = Vec::new();
-        let mut affected_functions = HashSet::new();
+        debug!("Filtering {} dirty nodes", dirty_nodes.len());
 
-        // Collect all functions that contain dirty nodes before rehydration
-        for (id, _) in &dirty_nodes {
-            if let Some(function_id) = self.find_containing_function(*id) {
-                affected_functions.insert(function_id);
-            }
+        fn ranges_overlap(
+            a: (usize, usize, usize, usize),
+            b: (usize, usize, usize, usize),
+        ) -> bool {
+            // Check overlap in both old and new ranges
+            let old_overlap = a.0 < b.1 && b.0 < a.1;
+            let new_overlap = a.2 < b.3 && b.2 < a.3;
+            old_overlap || new_overlap
         }
+
+        fn merge_ranges(
+            a: (usize, usize, usize, usize),
+            b: (usize, usize, usize, usize),
+        ) -> (usize, usize, usize, usize) {
+            (
+                min(a.0, b.0), // old_start
+                max(a.1, b.1), // old_end
+                min(a.2, b.2), // new_start
+                max(a.3, b.3), // new_end
+            )
+        }
+
+        // Group overlapping ranges
+        let mut merged_ranges: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+        for (_, range) in dirty_nodes.iter() {
+            let mut current_range = *range;
+            let mut i = 0;
+
+            // Try to merge with existing ranges
+            while i < merged_ranges.len() {
+                if ranges_overlap(current_range, merged_ranges[i]) {
+                    // Merge ranges and remove the old one
+                    current_range = merge_ranges(current_range, merged_ranges.remove(i));
+                    // Don't increment i since we removed an element
+                } else {
+                    i += 1;
+                }
+            }
+
+            merged_ranges.push(current_range);
+        }
+
+        debug!(
+            "Merged {} overlapping ranges into {} ranges",
+            dirty_nodes.len(),
+            merged_ranges.len()
+        );
+
+        // For each merged range, find the smallest node that contains it
+        let dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
+            .into_iter()
+            .filter_map(|range| {
+                // Find the smallest node containing the merged range
+                let containing_node = self.get_smallest_node_id_containing_range(range.0, range.1);
+
+                if let Some(node_id) = containing_node {
+                    debug!(
+                        "Found containing node {:?} for merged range {:?}",
+                        node_id, range
+                    );
+                    Some((node_id, range))
+                } else {
+                    debug!("No containing node found for merged range {:?}", range);
+                    None
+                }
+            })
+            .collect();
+
+        debug!(
+            "Rehydrating {} dirty nodes: {:?}",
+            dirty_nodes.len(),
+            dirty_nodes
+        );
+        let mut rehydrated_nodes = Vec::new();
 
         // Rehydrate dirty nodes
         for (id, pos) in dirty_nodes {
+            debug!(
+                "Attempting to rehydrate dirty node {:?} with position {:?}",
+                id, pos
+            );
+
+            // Debug: Log the dirty node info before removal
+            if let Some(node) = self.get_node_by_id(&id) {
+                let range = self.spatial_index.get_range_from_node(&id);
+                debug!("Dirty node type: {:?}, range: {:?}", node.type_, range);
+
+                // Count children to understand node size
+                let child_count = self
+                    .get_outgoing_edges(id)
+                    .iter()
+                    .filter(|e| e.type_ == EdgeType::SyntaxChild)
+                    .count();
+                debug!("Dirty node has {} children", child_count);
+            } else {
+                warn!("Could not find dirty node {:?} in CPG", id);
+            }
+
             let new_node = self.rehydrate(id, pos, new_tree);
             match new_node {
                 Ok(new_id) => {
-                    debug!("Rehydrated node {:?} to new id {:?}", id, new_id);
+                    debug!(
+                        "Successfully rehydrated node {:?} to new id {:?}",
+                        id, new_id
+                    );
                     rehydrated_nodes.push(new_id);
-
-                    // Also find the function that contains the new node
-                    if let Some(function_id) = self.find_containing_function(new_id) {
-                        affected_functions.insert(function_id);
-                    }
                 }
                 Err(e) => {
-                    debug!("Failed to rehydrate node {:?}: {}", id, e);
+                    warn!("Failed to rehydrate node {:?}: {}", id, e);
                 }
             }
         }
 
         debug!(
-            "Computing control flow for {} affected functions",
-            affected_functions.len()
+            "Computing control flow for {} rehydrated nodes",
+            rehydrated_nodes.len()
         );
-        for function_id in affected_functions.clone() {
-            cf_pass(self, function_id)
-                .map_err(|e| {
-                    debug!(
-                        "Failed to recompute control flow for function {:?}: {}",
-                        function_id, e
-                    )
-                })
-                .ok();
+        for node_id in rehydrated_nodes.clone() {
+            match cf_pass(self, node_id) {
+                Ok(()) => debug!("Successfully computed control flow for node {:?}", node_id),
+                Err(e) => warn!(
+                    "Failed to recompute control flow for node {:?}: {}",
+                    node_id, e
+                ),
+            }
         }
 
         debug!(
-            "Computing program dependence for {} affected functions",
-            affected_functions.len()
+            "Computing program dependence for {} rehydrated nodes",
+            rehydrated_nodes.len()
         );
-        for function_id in affected_functions {
-            data_dep_pass(self, function_id)
-                .map_err(|e| {
-                    debug!(
-                        "Failed to recompute data dependence for function {:?}: {}",
-                        function_id, e
-                    )
-                })
-                .ok();
+        for node_id in rehydrated_nodes {
+            match data_dep_pass(self, node_id) {
+                Ok(()) => debug!(
+                    "Successfully computed data dependence for node {:?}",
+                    node_id
+                ),
+                Err(e) => warn!(
+                    "Failed to recompute data dependence for node {:?}: {}",
+                    node_id, e
+                ),
+            }
         }
 
         debug!("Incremental update complete");
@@ -630,44 +717,102 @@ impl Cpg {
         pos: (usize, usize, usize, usize),
         new_tree: &tree_sitter::Tree,
     ) -> Result<NodeId, CpgError> {
-        let is_current_root = self.root == Some(id);
+        debug!("Starting rehydration of node {:?}", id);
 
+        // Check if the node exists or if it has been removed in a previous update
+        if !self.nodes.contains_key(id) {
+            warn!("Node {:?} does not exist in CPG, cannot rehydrate", id);
+            return Err(CpgError::MissingField(format!(
+                "Node {:?} does not exist in CPG",
+                id
+            )));
+        }
+
+        let is_current_root = self.root == Some(id);
+        debug!("Node is root: {}", is_current_root);
+
+        // Capture edge information before removal
         let old_left_sibling = self
             .get_incoming_edges(id)
             .into_iter()
             .find(|e| e.type_ == EdgeType::SyntaxSibling)
-            .map(|e| (e.from, e.properties.clone()));
+            .map(|e| {
+                debug!("Found left sibling edge: {:?} -> {:?}", e.from, e.to);
+                (e.from, e.properties.clone())
+            });
 
         let old_right_sibling = self
             .get_outgoing_edges(id)
             .into_iter()
             .find(|e| e.type_ == EdgeType::SyntaxSibling)
-            .map(|e| (e.to, e.properties.clone()));
+            .map(|e| {
+                debug!("Found right sibling edge: {:?} -> {:?}", e.from, e.to);
+                (e.to, e.properties.clone())
+            });
 
         let old_parent = self
             .get_incoming_edges(id)
             .into_iter()
             .find(|e| e.type_ == EdgeType::SyntaxChild)
-            .map(|e| (e.from, e.properties.clone()));
+            .map(|e| {
+                debug!("Found parent edge: {:?} -> {:?}", e.from, e.to);
+                (e.from, e.properties.clone())
+            });
 
+        debug!(
+            "Captured edges - parent: {:?}, left sibling: {:?}, right sibling: {:?}",
+            old_parent.is_some(),
+            old_left_sibling.is_some(),
+            old_right_sibling.is_some()
+        );
+
+        // Remove the old subtree
+        debug!("Removing subtree rooted at {:?}", id);
         self.remove_subtree(id).map_err(|e| {
             CpgError::ConversionError(format!("Failed to remove old subtree: {}", e))
         })?;
 
-        let mut cursor = new_tree
+        // Find the corresponding subtree in the new tree
+        debug!(
+            "Looking for subtree in new tree at range ({}, {})",
+            pos.2, pos.3
+        );
+        let new_subtree_node = new_tree
             .root_node()
             .descendant_for_byte_range(pos.2, pos.3)
-            .ok_or(CpgError::MissingField(format!(
-                "No subtree found for range {:?} in new tree",
-                (pos.2, pos.3)
-            )))?
-            .walk();
+            .ok_or_else(|| {
+                CpgError::MissingField(format!(
+                    "No subtree found for range {:?} in new tree",
+                    (pos.2, pos.3)
+                ))
+            })?;
 
+        debug!(
+            "Found new subtree node: kind={}, range=({}, {})",
+            new_subtree_node.kind(),
+            new_subtree_node.start_byte(),
+            new_subtree_node.end_byte()
+        );
+
+        let mut cursor = new_subtree_node.walk();
+
+        // Translate the new subtree
+        debug!("Translating new subtree");
         let new_subtree_root = crate::languages::translate(self, &mut cursor).map_err(|e| {
             CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
         })?;
 
+        debug!(
+            "Translation complete, new subtree root: {:?}",
+            new_subtree_root
+        );
+
+        // Reconstruct edges
         if let Some((left_sibling_from, properties)) = old_left_sibling {
+            debug!(
+                "Reconnecting left sibling: {:?} -> {:?}",
+                left_sibling_from, new_subtree_root
+            );
             self.add_edge(Edge {
                 from: left_sibling_from,
                 to: new_subtree_root,
@@ -677,6 +822,10 @@ impl Cpg {
         }
 
         if let Some((right_sibling_to, properties)) = old_right_sibling {
+            debug!(
+                "Reconnecting right sibling: {:?} -> {:?}",
+                new_subtree_root, right_sibling_to
+            );
             self.add_edge(Edge {
                 from: new_subtree_root,
                 to: right_sibling_to,
@@ -686,6 +835,10 @@ impl Cpg {
         }
 
         if let Some((parent_from, properties)) = old_parent {
+            debug!(
+                "Reconnecting parent: {:?} -> {:?}",
+                parent_from, new_subtree_root
+            );
             self.add_edge(Edge {
                 from: parent_from,
                 to: new_subtree_root,
@@ -700,47 +853,16 @@ impl Cpg {
             self.set_root(new_subtree_root);
         } else {
             warn!(
-                "No parent edge found for node {:?}, but it's not the root node - leaving root unchanged",
+                "No parent edge found for node {:?}, but it's not the root node - this may indicate a problem",
                 id
             );
         }
 
+        debug!(
+            "Rehydration complete for {:?} -> {:?}",
+            id, new_subtree_root
+        );
         Ok(new_subtree_root)
-    }
-
-    /// Find the function node that contains the given node
-    fn find_containing_function(&self, node_id: NodeId) -> Option<NodeId> {
-        let mut current = node_id;
-        let mut visited = HashSet::new();
-
-        // Traverse up the syntax tree looking for a function node
-        while !visited.contains(&current) {
-            visited.insert(current);
-
-            if let Some(node) = self.get_node_by_id(&current) {
-                match node.type_ {
-                    NodeType::Function { .. } => {
-                        return Some(current);
-                    }
-                    _ => {}
-                }
-            }
-
-            // Find parent via SyntaxChild edge
-            let parent_edges: Vec<_> = self
-                .get_incoming_edges(current)
-                .into_iter()
-                .filter(|e| e.type_ == EdgeType::SyntaxChild)
-                .collect();
-
-            if let Some(parent_edge) = parent_edges.first() {
-                current = parent_edge.from;
-            } else {
-                break;
-            }
-        }
-
-        None
     }
 
     /// Recursively removes a subtree from the CPG by its root node ID
