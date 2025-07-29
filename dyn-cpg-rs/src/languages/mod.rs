@@ -332,18 +332,52 @@ fn find_first_processable_descendant(cpg: &Cpg, node_id: NodeId) -> Option<NodeI
     None
 }
 
+/// Navigate up the CPG via SyntaxChild edges until we get to a parent Block, Function or TranslationUnit
+/// If the node is already one of these, return it directly.
+fn get_container_parent(cpg: &Cpg, node_id: NodeId) -> NodeId {
+    match cpg.get_node_by_id(&node_id) {
+        Some(node)
+            if matches!(
+                node.type_,
+                NodeType::Block | NodeType::Function { .. } | NodeType::TranslationUnit
+            ) =>
+        {
+            return node_id; // Already a container
+        }
+        _ => {}
+    }
+
+    let par = cpg
+        .get_incoming_edges(node_id)
+        .into_iter()
+        .find(|e| e.type_ == EdgeType::SyntaxChild)
+        .map(|e| e.from);
+
+    match par {
+        Some(id) => {
+            let node = cpg.get_node_by_id(&id).expect("Node must exist");
+            if matches!(
+                node.type_,
+                NodeType::Block | NodeType::Function { .. } | NodeType::TranslationUnit
+            ) {
+                id
+            } else {
+                get_container_parent(cpg, id)
+            }
+        }
+        None => {
+            warn!("No container parent found for node: {:?}", node_id);
+            node_id // Fallback to the original node if no parent found
+        }
+    }
+}
+
 // --- Control Flow & Data Dependence --- //
 
 /// Idempotent computation of the control flow for a subtree in the CPG.
 /// This pass assumes that the AST has been construed into a CPG.
 pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
-    debug!(
-        "Computing control flow for subtree root: {:?}",
-        subtree_root
-    );
-
-    compute_control_flow_postorder(cpg, subtree_root)?;
-
+    compute_control_flow_postorder(cpg, get_container_parent(cpg, subtree_root))?;
     Ok(())
 }
 

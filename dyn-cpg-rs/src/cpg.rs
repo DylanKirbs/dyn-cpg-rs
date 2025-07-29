@@ -12,7 +12,7 @@ use std::{
 };
 use strum_macros::Display;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
 use tree_sitter::Range;
 
 // --- SlotMap Key Types --- //
@@ -727,7 +727,7 @@ impl Cpg {
             );
             self.set_root(new_subtree_root);
         } else {
-            debug!(
+            warn!(
                 "No parent edge found for node {:?}, but it's not the root node - leaving root unchanged",
                 id
             );
