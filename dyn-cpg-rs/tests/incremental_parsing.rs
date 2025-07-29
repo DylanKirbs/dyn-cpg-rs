@@ -8,7 +8,7 @@ use tracing::debug;
 /// This test verifies that incremental updates produce semantically equivalent CPGs
 #[test]
 fn test_incremental_reparse() {
-    dyn_cpg_rs::logging::init();
+    // dyn_cpg_rs::logging::init();
     debug!("Starting incremental reparse test");
 
     // Init the lang and parser
@@ -78,6 +78,105 @@ fn test_incremental_reparse() {
     // Compare the incrementally updated CPG with the reference CPG
     std::fs::write("incr.dot", cpg.emit_dot()).expect("Failed to write incr.dot");
     std::fs::write("ref.dot", new_cpg.emit_dot()).expect("Failed to write ref.dot");
+    let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
+    match diff {
+        DetailedComparisonResult::Equivalent => {}
+        _ => panic!(
+            "CPGs should be semantically equivalent, but found differences: {:?}",
+            diff
+        ),
+    }
+
+    // Verify the graph is still internally consistent
+    assert!(cpg.node_count() > 0, "CPG should have nodes after update");
+    assert!(cpg.edge_count() > 0, "CPG should have edges after update");
+    assert!(
+        cpg.get_root().is_some(),
+        "CPG should have a root after update"
+    );
+
+    debug!(
+        "Incremental update test passed: nodes {} -> {}, edges {} -> {}",
+        nodes_before,
+        cpg.node_count(),
+        edges_before,
+        cpg.edge_count()
+    );
+}
+
+/// Integration test for incremental parsing and CPG updates
+/// This test verifies that incremental updates produce semantically equivalent CPGs
+#[test]
+fn test_incremental_reparse_perf() {
+    // Init the lang and parser
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Load large_sample.old.c and large_sample.new.c from samples/
+    let s_orig = Resource::new("samples/large_sample.old.c")
+        .expect("Failed to create resource for large_sample.old.c");
+    let s_new = Resource::new("samples/large_sample.new.c")
+        .expect("Failed to create resource for large_sample.new.c");
+
+    // Read the contents of the files
+    let old_src = s_orig
+        .read_bytes()
+        .expect("Failed to read large_sample.old.c");
+    let new_src = s_new
+        .read_bytes()
+        .expect("Failed to read large_sample.new.c");
+
+    // Parse the original file
+    let mut old_tree = parser
+        .parse(old_src.clone(), None)
+        .expect("Failed to parse original file");
+
+    // Parse the new file incrementally
+    let start = std::time::Instant::now();
+    let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
+        .expect("Failed to incrementally parse new file");
+    println!(
+        "Incremental file parse took {} ms",
+        start.elapsed().as_millis()
+    );
+
+    // Get changed ranges
+    let changed_ranges = old_tree.changed_ranges(&new_tree);
+    assert!(changed_ranges.len() != 0, "No changed ranges found");
+
+    // Create CPG from original tree
+    let start = std::time::Instant::now();
+    let mut cpg = lang
+        .cst_to_cpg(old_tree, new_src.clone())
+        .expect("Failed to convert old tree to CPG");
+    println!(
+        "Initial CPG creation took {} ms",
+        start.elapsed().as_millis()
+    );
+
+    // Store metrics before incremental update
+    let nodes_before = cpg.node_count();
+    let edges_before = cpg.edge_count();
+
+    // Perform the incremental update
+    let start = std::time::Instant::now();
+    cpg.incremental_update(edits, changed_ranges, &new_tree);
+    println!(
+        "Incremental CPG update took {} ms",
+        start.elapsed().as_millis()
+    );
+
+    // Compute the reference CPG from scratch
+    let start = std::time::Instant::now();
+    let new_cpg = lang
+        .cst_to_cpg(new_tree, new_src)
+        .expect("Failed to convert new tree to CPG");
+    println!(
+        "Reference CPG creation took {} ms",
+        start.elapsed().as_millis()
+    );
+
+    // Compare the incrementally updated CPG with the reference CPG
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     match diff {
         DetailedComparisonResult::Equivalent => {}

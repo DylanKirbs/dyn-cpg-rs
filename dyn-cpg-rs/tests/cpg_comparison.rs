@@ -187,7 +187,7 @@ fn test_cpg_comparison_performance() {
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
 
     // Check if large sample exists
-    if let Ok(large_sample) = Resource::new("samples/large_sample.c") {
+    if let Ok(large_sample) = Resource::new("samples/large_sample.old.c") {
         let src = large_sample
             .read_bytes()
             .expect("Failed to read large sample");

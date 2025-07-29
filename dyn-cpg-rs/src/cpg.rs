@@ -624,6 +624,90 @@ impl Cpg {
         debug!("Incremental update complete");
     }
 
+    fn rehydrate(
+        &mut self,
+        id: NodeId,
+        pos: (usize, usize, usize, usize),
+        new_tree: &tree_sitter::Tree,
+    ) -> Result<NodeId, CpgError> {
+        let is_current_root = self.root == Some(id);
+
+        let old_left_sibling = self
+            .get_incoming_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling)
+            .map(|e| (e.from, e.properties.clone()));
+
+        let old_right_sibling = self
+            .get_outgoing_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling)
+            .map(|e| (e.to, e.properties.clone()));
+
+        let old_parent = self
+            .get_incoming_edges(id)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxChild)
+            .map(|e| (e.from, e.properties.clone()));
+
+        self.remove_subtree(id).map_err(|e| {
+            CpgError::ConversionError(format!("Failed to remove old subtree: {}", e))
+        })?;
+
+        let mut cursor = new_tree
+            .root_node()
+            .descendant_for_byte_range(pos.2, pos.3)
+            .ok_or(CpgError::MissingField(format!(
+                "No subtree found for range {:?} in new tree",
+                (pos.2, pos.3)
+            )))?
+            .walk();
+
+        let new_subtree_root = crate::languages::translate(self, &mut cursor).map_err(|e| {
+            CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
+        })?;
+
+        if let Some((left_sibling_from, properties)) = old_left_sibling {
+            self.add_edge(Edge {
+                from: left_sibling_from,
+                to: new_subtree_root,
+                type_: EdgeType::SyntaxSibling,
+                properties,
+            });
+        }
+
+        if let Some((right_sibling_to, properties)) = old_right_sibling {
+            self.add_edge(Edge {
+                from: new_subtree_root,
+                to: right_sibling_to,
+                type_: EdgeType::SyntaxSibling,
+                properties,
+            });
+        }
+
+        if let Some((parent_from, properties)) = old_parent {
+            self.add_edge(Edge {
+                from: parent_from,
+                to: new_subtree_root,
+                type_: EdgeType::SyntaxChild,
+                properties,
+            });
+        } else if is_current_root {
+            debug!(
+                "Rehydrating root node {:?}, setting new root to {:?}",
+                id, new_subtree_root
+            );
+            self.set_root(new_subtree_root);
+        } else {
+            warn!(
+                "No parent edge found for node {:?}, but it's not the root node - leaving root unchanged",
+                id
+            );
+        }
+
+        Ok(new_subtree_root)
+    }
+
     /// Find the function node that contains the given node
     fn find_containing_function(&self, node_id: NodeId) -> Option<NodeId> {
         let mut current = node_id;
@@ -657,88 +741,6 @@ impl Cpg {
         }
 
         None
-    }
-
-    fn rehydrate(
-        &mut self,
-        id: NodeId,
-        pos: (usize, usize, usize, usize),
-        new_tree: &tree_sitter::Tree,
-    ) -> Result<NodeId, CpgError> {
-        // Check if the node being rehydrated is the current root
-        let is_current_root = self.root == Some(id);
-
-        // Translate the new subtree from the new_tree based on the position
-        let mut cursor = new_tree
-            .root_node()
-            .descendant_for_byte_range(pos.2, pos.3)
-            .ok_or(CpgError::MissingField(format!(
-                "No subtree found for range {:?} in new tree",
-                (pos.2, pos.3)
-            )))?
-            .walk();
-
-        let new_subtree_root = crate::languages::translate(self, &mut cursor).map_err(|e| {
-            CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
-        })?;
-
-        // Link new subtree to existing CPG in place of old subtree
-        let old_left_sibling_id = self
-            .get_incoming_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxSibling);
-        if let Some(sibling_edge) = old_left_sibling_id {
-            self.add_edge(Edge {
-                from: sibling_edge.from,
-                to: new_subtree_root,
-                type_: EdgeType::SyntaxSibling,
-                properties: sibling_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
-            });
-        }
-
-        let old_right_sibling_id = self
-            .get_outgoing_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxSibling);
-        if let Some(sibling_edge) = old_right_sibling_id {
-            self.add_edge(Edge {
-                from: new_subtree_root,
-                to: sibling_edge.to,
-                type_: EdgeType::SyntaxSibling,
-                properties: sibling_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
-            });
-        }
-
-        let old_parent_edge = self
-            .get_incoming_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxChild);
-        if let Some(parent_edge) = old_parent_edge {
-            self.add_edge(Edge {
-                from: parent_edge.from,
-                to: new_subtree_root,
-                type_: EdgeType::SyntaxChild,
-                properties: parent_edge.properties.clone(), // Copy properties from the old edge (TODO double check if this is needed)
-            });
-        } else if is_current_root {
-            debug!(
-                "Rehydrating root node {:?}, setting new root to {:?}",
-                id, new_subtree_root
-            );
-            self.set_root(new_subtree_root);
-        } else {
-            warn!(
-                "No parent edge found for node {:?}, but it's not the root node - leaving root unchanged",
-                id
-            );
-        }
-
-        // Remove the old subtree from the CPG
-        self.remove_subtree(id).map_err(|e| {
-            CpgError::ConversionError(format!("Failed to remove old subtree: {}", e))
-        })?;
-
-        Ok(new_subtree_root)
     }
 
     /// Recursively removes a subtree from the CPG by its root node ID
@@ -917,6 +919,7 @@ impl Cpg {
                                                         l,
                                                         n.type_.clone(),
                                                         self.spatial_index.get_range_from_node(&l),
+                                                        self.get_node_source(&l),
                                                     ))
                                                 })),
                                                 or.and_then(|r| other.nodes.get(r).and_then(|n| {
@@ -924,6 +927,7 @@ impl Cpg {
                                                         r,
                                                         n.type_.clone(),
                                                         other.spatial_index.get_range_from_node(&r),
+                                                        self.get_node_source(&r),
                                                     ))
                                                 }))
                                             )
@@ -987,6 +991,7 @@ impl Cpg {
                                                         l,
                                                         n.type_.clone(),
                                                         self.spatial_index.get_range_from_node(&l),
+                                                        self.get_node_source(&l),
                                                     ))
                                                 })),
                                                 or.and_then(|r| other.nodes.get(r).and_then(|n| {
@@ -994,6 +999,7 @@ impl Cpg {
                                                         r,
                                                         n.type_.clone(),
                                                         other.spatial_index.get_range_from_node(&r),
+                                                        self.get_node_source(&r),
                                                     ))
                                                 }))
                                             )
