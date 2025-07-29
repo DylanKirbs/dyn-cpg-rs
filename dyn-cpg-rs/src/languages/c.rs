@@ -37,6 +37,8 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
             body: desc_trav![("body", "compound_statement")],
         },
 
+        "break" | "continue" => NodeType::Statement, // TODO: Possible add more specific node type to handle this
+
         "expression_statement" | "declaration" => NodeType::Statement,
 
         "call_expression" => NodeType::Call,

@@ -14,7 +14,6 @@ use strum_macros::Display;
 use thiserror::Error;
 use tracing::debug;
 use tree_sitter::Range;
-
 // --- SlotMap Key Types --- //
 
 new_key_type! {
@@ -250,11 +249,11 @@ impl DescendantTraversal {
 /// - Just a field name: `"field_name"`
 /// Example usage:
 /// ```
-/// use crate::desc_trav;
+/// use dyn_cpg_rs::{desc_trav, cpg::ChildReference, cpg::DescendantTraversal};
 /// let traversal = desc_trav![
 ///   ("declarator", "function_declarator"),
-///   #3,
-/// ]
+///   3,
+/// ];
 /// ```
 macro_rules! desc_trav {
     ( $( $x:tt ),* $(,)? ) => {
@@ -530,6 +529,10 @@ impl Cpg {
             .into_iter()
             .cloned()
             .collect()
+    }
+
+    pub fn get_node_offsets_by_id(&self, id: &NodeId) -> Option<(usize, usize)> {
+        self.spatial_index.get_range_from_node(id)
     }
 
     pub fn get_smallest_node_id_containing_range(
@@ -1304,7 +1307,8 @@ impl Cpg {
                 node.properties
                     .get("raw_kind")
                     .cloned()
-                    .unwrap_or_else(|| "unnamed".to_string()),
+                    .unwrap_or_else(|| "unnamed".to_string())
+                    .replace('"', "\\\""),
                 match node.type_ {
                     NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
                     _ => "black",
