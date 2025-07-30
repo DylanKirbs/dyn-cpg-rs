@@ -1,0 +1,20 @@
+## Empirical Data
+- [ ] Tree sitter
+- [ ] VLC
+- [ ] Graphviz
+- [ ] FFMPEG
+
+## Compare each stage of the pipeline
+- [ ] File Changes / Edits
+- [ ] Merging dirty ranges
+- [ ] AST rehydration
+- [ ] CF pass
+- [ ] DD pass
+
+
+## Compare ^ for 
+- [ ] Statement level updates
+- [ ] Function level updates
+- [ ] Full file reparses
+
+## Look into targeted updates for identifiable (structural) changes like identifier name refactors
