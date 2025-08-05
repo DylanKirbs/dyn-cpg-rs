@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use dyn_cpg_rs::{
     cpg::{Cpg, DetailedComparisonResult},
-    diff::incremental_parse,
+    diff::{SourceEdit, incremental_parse},
     languages::RegisteredLanguage,
     resource::Resource,
 };
@@ -66,6 +66,92 @@ impl DetailedTimings {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct FileMetrics {
+    file_size_bytes: usize,
+    line_count: usize,
+    changed_lines: Option<usize>,
+    proportion_lines_changed: Option<f64>,
+}
+
+impl FileMetrics {
+    fn from_source(src_bytes: &[u8]) -> Self {
+        let file_size_bytes = src_bytes.len();
+        let line_count = src_bytes.iter().filter(|&&b| b == b'\n').count() + 1;
+
+        Self {
+            file_size_bytes,
+            line_count,
+            changed_lines: None,
+            proportion_lines_changed: None,
+        }
+    }
+
+    fn with_change_analysis(
+        mut self,
+        old_src: &[u8],
+        new_src: &[u8],
+        edits: &[SourceEdit],
+    ) -> Self {
+        if edits.is_empty() {
+            self.changed_lines = Some(0);
+            self.proportion_lines_changed = Some(0.0);
+            return self;
+        }
+
+        let old_lines =
+            count_lines_in_byte_ranges(old_src, edits.iter().map(|e| (e.old_start, e.old_end)));
+        let new_lines =
+            count_lines_in_byte_ranges(new_src, edits.iter().map(|e| (e.new_start, e.new_end)));
+
+        // Use the maximum of old and new lines affected as the total changed lines
+        let changed_lines = std::cmp::max(old_lines, new_lines);
+        let proportion = if self.line_count > 0 {
+            changed_lines as f64 / self.line_count as f64
+        } else {
+            0.0
+        };
+
+        self.changed_lines = Some(changed_lines);
+        self.proportion_lines_changed = Some(proportion);
+        self
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "file_size_bytes": self.file_size_bytes,
+            "line_count": self.line_count,
+            "changed_lines": self.changed_lines,
+            "proportion_lines_changed": self.proportion_lines_changed
+        })
+    }
+}
+
+fn count_lines_in_byte_ranges<I>(src_bytes: &[u8], ranges: I) -> usize
+where
+    I: Iterator<Item = (usize, usize)>,
+{
+    let mut affected_lines = std::collections::HashSet::new();
+
+    for (start_byte, end_byte) in ranges {
+        let start_line = src_bytes[..start_byte]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count();
+        let end_line = src_bytes[..end_byte]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count();
+
+        // Include all lines from start to end (inclusive)
+        for line_num in start_line..=end_line {
+            affected_lines.insert(line_num);
+        }
+    }
+
+    affected_lines.len()
 }
 
 fn parse_glob_with_git(
@@ -132,7 +218,7 @@ fn perform_incremental_parse(
     prev_src: &[u8],
     new_src: &[u8],
     mut prev_cpg: Cpg,
-) -> Result<(Cpg, DetailedTimings), String> {
+) -> Result<(Cpg, DetailedTimings, Vec<SourceEdit>), String> {
     let mut timings = DetailedTimings::default();
 
     // Step 1: Parse old source
@@ -159,10 +245,10 @@ fn perform_incremental_parse(
     // Step 3: Update CPG incrementally
     let cpg_update_start = Instant::now();
     let changed_ranges = prev_tree.changed_ranges(&new_tree);
-    prev_cpg.incremental_update(edits, changed_ranges, &new_tree);
+    prev_cpg.incremental_update(edits.clone(), changed_ranges, &new_tree);
     timings.cpg_incremental_update_time_ms = Some(cpg_update_start.elapsed().as_millis());
 
-    Ok((prev_cpg, timings))
+    Ok((prev_cpg, timings, edits))
 }
 
 fn walk_git_history_and_benchmark(
@@ -316,6 +402,9 @@ fn walk_git_history_and_benchmark(
                 }
             };
 
+            // Calculate base file metrics
+            let mut file_metrics = FileMetrics::from_source(&src_bytes);
+
             let mut file_result = json!({
                 "file": file_path.clone(),
                 "commit": commit_id,
@@ -332,7 +421,9 @@ fn walk_git_history_and_benchmark(
                 "cpg_update_time_ms": null,
                 "comparison_time_ms": null,
                 // Detailed timing fields
-                "detailed_timings": full_timings.to_json()
+                "detailed_timings": full_timings.to_json(),
+                // File metrics
+                "file_metrics": file_metrics.to_json()
             });
 
             // Attempt incremental parse if we have previous data
@@ -360,7 +451,11 @@ fn walk_git_history_and_benchmark(
                             &src_bytes,
                             prev_cpg,
                         ) {
-                            Ok((incremental_cpg, mut incremental_timings)) => {
+                            Ok((incremental_cpg, mut incremental_timings, edits)) => {
+                                // Update file metrics with change analysis
+                                file_metrics = file_metrics
+                                    .with_change_analysis(&prev_src, &src_bytes, &edits);
+
                                 // Compare incremental result with full result
                                 let comparison_start = Instant::now();
                                 let comparison = match incremental_cpg.compare(&full_cpg) {
@@ -372,6 +467,7 @@ fn walk_git_history_and_benchmark(
                                         );
                                         current_cpgs.insert(file_path.clone(), full_cpg);
                                         current_hashes.insert(file_path, current_hash);
+                                        file_result["file_metrics"] = file_metrics.to_json();
                                         file_results.push(file_result);
                                         continue;
                                     }
@@ -410,6 +506,7 @@ fn walk_git_history_and_benchmark(
                                     combined_timings[key] = value.clone();
                                 }
                                 file_result["detailed_timings"] = combined_timings;
+                                file_result["file_metrics"] = file_metrics.to_json();
 
                                 if !matches!(comparison, DetailedComparisonResult::Equivalent) {
                                     warn!("CPG mismatch in {}: {:?}", file_path, comparison);
@@ -417,6 +514,7 @@ fn walk_git_history_and_benchmark(
                             }
                             Err(e) => {
                                 warn!("Incremental parse failed for file {}: {}", file_path, e);
+                                file_result["file_metrics"] = file_metrics.to_json();
                             }
                         }
                     }

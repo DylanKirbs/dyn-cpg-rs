@@ -62,6 +62,12 @@ def load_data(directory: str):
                     if 'detailed_timings' in file_data and isinstance(file_data['detailed_timings'], dict):
                         for k, v in file_data['detailed_timings'].items():
                             row[f'timing_{k}'] = v
+                    
+                    # Extract file metrics
+                    if 'file_metrics' in file_data and isinstance(file_data['file_metrics'], dict):
+                        for k, v in file_data['file_metrics'].items():
+                            row[f'file_{k}'] = v
+                    
                     all_rows.append(row)
         except Exception as e:
             st.error(f"Error loading {filename}: {e}")
@@ -304,7 +310,108 @@ fig.update_layout(height=700, showlegend=True)
 st.plotly_chart(fig, use_container_width=True)
 
 # ======================
-# 7. FILE-LEVEL INSIGHTS
+# 7. FILE METRICS ANALYSIS
+# ======================
+
+st.header("📏 File Size & Change Analysis")
+
+# Check if file metrics are available
+file_metrics_cols = [c for c in df.columns if c.startswith('file_')]
+if file_metrics_cols:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("File Size Distribution")
+        if 'file_file_size_bytes' in df.columns:
+            # Convert bytes to KB for better readability
+            df['file_size_kb'] = df['file_file_size_bytes'] / 1024
+            fig = px.histogram(
+                df[df['file_size_kb'].notna()], 
+                x='file_size_kb', 
+                nbins=30, 
+                title="File Size Distribution (KB)",
+                labels={'file_size_kb': 'File Size (KB)'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.subheader("Line Count Distribution")
+        if 'file_line_count' in df.columns:
+            fig = px.histogram(
+                df[df['file_line_count'].notna()], 
+                x='file_line_count', 
+                nbins=30, 
+                title="Line Count Distribution",
+                labels={'file_line_count': 'Lines of Code'}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Change analysis for files with incremental data
+    change_data = df[
+        (df['file_changed_lines'].notna()) & 
+        (df['file_proportion_lines_changed'].notna()) &
+        (df['has_incremental'])
+    ].copy()
+    
+    if not change_data.empty:
+        st.subheader("Change Impact Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.scatter(
+                change_data,
+                x='file_line_count',
+                y='file_changed_lines',
+                color='speedup',
+                size='file_size_kb',
+                hover_data=['file', 'step', 'file_proportion_lines_changed'],
+                title="File Size vs Lines Changed",
+                labels={
+                    'file_line_count': 'Total Lines',
+                    'file_changed_lines': 'Lines Changed'
+                }
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = px.scatter(
+                change_data,
+                x='file_proportion_lines_changed',
+                y='speedup',
+                color='repo',
+                size='file_size_kb',
+                hover_data=['file', 'step', 'file_changed_lines'],
+                title="Proportion Changed vs Speedup",
+                labels={
+                    'file_proportion_lines_changed': 'Proportion of Lines Changed',
+                    'speedup': 'Speedup Factor'
+                }
+            )
+            fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="No speedup")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Correlation analysis
+        st.subheader("Change Characteristics")
+        change_summary = change_data.groupby(pd.cut(change_data['file_proportion_lines_changed'], bins=5)).agg({
+            'speedup': ['mean', 'median', 'count'],
+            'file_changed_lines': 'mean',
+            'file_size_kb': 'mean'
+        }).round(2)
+        change_summary.columns = ['Avg Speedup', 'Median Speedup', 'Count', 'Avg Lines Changed', 'Avg File Size (KB)']
+        st.dataframe(change_summary, use_container_width=True)
+        
+        # Top files by change proportion
+        st.subheader("Files with Highest Change Proportion")
+        top_changes = change_data.nlargest(10, 'file_proportion_lines_changed')[
+            ['file', 'step', 'file_line_count', 'file_changed_lines', 'file_proportion_lines_changed', 'speedup']
+        ]
+        st.dataframe(top_changes, use_container_width=True)
+    else:
+        st.info("No change analysis data available. Files may be unchanged or missing metrics.")
+
+# ======================
+# 8. FILE-LEVEL INSIGHTS
 # ======================
 
 st.header("🗂️ File-Level Insights")
@@ -336,7 +443,7 @@ ext_perf = df.groupby('file_ext', observed=True).agg(
 st.dataframe(ext_perf, use_container_width=True)
 
 # ======================
-# 8. DEBUG / ERROR INSIGHTS
+# 9. DEBUG / ERROR INSIGHTS
 # ======================
 
 st.header("🐞 Debug & Errors")
@@ -347,7 +454,7 @@ if not error_files.empty:
     st.dataframe(error_files[['file', 'step', 'comparison_result']], use_container_width=True)
 
 # ======================
-# 9. RECOMMENDATIONS
+# 10. RECOMMENDATIONS
 # ======================
 
 st.sidebar.divider()
