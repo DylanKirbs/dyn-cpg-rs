@@ -1,7 +1,72 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
-use dyn_cpg_rs::{languages::RegisteredLanguage, resource::Resource};
+use dyn_cpg_rs::{
+    cpg::{Cpg, DetailedComparisonResult},
+    diff::incremental_parse,
+    languages::RegisteredLanguage,
+    resource::Resource,
+};
+use git2::{Oid, Repository};
 use glob::glob;
+use indicatif::{ProgressBar, ProgressStyle};
+use serde_json::json;
+use tracing::{info, warn};
+
+#[derive(Debug, Default)]
+struct DetailedTimings {
+    // Full parse timings
+    ts_full_parse_time_ms: Option<u128>,
+    cst_to_cpg_time_ms: Option<u128>,
+
+    // Incremental parse timings
+    ts_old_parse_time_ms: Option<u128>,
+    text_diff_time_ms: Option<u128>,
+    ts_edit_apply_time_ms: Option<u128>,
+    ts_incremental_parse_time_ms: Option<u128>,
+    cpg_incremental_update_time_ms: Option<u128>,
+
+    // Comparison timing
+    comparison_time_ms: Option<u128>,
+}
+
+impl DetailedTimings {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "ts_full_parse_time_ms": self.ts_full_parse_time_ms,
+            "cst_to_cpg_time_ms": self.cst_to_cpg_time_ms,
+            "ts_old_parse_time_ms": self.ts_old_parse_time_ms,
+            "text_diff_time_ms": self.text_diff_time_ms,
+            "ts_edit_apply_time_ms": self.ts_edit_apply_time_ms,
+            "ts_incremental_parse_time_ms": self.ts_incremental_parse_time_ms,
+            "cpg_incremental_update_time_ms": self.cpg_incremental_update_time_ms,
+            "comparison_time_ms": self.comparison_time_ms
+        })
+    }
+
+    fn full_parse_total_ms(&self) -> Option<u128> {
+        match (self.ts_full_parse_time_ms, self.cst_to_cpg_time_ms) {
+            (Some(ts), Some(cpg)) => Some(ts + cpg),
+            _ => None,
+        }
+    }
+
+    fn incremental_parse_total_ms(&self) -> Option<u128> {
+        match (
+            self.ts_old_parse_time_ms,
+            self.text_diff_time_ms,
+            self.ts_edit_apply_time_ms,
+            self.ts_incremental_parse_time_ms,
+            self.cpg_incremental_update_time_ms,
+        ) {
+            (Some(old), Some(diff), Some(edit), Some(incr), Some(update)) => {
+                Some(old + diff + edit + incr + update)
+            }
+            _ => None,
+        }
+    }
+}
 
 fn parse_glob_with_git(
     pattern: &str,
@@ -19,10 +84,12 @@ fn parse_glob_with_git(
                     })?;
 
                     if let (Some(repo), Some(rev)) = (repo_root, revision) {
-                        let repo_path: PathBuf = repo.clone();
-                        resource = resource.with_git(rev.to_string(), repo_path).map_err(|e| {
-                            format!("Failed to set Git context for '{:?}': {}", path, e)
-                        })?;
+                        resource =
+                            resource
+                                .with_git(rev.to_string(), repo.clone())
+                                .map_err(|e| {
+                                    format!("Failed to set Git context for '{:?}': {}", path, e)
+                                })?;
                     }
 
                     Ok(resource)
@@ -33,105 +100,415 @@ fn parse_glob_with_git(
     matches
 }
 
-/*
-// Load sample1.old.c and sample1.new.c from samples/
-    let s_orig = Resource::new("samples/sample1.old.c")
-        .expect("Failed to create resource for sample1.old.c");
-    let s_new = Resource::new("samples/sample1.new.c")
-        .expect("Failed to create resource for sample1.new.c");
+fn perform_full_parse(
+    parser: &mut tree_sitter::Parser,
+    lang: &RegisteredLanguage,
+    src_bytes: &[u8],
+) -> Result<(Cpg, DetailedTimings), String> {
+    let mut timings = DetailedTimings::default();
 
-    // Read the contents of the files
-    let old_src = s_orig.read_bytes().expect("Failed to read sample1.old.c");
-    let new_src = s_new.read_bytes().expect("Failed to read sample1.new.c");
+    // Step 1: Tree-sitter parse
+    let ts_start = Instant::now();
+    let tree = parser
+        .parse(src_bytes, None)
+        .ok_or("Tree-sitter parse failed")?;
+    timings.ts_full_parse_time_ms = Some(ts_start.elapsed().as_millis());
 
-    // Parse the original file
-    let mut old_tree = parser
-        .parse(old_src.clone(), None)
-        .expect("Failed to parse original file");
+    // Step 2: CST → CPG conversion
+    let cst_start = Instant::now();
+    let cpg = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        lang.cst_to_cpg(tree, src_bytes.to_vec())
+    }))
+    .map_err(|_| "CST to CPG panicked (likely stack overflow)")?
+    .map_err(|e| format!("CST to CPG failed: {}", e))?;
+    timings.cst_to_cpg_time_ms = Some(cst_start.elapsed().as_millis());
 
-    // Parse the new file
-    let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
-        .expect("Failed to incrementally parse new file");
+    Ok((cpg, timings))
+}
 
-    // Changed ranges
-    let changed_ranges = old_tree.changed_ranges(&new_tree);
-    assert!(changed_ranges.len() != 0, "No changed ranges found");
+fn perform_incremental_parse(
+    parser: &mut tree_sitter::Parser,
+    lang: &RegisteredLanguage,
+    prev_src: &[u8],
+    new_src: &[u8],
+    mut prev_cpg: Cpg,
+) -> Result<(Cpg, DetailedTimings), String> {
+    let mut timings = DetailedTimings::default();
 
-    let mut cpg = lang
-        .cst_to_cpg(old_tree, new_src.clone())
-        .expect("Failed to convert old tree to CPG");
+    // Step 1: Parse old source
+    let old_parse_start = Instant::now();
+    let mut prev_tree = parser
+        .parse(prev_src, None)
+        .ok_or("Previous source parse failed")?;
+    timings.ts_old_parse_time_ms = Some(old_parse_start.elapsed().as_millis());
 
-    // Perform the incremental update
-    cpg.incremental_update(edits, changed_ranges, &new_tree);
+    // Step 2: Compute text diff and apply edits
+    let diff_start = Instant::now();
+    let (edits, new_tree) = incremental_parse(parser, prev_src, new_src, &mut prev_tree)
+        .map_err(|e| format!("Incremental parse failed: {}", e))?;
+    let diff_time = diff_start.elapsed();
 
-    // Compute the reference CPG
-    let new_cpg = lang
-        .cst_to_cpg(new_tree, new_src)
-        .expect("Failed to convert new tree to CPG");
+    // Note: incremental_parse internally does both diff computation and tree-sitter incremental parsing
+    // We can't easily separate these without modifying the incremental_parse function
+    // For now, we'll attribute the time to text_diff but add a note
+    timings.text_diff_time_ms = Some(diff_time.as_millis());
+    // TODO: Split incremental_parse to separate diff computation from TS incremental parsing
+    timings.ts_edit_apply_time_ms = Some(0); // Bundled with text_diff for now
+    timings.ts_incremental_parse_time_ms = Some(0); // Bundled with text_diff for now
 
-    // Check the difference between the two CPGs
-    let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
-    assert!(
-        matches!(diff, DetailedComparisonResult::Equivalent),
-        "CPGs should be semantically equivalent, but found differences: {:?}",
-        diff
+    // Step 3: Update CPG incrementally
+    let cpg_update_start = Instant::now();
+    let changed_ranges = prev_tree.changed_ranges(&new_tree);
+    prev_cpg.incremental_update(edits, changed_ranges, &new_tree);
+    timings.cpg_incremental_update_time_ms = Some(cpg_update_start.elapsed().as_millis());
+
+    Ok((prev_cpg, timings))
+}
+
+fn walk_git_history_and_benchmark(
+    repo_path: &PathBuf,
+    pattern: &str,
+    depth: usize,
+    lang: &RegisteredLanguage,
+) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let repo = Repository::open(repo_path)?;
+    let mut revwalk = repo.revwalk()?;
+    revwalk.push_head()?;
+
+    let mut commits: Vec<Oid> = revwalk.take(depth + 1).collect::<Result<Vec<_>, _>>()?;
+    commits.reverse();
+
+    let mut results = Vec::new();
+    let mut previous_resources: Option<Vec<Resource>> = None;
+    let mut previous_cpgs: Option<HashMap<String, Cpg>> = None;
+    let mut previous_hashes: Option<HashMap<String, blake3::Hash>> = None;
+
+    // Create progress bar for commits
+    let commit_progress = ProgressBar::new(commits.len() as u64);
+    commit_progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>3}/{len:3} {msg}",
+            )
+            .unwrap()
+            .progress_chars("##-"),
     );
 
-    // Verify the graph is still internally consistent
-    assert!(cpg.node_count() > 0, "CPG should have nodes after update");
-    assert!(cpg.edge_count() > 0, "CPG should have edges after update");
-    assert!(
-        cpg.get_root().is_some(),
-        "CPG should have a root after update"
-    );
-     */
+    for (step, commit_oid) in commits.iter().enumerate() {
+        let commit = repo.find_commit(*commit_oid)?;
+        let commit_id = commit.id().to_string();
+        let commit_message = commit.message().unwrap_or("").lines().next().unwrap_or("");
 
-#[test]
-fn test_incr_perf_gv() {
-    // Test the incremental parsing performance on the Graphviz repo
-    let depth: u8 = 5;
-    let repo_root: PathBuf = "./repos/graphviz".into();
+        commit_progress.set_message(format!("{} - {}", &commit_id[..8], commit_message));
+        commit_progress.set_position(step as u64);
+
+        let step_start = Instant::now();
+
+        let resources = parse_glob_with_git(pattern, Some(repo_path), Some(&commit_id));
+        let resources: Vec<_> = resources.into_iter().filter_map(Result::ok).collect();
+
+        let resource_load_time = step_start.elapsed();
+        info!(
+            "Loaded {} resources in {:?}",
+            resources.len(),
+            resource_load_time
+        );
+
+        let mut parser = lang.get_parser()?;
+        let mut file_results = Vec::new();
+        let mut current_cpgs = HashMap::new();
+        let mut current_hashes = HashMap::new();
+
+        // Create progress bar for files
+        let file_progress = ProgressBar::new(resources.len() as u64);
+        file_progress.set_style(
+            ProgressStyle::default_bar()
+                .template("  {spinner:.green} [{bar:30.cyan/blue}] {pos:>3}/{len:3} {msg}")
+                .unwrap()
+                .progress_chars("##-"),
+        );
+
+        for (file_idx, resource) in resources.iter().enumerate() {
+            let file_path = resource.raw_path().to_string_lossy().to_string();
+            let file_name = resource
+                .raw_path()
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            file_progress.set_position(file_idx as u64);
+            file_progress.set_message(format!("{}", file_name));
+
+            // Calculate current file hash
+            let current_hash = match resource.hash() {
+                Ok(hash) => hash,
+                Err(e) => {
+                    warn!("Failed to compute hash for file {}: {}", file_path, e);
+                    continue;
+                }
+            };
+
+            // Check if file has changed since previous commit
+            let file_unchanged = if let Some(prev_hashes) = &previous_hashes {
+                prev_hashes.get(&file_path) == Some(&current_hash)
+            } else {
+                false
+            };
+
+            if file_unchanged {
+                // File hasn't changed, reuse previous CPG and create a minimal result
+                if let Some(prev_cpgs) = &previous_cpgs {
+                    if let Some(prev_cpg) = prev_cpgs.get(&file_path).cloned() {
+                        let file_result = json!({
+                            "file": file_path.clone(),
+                            "commit": commit_id,
+                            "step": step,
+                            "unchanged": true,
+                            "full_nodes": prev_cpg.node_count(),
+                            "full_edges": prev_cpg.edge_count(),
+                            "incremental_nodes": null,
+                            "incremental_edges": null,
+                            "comparison_result": null,
+                            // Legacy fields for backward compatibility
+                            "full_parse_time_ms": 0,
+                            "incremental_parse_time_ms": null,
+                            "cpg_update_time_ms": null,
+                            "comparison_time_ms": null,
+                            // Detailed timing fields
+                            "detailed_timings": DetailedTimings::default().to_json()
+                        });
+
+                        current_cpgs.insert(file_path.clone(), prev_cpg);
+                        current_hashes.insert(file_path, current_hash);
+                        file_results.push(file_result);
+                        continue;
+                    }
+                }
+            }
+
+            // File has changed or is new, read source
+            let src_bytes = match resource.read_bytes() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    warn!("Failed to read file {}: {}", file_path, e);
+                    file_results.push(json!({
+                        "file": file_path,
+                        "commit": commit_id,
+                        "step": step,
+                        "error": format!("Failed to read file: {}", e)
+                    }));
+                    continue;
+                }
+            };
+
+            // Perform full parse (always)
+            let (full_cpg, full_timings) = match perform_full_parse(&mut parser, lang, &src_bytes) {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!("Full parse failed for file {}: {}", file_path, e);
+                    file_results.push(json!({
+                        "file": file_path,
+                        "commit": commit_id,
+                        "step": step,
+                        "error": e
+                    }));
+                    continue;
+                }
+            };
+
+            let mut file_result = json!({
+                "file": file_path.clone(),
+                "commit": commit_id,
+                "step": step,
+                "unchanged": false,
+                "full_nodes": full_cpg.node_count(),
+                "full_edges": full_cpg.edge_count(),
+                "incremental_nodes": null,
+                "incremental_edges": null,
+                "comparison_result": null,
+                // Legacy fields for backward compatibility
+                "full_parse_time_ms": full_timings.full_parse_total_ms(),
+                "incremental_parse_time_ms": null,
+                "cpg_update_time_ms": null,
+                "comparison_time_ms": null,
+                // Detailed timing fields
+                "detailed_timings": full_timings.to_json()
+            });
+
+            // Attempt incremental parse if we have previous data
+            if let (Some(prev_resources), Some(prev_cpgs)) = (&previous_resources, &previous_cpgs) {
+                if let Some(prev_resource) = prev_resources
+                    .iter()
+                    .find(|r| r.raw_path().to_string_lossy() == file_path)
+                {
+                    if let Some(prev_cpg) = prev_cpgs.get(&file_path).cloned() {
+                        let prev_src = match prev_resource.read_bytes() {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                warn!("Failed to read previous version of {}: {}", file_path, e);
+                                current_cpgs.insert(file_path.clone(), full_cpg);
+                                current_hashes.insert(file_path, current_hash);
+                                file_results.push(file_result);
+                                continue;
+                            }
+                        };
+
+                        match perform_incremental_parse(
+                            &mut parser,
+                            lang,
+                            &prev_src,
+                            &src_bytes,
+                            prev_cpg,
+                        ) {
+                            Ok((incremental_cpg, mut incremental_timings)) => {
+                                // Compare incremental result with full result
+                                let comparison_start = Instant::now();
+                                let comparison = match incremental_cpg.compare(&full_cpg) {
+                                    Ok(result) => result,
+                                    Err(e) => {
+                                        warn!(
+                                            "CPG comparison failed for file {}: {}",
+                                            file_path, e
+                                        );
+                                        current_cpgs.insert(file_path.clone(), full_cpg);
+                                        current_hashes.insert(file_path, current_hash);
+                                        file_results.push(file_result);
+                                        continue;
+                                    }
+                                };
+                                incremental_timings.comparison_time_ms =
+                                    Some(comparison_start.elapsed().as_millis());
+
+                                // Update file result with incremental data
+                                file_result["incremental_nodes"] =
+                                    json!(incremental_cpg.node_count());
+                                file_result["incremental_edges"] =
+                                    json!(incremental_cpg.edge_count());
+                                file_result["comparison_result"] =
+                                    json!(format!("{:?}", comparison));
+
+                                // Legacy fields
+                                file_result["incremental_parse_time_ms"] =
+                                    json!(incremental_timings.incremental_parse_total_ms());
+                                file_result["cpg_update_time_ms"] =
+                                    json!(incremental_timings.cpg_incremental_update_time_ms);
+                                file_result["comparison_time_ms"] =
+                                    json!(incremental_timings.comparison_time_ms);
+
+                                // Merge detailed timings
+                                let mut combined_timings = full_timings.to_json();
+                                let incr_timings_json = incremental_timings.to_json();
+
+                                if let Some(ts) = full_timings.ts_full_parse_time_ms {
+                                    combined_timings["ts_full_parse_time_ms"] = json!(ts);
+                                }
+                                if let Some(cpg) = full_timings.cst_to_cpg_time_ms {
+                                    combined_timings["cst_to_cpg_time_ms"] = json!(cpg);
+                                }
+
+                                for (key, value) in incr_timings_json.as_object().unwrap() {
+                                    combined_timings[key] = value.clone();
+                                }
+                                file_result["detailed_timings"] = combined_timings;
+
+                                if !matches!(comparison, DetailedComparisonResult::Equivalent) {
+                                    warn!("CPG mismatch in {}: {:?}", file_path, comparison);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Incremental parse failed for file {}: {}", file_path, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Always store the full parse result for the next iteration
+            current_cpgs.insert(file_path.clone(), full_cpg);
+            current_hashes.insert(file_path, current_hash);
+            file_results.push(file_result);
+        }
+
+        file_progress.finish_and_clear();
+
+        let step_total_time = step_start.elapsed();
+
+        let unchanged_files = file_results
+            .iter()
+            .filter(|f| f["unchanged"].as_bool().unwrap_or(false))
+            .count();
+
+        let total_successful_files = current_cpgs.len();
+        let changed_files = total_successful_files - unchanged_files;
+
+        let step_summary = json!({
+            "commit": commit_id,
+            "step": step,
+            "commit_message": commit_message,
+            "total_files": resources.len(),
+            "successful_files": total_successful_files,
+            "unchanged_files": unchanged_files,
+            "changed_files": changed_files,
+            "resource_load_time_ms": resource_load_time.as_millis(),
+            "step_total_time_ms": step_total_time.as_millis(),
+            "files": file_results
+        });
+
+        results.push(step_summary);
+        previous_resources = Some(resources);
+        previous_cpgs = Some(current_cpgs);
+        previous_hashes = Some(current_hashes);
+
+        info!(
+            "Completed step {} in {:?} ({} unchanged, {} changed)",
+            step + 1,
+            step_total_time,
+            unchanged_files,
+            changed_files
+        );
+    }
+
+    commit_progress.finish_with_message("Analysis complete");
+
+    Ok(results)
+}
+
+fn run_benchmark(
+    repository: &str,
+    depth: usize,
+    lang: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repo_root: PathBuf = format!("./repos/{}", repository).into();
     let repo_root = repo_root
         .canonicalize()
         .expect("Failed to canonicalize repo root");
 
-    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
-    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+    let language: RegisteredLanguage = lang.parse().expect("Failed to parse language");
+    let pattern = format!("{}/**/*.{}", repo_root.display(), lang);
 
-    let pattern = format!("{}/**/*.c", repo_root.display());
+    println!("Starting Git history walk analysis on {} commits", depth);
 
-    // Go back "depth" commits and parse all of the C files in "repo/graphviz"
-    // Then step forward one commit at a time, parsing the changed files (incrementally and fully)
-    // Log all of the benchmarks
+    let results = walk_git_history_and_benchmark(&repo_root, &pattern, depth, &language)?;
 
-    let resources = parse_glob_with_git(
-        &pattern,
-        Some(&repo_root),
-        Some(format!("HEAD~{}", depth).as_str()),
+    println!("Analysis complete. Processed {} commits.", results.len());
+
+    // Write results to file
+    let output_file = format!(
+        "benchmarks/benchmark_{}_{}_{}.json",
+        repository, lang, depth,
     );
-    let mut resources: Vec<_> = resources.into_iter().filter_map(Result::ok).collect();
-    resources.sort_by_key(|r| r.raw_path().to_string_lossy().to_string());
-    println!(
-        "Found {} C files in repo: {}",
-        resources.len(),
-        repo_root.display()
-    );
-    let cpgs = resources
-        .iter()
-        .enumerate()
-        .map(|(idx, r)| {
-            let src = r.read_bytes().expect("Failed to read resource bytes");
-            let tree = parser
-                .parse(src.clone(), None)
-                .expect("Failed to parse source");
-            lang.cst_to_cpg(tree, src).expect(
-                format!(
-                    "Failed to convert CST to CPG for file {:?} at index {}",
-                    r.raw_path(),
-                    idx
-                )
-                .as_str(),
-            )
-        })
-        .collect::<Vec<_>>();
+    std::fs::write(output_file.clone(), serde_json::to_string_pretty(&results)?)?;
+    println!("Results written to {}", output_file);
+
+    Ok(())
+}
+
+#[test]
+fn test_incr_perf_gv() {
+    run_benchmark("graphviz", 50, "c").expect("Failed to run benchmark");
+}
+
+#[test]
+fn test_incr_perf_ts() {
+    run_benchmark("tree-sitter", 50, "c").expect("Failed to run benchmark");
 }
