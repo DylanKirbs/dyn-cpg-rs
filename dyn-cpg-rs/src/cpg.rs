@@ -37,7 +37,7 @@ fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> 
 
 #[derive(Debug, Clone, Default)]
 pub struct SpatialIndex {
-    map: BTreeMap<(usize, usize), NodeId>,
+    map: BTreeMap<(usize, usize), Vec<NodeId>>,
     reverse: HashMap<NodeId, (usize, usize)>,
 }
 
@@ -50,24 +50,31 @@ impl SpatialIndex {
     }
 
     pub fn insert(&mut self, start: usize, end: usize, node_id: NodeId) {
-        self.map.insert((start, end), node_id);
+        self.map.entry((start, end)).or_default().push(node_id);
         self.reverse.insert(node_id, (start, end));
     }
 
     pub fn lookup_nodes_from_range(&self, start: usize, end: usize) -> Vec<&NodeId> {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         self.map
-            .range(..=(end, usize::MAX))
-            .filter(|(key, _)| {
-                let (s, e) = *key;
-                s < &end && e > &start
-            })
-            .map(|(_, id)| id)
+            .iter()
+            .filter(|((s, e), _)| start < *e && *s < end)
+            .flat_map(|(_, ids)| ids)
             .collect()
     }
 
     pub fn remove_by_node(&mut self, node_id: &NodeId) {
         if let Some(range) = self.reverse.remove(node_id) {
-            self.map.remove(&range);
+            if let Some(ids) = self.map.get_mut(&range) {
+                ids.retain(|id| id != node_id);
+                if ids.is_empty() {
+                    self.map.remove(&range);
+                }
+            }
         }
     }
 
@@ -1379,6 +1386,7 @@ impl<'a> Default for EdgeQuery<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     // --- Helper functions for tests --- //
 
@@ -2055,4 +2063,247 @@ mod tests {
         let result = cpg.remove_subtree(node);
         assert!(result.is_ok()); // Should not panic
     }
+
+    // --- Property-based tests --- //
+
+    proptest! {
+           #[test]
+           fn prop_spatial_index_insertion_consistency(
+               ranges in prop::collection::vec((0usize..1000, 0usize..1000), 1..50)
+           ) {
+               let mut cpg = create_test_cpg();
+               let mut node_ids = Vec::new();
+
+               // Insert nodes with generated ranges
+               for (start, end) in ranges.iter() {
+                   let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
+                   let node_id = cpg.add_node(create_test_node(NodeType::Statement), start, end);
+                   node_ids.push(node_id);
+               }
+
+               // Property: Every inserted node should be findable by its exact range
+               // BUT: Zero-width ranges don't overlap with anything (including themselves)
+               for (i, (start, end)) in ranges.iter().enumerate() {
+                   let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
+                   let overlapping = cpg.spatial_index.lookup_nodes_from_range(start, end);
+
+                   if start == end {
+                       // Zero-width ranges should NOT be found (they don't overlap with anything)
+                       prop_assert!(!overlapping.contains(&&node_ids[i]),
+                           "Zero-width range ({}, {}) should NOT be found in spatial index", start, end);
+                   } else {
+                       // Non-zero-width ranges should be found
+                       prop_assert!(overlapping.contains(&&node_ids[i]),
+                           "Node {} with range ({}, {}) should be found in spatial index", i, start, end);
+                   }
+               }
+           }
+
+           #[test]
+           fn prop_spatial_index_removal_consistency(
+               ranges in prop::collection::vec((0usize..1000, 0usize..1000), 1..20)
+           ) {
+               let mut cpg = create_test_cpg();
+               let mut node_ids = Vec::new();
+
+               // Insert nodes
+               for (start, end) in ranges.iter() {
+                   let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
+                   let node_id = cpg.add_node(create_test_node(NodeType::Statement), start, end);
+                   node_ids.push(node_id);
+               }
+
+               // Remove every other node
+               for (i, &node_id) in node_ids.iter().enumerate().step_by(2) {
+                   cpg.spatial_index.remove_by_node(&node_id);
+
+                   // Property: Removed node should not be found in spatial index
+                   let (start, end) = ranges[i];
+                   let (start, end) = if start <= end { (start, end) } else { (end, start) };
+                   let overlapping = cpg.spatial_index.lookup_nodes_from_range(start, end);
+                   prop_assert!(!overlapping.contains(&&node_id),
+                       "Removed node {} should not be found in spatial index", i);
+               }
+           }
+
+           #[test]
+           fn prop_cpg_node_edge_consistency(
+               node_count in 1usize..20,
+               edge_pairs in prop::collection::vec((0usize..19, 0usize..19), 0..30)
+           ) {
+               let mut cpg = create_test_cpg();
+               let mut node_ids = Vec::new();
+
+               // Create nodes
+               for i in 0..node_count {
+                   let node_id = cpg.add_node(
+                       create_test_node(NodeType::Statement),
+                       i * 10,
+                       (i + 1) * 10 - 1
+                   );
+                   node_ids.push(node_id);
+               }
+
+               // Add edges between valid node pairs
+               for (from_idx, to_idx) in edge_pairs.iter() {
+                   if *from_idx < node_ids.len() && *to_idx < node_ids.len() && from_idx != to_idx {
+                       let edge = Edge {
+                           from: node_ids[*from_idx],
+                           to: node_ids[*to_idx],
+                           type_: EdgeType::SyntaxChild,
+                           properties: HashMap::new(),
+                       };
+                       cpg.add_edge(edge);
+                   }
+               }
+
+               // Property: Every edge should be found in both outgoing and incoming lists
+               for edge in cpg.edges.values() {
+                   let outgoing = cpg.get_outgoing_edges(edge.from);
+                   let incoming = cpg.get_incoming_edges(edge.to);
+
+                   prop_assert!(outgoing.contains(&edge), "Edge should be in outgoing list");
+                   prop_assert!(incoming.contains(&edge), "Edge should be in incoming list");
+               }
+           }
+
+           #[test]
+           fn prop_cpg_comparison_reflexivity(
+               node_types in prop::collection::vec(
+                   prop_oneof![
+                       Just(NodeType::Statement),
+                       Just(NodeType::Expression),
+                       Just(NodeType::Block),
+                       Just(NodeType::TranslationUnit),
+                   ],
+                   1..10
+               )
+           ) {
+               let mut cpg = create_test_cpg();
+
+               // Build a CPG with the generated node types
+               for (i, node_type) in node_types.iter().enumerate() {
+                   cpg.add_node(
+                       create_test_node(node_type.clone()),
+                       i * 10,
+                       (i + 1) * 10 - 1
+                   );
+               }
+
+               // Property: A CPG should always be equivalent to itself
+               let result = cpg.compare(&cpg).unwrap();
+               prop_assert!(matches!(result, DetailedComparisonResult::Equivalent),
+                   "CPG self-comparison should always be equivalent");
+           }
+
+           #[test]
+           fn prop_subtree_removal_maintains_consistency(
+               initial_nodes in 3usize..15,
+               removal_indices in prop::collection::vec(0usize..14, 1..5)
+           ) {
+               let mut cpg = create_test_cpg();
+               let mut node_ids = Vec::new();
+
+               // Create initial nodes
+               for i in 0..initial_nodes {
+                   let node_id = cpg.add_node(
+                       create_test_node(NodeType::Statement),
+                       i * 100,
+                       (i + 1) * 100 - 1
+                   );
+                   node_ids.push(node_id);
+               }
+
+               // Add some parent-child relationships
+               for i in 1..initial_nodes {
+                   if i > 0 {
+                       cpg.add_edge(Edge {
+                           from: node_ids[i - 1],
+                           to: node_ids[i],
+                           type_: EdgeType::SyntaxChild,
+                           properties: HashMap::new(),
+                       });
+                   }
+               }
+
+               let initial_edge_count = cpg.edge_count();
+
+               // Remove nodes at valid indices
+               let mut _removed_count = 0;
+               for &idx in removal_indices.iter() {
+                   if idx < node_ids.len() && cpg.nodes.contains_key(node_ids[idx]) {
+                                             cpg.remove_subtree(node_ids[idx]).unwrap();
+                       _removed_count += 1;
+                   }
+               }
+
+               // Property: After removal, no dangling edges should exist
+               for edge in cpg.edges.values() {
+                   prop_assert!(cpg.nodes.contains_key(edge.from),
+                       "Edge 'from' node should exist after subtree removal");
+                   prop_assert!(cpg.nodes.contains_key(edge.to),
+    "Edge 'to' node should exist after subtree removal");
+               }
+
+               // Property: Edge count should decrease (or stay same if no edges were removed)
+               prop_assert!(cpg.edge_count() <= initial_edge_count,
+                   "Edge count should not increase after subtree removal");
+           }
+
+           #[test]
+           fn prop_ordered_syntax_children_consistency(
+               child_count in  1usize..10
+           ) {
+               let mut cpg = create_test_cpg();
+               let parent = cpg.add_node(
+                   create_test_node(NodeType::Function {
+                       name_traversal: desc_trav![],
+                       name: Some("test_func".to_string()),
+                   }),
+                   0,
+                   child_count * 100
+               );
+
+               let mut children = Vec::new();
+               for i in 0..child_count {
+                   let child = cpg.add_node(
+                       create_test_node(NodeType::Statement),
+                       i * 10,
+                       (i + 1) * 10 - 1
+                   );
+                   children.push(child);
+
+                   // Add parent-child edge
+                   cpg.add_edge(Edge {
+                       from: parent,
+                       to: child,
+                       type_: EdgeType::SyntaxChild,
+                       properties: HashMap::new(),
+                   });
+               }
+
+               // Add sibling edges to establish order
+               for i in 0..(child_count - 1) {
+                   cpg.add_edge(Edge {
+                       from: children[i],
+                       to: children[i + 1],
+                       type_: EdgeType::SyntaxSibling,
+                       properties: HashMap::new(),
+                   });
+               }
+
+               let ordered = cpg.ordered_syntax_children(parent);
+
+               // Property: Ordered children should contain all children exactly once
+               prop_assert_eq!(ordered.len(), child_count, "Should have all children");
+
+               // Property: Order should match the sibling chain
+               for i in 0..(child_count - 1) {
+                   let current_idx = ordered.iter().position(|&x| x == children[i]).unwrap();
+                   let next_idx = ordered.iter().position(|&x| x == children[i + 1]).unwrap();
+                   prop_assert!(next_idx == current_idx + 1,
+                       "Sibling order should be preserved: child {} should come before child {}", i, i + 1);
+               }
+           }
+       }
 }

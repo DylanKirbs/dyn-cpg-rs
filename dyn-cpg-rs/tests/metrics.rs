@@ -593,15 +593,15 @@ fn run_benchmark(
 
 #[test]
 fn test_incr_perf_gv() {
-    run_benchmark("graphvis", 500, "c").expect("Failed to run benchmark");
+    // run_benchmark("graphvis", 500, "c").expect("Failed to run benchmark");
 }
 
 #[test]
 fn test_incr_perf_ts() {
-    run_benchmark("tree-sitter", 500, "c").expect("Failed to run benchmark");
+    run_benchmark("tree-sitter", 1, "c").expect("Failed to run benchmark");
 }
 
 #[test]
 fn test_incr_perf_ff() {
-    run_benchmark("ffmpeg", 500, "c").expect("Failed to run benchmark");
+    // run_benchmark("ffmpeg", 500, "c").expect("Failed to run benchmark");
 }

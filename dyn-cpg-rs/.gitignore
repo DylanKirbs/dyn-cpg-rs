@@ -1,7 +1,12 @@
+
+# Build artifacts
 target/
+
+# Test artifacts
+*flamegraph.svg
+*proptest-regressions*
 perf.*
-flamegraph.svg
-samples/
 tarpaulin*
-*.dot*
 benchmarks/
+samples/
+*.dot*

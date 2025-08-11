@@ -1,8 +1,8 @@
 ## Empirical Data
-- [ ] Tree sitter
+- [x] Tree sitter
 - [ ] VLC
-- [ ] Graphviz
-- [ ] FFMPEG
+- [x] Graphviz
+- [x] FFMPEG
 
 ## Compare each stage of the pipeline
 - [ ] File Changes / Edits

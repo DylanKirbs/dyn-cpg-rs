@@ -2,6 +2,7 @@ use dyn_cpg_rs::{
     cpg::DetailedComparisonResult, diff::incremental_parse, languages::RegisteredLanguage,
     resource::Resource,
 };
+use proptest::prelude::*;
 use tracing::debug;
 
 /// Integration test for incremental parsing and CPG updates
@@ -282,6 +283,246 @@ fn test_incremental_edge_cases() {
             matches!(diff, DetailedComparisonResult::Equivalent),
             "Empty to non-empty should work: {:?}",
             diff
+        );
+    }
+}
+
+// --- Property-based tests for incremental parsing --- //
+
+proptest! {
+    #[test]
+    fn prop_incremental_parsing_simple_changes(
+        base_function_name in "[a-zA-Z_][a-zA-Z0-9_]{0,10}",
+        new_function_name in "[a-zA-Z_][a-zA-Z0-9_]{0,10}",
+        return_value in 0i32..100
+    ) {
+        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+        let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+        // Create simple C functions with different names
+        let old_source = format!("int {}() {{ return {}; }}", base_function_name, return_value);
+        let new_source = format!("int {}() {{ return {}; }}", new_function_name, return_value + 1);
+
+        let old_bytes = old_source.as_bytes();
+        let new_bytes = new_source.as_bytes();
+
+        let old_tree = parser.parse(old_bytes, None);
+        prop_assume!(old_tree.is_some(), "Old source should parse successfully");
+        let mut old_tree = old_tree.unwrap();
+
+        // Perform incremental parsing
+        let incremental_result = incremental_parse(&mut parser, old_bytes, new_bytes, &mut old_tree);
+        prop_assume!(incremental_result.is_ok(), "Incremental parse should succeed");
+        let (edits, new_tree) = incremental_result.unwrap();
+
+        // Create CPGs
+        let old_cpg_result = lang.cst_to_cpg(old_tree.clone(), old_bytes.to_vec());
+        let new_cpg_result = lang.cst_to_cpg(new_tree.clone(), new_bytes.to_vec());
+
+        prop_assume!(old_cpg_result.is_ok() && new_cpg_result.is_ok(), "CPG creation should succeed");
+
+        let mut incremental_cpg = old_cpg_result.unwrap();
+        let reference_cpg = new_cpg_result.unwrap();
+
+        // Apply incremental update
+        let changed_ranges = old_tree.changed_ranges(&new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+
+        // Property: Incremental update should produce equivalent result
+        let comparison = incremental_cpg.compare(&reference_cpg);
+        prop_assert!(comparison.is_ok(), "CPG comparison should not fail");
+
+        let diff = comparison.unwrap();
+        prop_assert!(
+            matches!(diff, DetailedComparisonResult::Equivalent),
+            "Incremental CPG should be equivalent to reference CPG for simple function changes"
+        );
+    }
+
+    #[test]
+    fn prop_incremental_parsing_whitespace_changes(
+        spaces_before in 0usize..10,
+        spaces_after in 0usize..10,
+        newlines_before in 0usize..5,
+        newlines_after in 0usize..5
+    ) {
+        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+        let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+        // Create sources that differ only in whitespace
+        let old_source = format!(
+            "{}{}int main() {{{}return 0; }}",
+            " ".repeat(spaces_before),
+            "\n".repeat(newlines_before),
+            " ".repeat(spaces_before)
+        );
+        let new_source = format!(
+            "{}{}int main() {{{}return 0; }}",
+            " ".repeat(spaces_after),
+            "\n".repeat(newlines_after),
+            " ".repeat(spaces_after)
+        );
+
+        let old_bytes = old_source.as_bytes();
+        let new_bytes = new_source.as_bytes();
+
+        let old_tree = parser.parse(old_bytes, None);
+        prop_assume!(old_tree.is_some(), "Old source should parse successfully");
+        let mut old_tree = old_tree.unwrap();
+
+        let incremental_result = incremental_parse(&mut parser, old_bytes, new_bytes, &mut old_tree);
+        prop_assume!(incremental_result.is_ok(), "Incremental parse should succeed");
+        let (edits, new_tree) = incremental_result.unwrap();
+
+        let old_cpg_result = lang.cst_to_cpg(old_tree.clone(), old_bytes.to_vec());
+        let new_cpg_result = lang.cst_to_cpg(new_tree.clone(), new_bytes.to_vec());
+
+        prop_assume!(old_cpg_result.is_ok() && new_cpg_result.is_ok(), "CPG creation should succeed");
+
+        let mut incremental_cpg = old_cpg_result.unwrap();
+        let reference_cpg = new_cpg_result.unwrap();
+
+        let changed_ranges = old_tree.changed_ranges(&new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+
+        // Property: Whitespace-only changes should still produce equivalent CPGs
+        let comparison = incremental_cpg.compare(&reference_cpg);
+        prop_assert!(comparison.is_ok(), "CPG comparison should not fail");
+
+        let diff = comparison.unwrap();
+        prop_assert!(
+            matches!(diff, DetailedComparisonResult::Equivalent),
+            "Incremental CPG should handle whitespace changes correctly"
+        );
+    }
+
+    #[test]
+    fn prop_incremental_parsing_statement_insertion(
+        var_name in "[a-zA-Z_][a-zA-Z0-9_]{0,8}",
+        initial_value in 0i32..50,
+        inserted_value in 0i32..50
+    ) {
+        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+        let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+        // Original function with one statement
+        let old_source = format!(
+            "int main() {{ int {} = {}; return {}; }}",
+            var_name, initial_value, var_name
+        );
+
+        // Modified function with an additional statement
+        let new_source = format!(
+            "int main() {{ int {} = {}; {} = {}; return {}; }}",
+            var_name, initial_value, var_name, inserted_value, var_name
+        );
+
+        let old_bytes = old_source.as_bytes();
+        let new_bytes = new_source.as_bytes();
+
+        let old_tree = parser.parse(old_bytes, None);
+        prop_assume!(old_tree.is_some(), "Old source should parse successfully");
+        let mut old_tree = old_tree.unwrap();
+
+        let incremental_result = incremental_parse(&mut parser, old_bytes, new_bytes, &mut old_tree);
+        prop_assume!(incremental_result.is_ok(), "Incremental parse should succeed");
+        let (edits, new_tree) = incremental_result.unwrap();
+
+        let old_cpg_result = lang.cst_to_cpg(old_tree.clone(), old_bytes.to_vec());
+        let new_cpg_result = lang.cst_to_cpg(new_tree.clone(), new_bytes.to_vec());
+
+        prop_assume!(old_cpg_result.is_ok() && new_cpg_result.is_ok(), "CPG creation should succeed");
+
+        let mut incremental_cpg = old_cpg_result.unwrap();
+        let reference_cpg = new_cpg_result.unwrap();
+
+        let changed_ranges = old_tree.changed_ranges(&new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+
+        // Property: Statement insertion should be handled correctly
+        let comparison = incremental_cpg.compare(&reference_cpg);
+        prop_assert!(comparison.is_ok(), "CPG comparison should not fail");
+
+        let diff = comparison.unwrap();
+        prop_assert!(
+            matches!(diff, DetailedComparisonResult::Equivalent),
+            "Incremental CPG should handle statement insertion correctly"
+        );
+    }
+
+    #[test]
+    fn prop_incremental_parsing_consistency_with_edits(
+        edit_count in 1usize..5,
+        base_content in prop::collection::vec("[a-zA-Z0-9_]{1,10}", 3..8)
+    ) {
+        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+        let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+        // Build a base C function with variable declarations
+        let mut old_source = "int main() {\n".to_string();
+        for (i, content) in base_content.iter().enumerate() {
+            old_source.push_str(&format!("    int var{} = {};\n", i, content.len()));
+        }
+        old_source.push_str("    return 0;\n}");
+
+        // Make some modifications
+        let mut new_source = old_source.clone();
+        for i in 0..edit_count.min(base_content.len()) {
+            let replacement = format!("var{}_modified", i);
+            new_source = new_source.replace(&format!("var{}", i), &replacement);
+        }
+
+        // Skip if sources are identical (no actual changes made)
+        prop_assume!(old_source != new_source, "Sources should be different");
+
+        let old_bytes = old_source.as_bytes();
+        let new_bytes = new_source.as_bytes();
+
+        let old_tree = parser.parse(old_bytes, None);
+        prop_assume!(old_tree.is_some(), "Old source should parse successfully");
+        let mut old_tree = old_tree.unwrap();
+
+        let incremental_result = incremental_parse(&mut parser, old_bytes, new_bytes, &mut old_tree);
+        prop_assume!(incremental_result.is_ok(), "Incremental parse should succeed");
+        let (edits, new_tree) = incremental_result.unwrap();
+
+        // Property: Number of edits should be reasonable
+        prop_assert!(
+            !edits.is_empty(),
+            "Should have at least one edit when sources differ"
+        );
+        prop_assert!(
+            edits.len() <= edit_count * 2, // Allow some overhead for tree-sitter's edit detection
+            "Edit count should be reasonable: got {} edits for {} expected changes",
+            edits.len(),
+            edit_count
+        );
+
+        let old_cpg_result = lang.cst_to_cpg(old_tree.clone(), old_bytes.to_vec());
+        let new_cpg_result = lang.cst_to_cpg(new_tree.clone(), new_bytes.to_vec());
+
+        prop_assume!(old_cpg_result.is_ok() && new_cpg_result.is_ok(), "CPG creation should succeed");
+
+        let mut incremental_cpg = old_cpg_result.unwrap();
+        let reference_cpg = new_cpg_result.unwrap();
+
+        let changed_ranges = old_tree.changed_ranges(&new_tree);
+
+        // Property: Changed ranges should correlate with edits
+        prop_assert!(
+            changed_ranges.len() > 0,
+            "Should have changed ranges when there are edits"
+        );
+
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+
+        let comparison = incremental_cpg.compare(&reference_cpg);
+        prop_assert!(comparison.is_ok(), "CPG comparison should not fail");
+
+        let diff = comparison.unwrap();
+        prop_assert!(
+            matches!(diff, DetailedComparisonResult::Equivalent),
+            "Incremental CPG should be equivalent to reference CPG for variable name changes"
         );
     }
 }
