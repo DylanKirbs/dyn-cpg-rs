@@ -13,6 +13,9 @@ from typing import Dict, Any
 # Configure page
 st.set_page_config(page_title="CPG Benchmark Explorer", layout="wide", page_icon="🔍")
 
+px.defaults.color_continuous_scale = px.colors.sequential.Viridis
+px.defaults.color_discrete_sequence = px.colors.qualitative.Plotly
+
 # ======================
 # 1. DATA LOADING & PREP
 # ======================
@@ -285,6 +288,8 @@ time_trend = df.groupby(['repo', 'tactic', 'step']).agg(
     median_speedup=('speedup', 'median')
 ).reset_index()
 
+st.info("**Note:** The first entry in each group is omitted from the visualization as it is not an incremental step.")
+
 fig = make_subplots(
     rows=3, cols=1,
     subplot_titles=["Files Changed per Commit", "Avg Full Parse Time", "Median Speedup"],
@@ -293,20 +298,27 @@ fig = make_subplots(
 
 for (repo, tactic), group in time_trend.groupby(['repo', 'tactic']):
     label = f"{repo}/{tactic}"
+    filtered_group = group.iloc[1:]
     fig.add_trace(
-        go.Scatter(x=group['step'], y=group['files_changed'], name=f"{label} - Changed Files", mode='lines+markers'),
+        go.Scatter(x=filtered_group['step'], y=filtered_group['files_changed'], name=f"{label} - Changed Files", mode='lines+markers'),
         row=1, col=1
     )
     fig.add_trace(
-        go.Scatter(x=group['step'], y=group['avg_full_time'], name=f"{label} - Full Time", mode='lines+markers'),
+        go.Scatter(x=filtered_group['step'], y=filtered_group['avg_full_time'], name=f"{label} - Full Time", mode='lines+markers'),
         row=2, col=1
     )
     fig.add_trace(
-        go.Scatter(x=group['step'], y=group['median_speedup'], name=f"{label} - Speedup", mode='lines+markers'),
+        go.Scatter(x=filtered_group['step'], y=filtered_group['median_speedup'], name=f"{label} - Speedup", mode='lines+markers'),
         row=3, col=1
     )
 
-fig.update_layout(height=700, showlegend=True)
+fig.update_layout(
+    height=700,
+    showlegend=True,
+    yaxis=dict(range=[0, None]),
+    yaxis2=dict(range=[0, None]),
+    yaxis3=dict(range=[0, None])
+)
 st.plotly_chart(fig, use_container_width=True)
 
 # ======================
@@ -359,6 +371,7 @@ if file_metrics_cols:
         col1, col2 = st.columns(2)
         
         with col1:
+            change_data['speedup'] = pd.to_numeric(change_data['speedup'], errors='coerce')
             fig = px.scatter(
                 change_data,
                 x='file_line_count',
@@ -370,7 +383,8 @@ if file_metrics_cols:
                 labels={
                     'file_line_count': 'Total Lines',
                     'file_changed_lines': 'Lines Changed'
-                }
+                },
+                color_continuous_scale=px.colors.sequential.Viridis
             )
             st.plotly_chart(fig, use_container_width=True)
         
@@ -380,7 +394,7 @@ if file_metrics_cols:
                 x='file_proportion_lines_changed',
                 y='speedup',
                 color='repo',
-                size='file_size_kb',
+                size='file_changed_lines',
                 hover_data=['file', 'step', 'file_changed_lines'],
                 title="Proportion Changed vs Speedup",
                 labels={
@@ -388,7 +402,8 @@ if file_metrics_cols:
                     'speedup': 'Speedup Factor'
                 }
             )
-            fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="No speedup")
+            fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Speedup")
+            fig.add_hrect(y0=0, y1=1, line_width=0, fillcolor="lightgray", opacity=0.2, annotation_text="No speedup")
             st.plotly_chart(fig, use_container_width=True)
         
         # Correlation analysis
@@ -461,10 +476,7 @@ st.sidebar.divider()
 st.sidebar.markdown("### 💡 Recommendations")
 
 if incremental_success < 10:
-    st.sidebar.warning("Few incremental successes — try a more active repo (e.g. tree-sitter)")
+    st.sidebar.warning("Few incremental successes — less than 10 files with incremental data")
 
 if valid['speedup'].median() and valid['speedup'].median() < 1.5:
-    st.sidebar.info("Low speedup — check if edits are too large for effective incremental parsing")
-
-if df['timing_ts_full_parse_time_ms'].isna().mean() > 0.3:
-    st.sidebar.warning("Many missing detailed timings — fix Rust timing merge logic")
+    st.sidebar.info("Low speedup — median speedup is below 1.5x")

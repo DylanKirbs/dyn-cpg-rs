@@ -12,6 +12,7 @@ use git2::{Oid, Repository};
 use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
+use std::fs::File;
 use tracing::{info, warn};
 
 #[derive(Debug, Default)]
@@ -214,7 +215,6 @@ fn perform_full_parse(
 
 fn perform_incremental_parse(
     parser: &mut tree_sitter::Parser,
-    lang: &RegisteredLanguage,
     prev_src: &[u8],
     new_src: &[u8],
     mut prev_cpg: Cpg,
@@ -305,25 +305,8 @@ fn walk_git_history_and_benchmark(
         let mut current_cpgs = HashMap::new();
         let mut current_hashes = HashMap::new();
 
-        // Create progress bar for files
-        let file_progress = ProgressBar::new(resources.len() as u64);
-        file_progress.set_style(
-            ProgressStyle::default_bar()
-                .template("  {spinner:.green} [{bar:30.cyan/blue}] {pos:>3}/{len:3} {msg}")
-                .unwrap()
-                .progress_chars("##-"),
-        );
-
-        for (file_idx, resource) in resources.iter().enumerate() {
+        for resource in resources.iter() {
             let file_path = resource.raw_path().to_string_lossy().to_string();
-            let file_name = resource
-                .raw_path()
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-
-            file_progress.set_position(file_idx as u64);
-            file_progress.set_message(format!("{}", file_name));
 
             // Calculate current file hash
             let current_hash = match resource.hash() {
@@ -446,7 +429,6 @@ fn walk_git_history_and_benchmark(
 
                         match perform_incremental_parse(
                             &mut parser,
-                            lang,
                             &prev_src,
                             &src_bytes,
                             prev_cpg,
@@ -527,8 +509,6 @@ fn walk_git_history_and_benchmark(
             file_results.push(file_result);
         }
 
-        file_progress.finish_and_clear();
-
         let step_total_time = step_start.elapsed();
 
         let unchanged_files = file_results
@@ -576,6 +556,8 @@ fn run_benchmark(
     depth: usize,
     lang: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let guard = pprof::ProfilerGuard::new(100).expect("Failed to start profiler");
+
     let repo_root: PathBuf = format!("./repos/{}", repository).into();
     let repo_root = repo_root
         .canonicalize()
@@ -598,15 +580,28 @@ fn run_benchmark(
     std::fs::write(output_file.clone(), serde_json::to_string_pretty(&results)?)?;
     println!("Results written to {}", output_file);
 
+    if let Ok(report) = guard.report().build() {
+        let file = File::create(format!("{}-flamegraph.svg", repository))
+            .expect("Failed to create flamegraph file");
+        report.flamegraph(file).expect("Failed to write flamegraph");
+    }
+
+    println!("Flamegraph written to {}-flamegraph.svg", repository);
+
     Ok(())
 }
 
 #[test]
 fn test_incr_perf_gv() {
-    run_benchmark("graphviz", 50, "c").expect("Failed to run benchmark");
+    run_benchmark("graphvis", 500, "c").expect("Failed to run benchmark");
 }
 
 #[test]
 fn test_incr_perf_ts() {
-    run_benchmark("tree-sitter", 50, "c").expect("Failed to run benchmark");
+    run_benchmark("tree-sitter", 500, "c").expect("Failed to run benchmark");
+}
+
+#[test]
+fn test_incr_perf_ff() {
+    run_benchmark("ffmpeg", 500, "c").expect("Failed to run benchmark");
 }
