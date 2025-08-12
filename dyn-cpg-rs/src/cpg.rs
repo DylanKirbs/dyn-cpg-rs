@@ -542,12 +542,69 @@ impl Cpg {
             merged_ranges.len()
         );
 
-        // For each merged range, find the smallest node that contains it
+        // For each merged range, find the appropriate node that contains it
         let dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
             .into_iter()
             .filter_map(|range| {
-                // Find the smallest node containing the merged range
-                let containing_node = self.get_smallest_node_id_containing_range(range.0, range.1);
+                // Get all nodes that contain the merged range
+                let candidates = self
+                    .spatial_index
+                    .lookup_nodes_from_range(range.0, range.1)
+                    .into_iter()
+                    .filter(|node_id| {
+                        // Only consider nodes that fully contain the range
+                        let node_range = self.spatial_index.get_range_from_node(node_id);
+                        if let Some((start, end)) = node_range {
+                            start <= range.0 && range.1 <= end
+                        } else {
+                            false
+                        }
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                // Choose the most appropriate node to rehydrate:
+                // 1. Prefer structural control flow nodes over content nodes
+                // 2. Among structural nodes, choose the one that best represents the change
+                // 3. Fall back to smallest containing node if no structural nodes
+                let containing_node = candidates
+                    .into_iter()
+                    .filter_map(|node_id| {
+                        let node = self.get_node_by_id(&node_id)?;
+                        let node_range = self.spatial_index.get_range_from_node(&node_id)?;
+                        let range_size = node_range.1 - node_range.0;
+
+                        // Assign priority weights - lower values = higher priority
+                        let priority_weight = match &node.type_ {
+                            // Highest priority: Control flow structures that can change significantly
+                            NodeType::Branch { .. } => 1,
+                            NodeType::Loop { .. } => 1,
+
+                            // High priority: Major structural elements
+                            NodeType::Function { .. } => 10,
+                            NodeType::Statement => 20,
+                            NodeType::Block => 30,
+
+                            // Medium priority: Expression-level constructs
+                            NodeType::Expression => 100,
+                            NodeType::Call => 100,
+                            NodeType::Return => 100,
+
+                            // Low priority: Leaf nodes and language-specific constructs
+                            NodeType::Identifier => 1000,
+                            NodeType::Comment => 1000,
+                            NodeType::Type => 500,
+                            NodeType::LanguageImplementation(_) => 800,
+
+                            // Default priority for other nodes
+                            _ => 200,
+                        };
+
+                        // Combined weight: prioritize by type first, then by size
+                        Some((node_id, priority_weight + range_size))
+                    })
+                    .min_by_key(|(_, weight)| *weight)
+                    .map(|(node_id, _)| node_id);
 
                 if let Some(node_id) = containing_node {
                     debug!(
