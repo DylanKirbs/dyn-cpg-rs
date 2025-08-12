@@ -8,7 +8,7 @@ fn test_c_language_integration() {
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
 
     // Test with various C constructs
-    let sources = vec![
+    let sources = [
         b"int main() { return 0; }".as_slice(),
         b"int x = 5; int y = 10;".as_slice(),
         b"

@@ -189,7 +189,7 @@ async fn then_unchanged_parts_intact(world: &mut CpgWorld) {
         let updated_functions = updated_cpg.get_top_level_functions(updated_root);
 
         if let (Ok(initial_funcs), Ok(updated_funcs)) = (initial_functions, updated_functions) {
-            for (name, _) in &initial_funcs {
+            for name in initial_funcs.keys() {
                 if !name.contains("temp") && !name.contains("fact") {
                     assert!(
                         updated_funcs.contains_key(name),
@@ -309,8 +309,7 @@ async fn then_separate_control_flow(world: &mut CpgWorld) {
             .get_node_by_id(&func_id)
             .unwrap()
             .properties
-            .get("name")
-            .is_some()
+            .contains_key("name")
         {
             assert!(
                 has_control_flow || control_edges.is_empty(),
@@ -452,9 +451,9 @@ async fn then_data_dependencies_similar(world: &mut CpgWorld) {
     let c_cpg = world.initial_cpg.as_ref().unwrap();
     let alt_cpg = world.comparison_cpg.as_ref().unwrap();
 
-    assert!(c_cpg.node_count() >= 0, "C CPG should have nodes");
+    assert!(c_cpg.node_count() > 0, "C CPG should have nodes");
     assert!(
-        alt_cpg.node_count() >= 0,
+        alt_cpg.node_count() > 0,
         "Alternative CPG should have nodes"
     );
 }
@@ -740,7 +739,7 @@ async fn then_get_all_paths(world: &mut CpgWorld) {
 #[then("each path should include intermediate function calls")]
 async fn then_include_intermediate_calls(world: &mut CpgWorld) {
     assert!(
-        world.query_results.len() >= 1,
+        !world.query_results.is_empty(),
         "Should have at least one path"
     );
 }
@@ -748,7 +747,7 @@ async fn then_include_intermediate_calls(world: &mut CpgWorld) {
 #[then("the paths should respect conditional branching")]
 async fn then_respect_branching(world: &mut CpgWorld) {
     assert!(
-        world.query_results.len() >= 1,
+        !world.query_results.is_empty(),
         "Should respect control flow"
     );
 }

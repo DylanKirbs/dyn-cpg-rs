@@ -292,16 +292,16 @@ pub enum FunctionComparisonResult {
 // Functionality to interact with the CPG
 
 impl Cpg {
-    pub fn new(lang: RegisteredLanguage, source: Vec<u8>) -> Self {
+    pub fn new(language: RegisteredLanguage, source: Vec<u8>) -> Self {
         Cpg {
-            root: None,
             nodes: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             incoming: HashMap::new(),
             outgoing: HashMap::new(),
             spatial_index: SpatialIndex::new(),
-            language: lang,
-            source: source,
+            root: None,
+            language,
+            source,
         }
     }
 
@@ -383,7 +383,7 @@ impl Cpg {
     }
 
     pub fn get_node_source(&self, node: &NodeId) -> String {
-        let bytes: (usize, usize) = self.get_node_offsets_by_id(&node).unwrap_or((0, 0));
+        let bytes: (usize, usize) = self.get_node_offsets_by_id(node).unwrap_or((0, 0));
         String::from_utf8_lossy(self.get_source().get(bytes.0..bytes.1).unwrap_or(&[])).to_string()
     }
 
@@ -451,7 +451,7 @@ impl Cpg {
                 self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
             {
                 dirty_nodes.insert(
-                    node_id.clone(),
+                    node_id,
                     (
                         range.start_byte,
                         range.end_byte,
@@ -1023,21 +1023,21 @@ impl Cpg {
                                         .map(|(ol, or)| {
                                             format!(
                                                 "Left: {:?}, Right: {:?}",
-                                                ol.and_then(|l| self.nodes.get(l).and_then(|n| {
-                                                    Some((
+                                                ol.and_then(|l| self.nodes.get(l).map(|n| {
+                                                    (
                                                         l,
                                                         n.type_.clone(),
                                                         self.spatial_index.get_range_from_node(&l),
                                                         self.get_node_source(&l),
-                                                    ))
+                                                    )
                                                 })),
-                                                or.and_then(|r| other.nodes.get(r).and_then(|n| {
-                                                    Some((
+                                                or.and_then(|r| other.nodes.get(r).map(|n| {
+                                                    (
                                                         r,
                                                         n.type_.clone(),
                                                         other.spatial_index.get_range_from_node(&r),
                                                         self.get_node_source(&r),
-                                                    ))
+                                                    )
                                                 }))
                                             )
                                         })
@@ -1058,14 +1058,14 @@ impl Cpg {
                 let mut function_mismatches = Vec::new();
 
                 // Find functions only in left CPG
-                for (name, _) in &left_functions {
+                for name in left_functions.keys() {
                     if !right_functions.contains_key(name) {
                         only_in_left.push(name.clone());
                     }
                 }
 
                 // Find functions only in right CPG
-                for (name, _) in &right_functions {
+                for name in right_functions.keys() {
                     if !left_functions.contains_key(name) {
                         only_in_right.push(name.clone());
                     }
@@ -1095,21 +1095,21 @@ impl Cpg {
                                         .map(|(ol, or)| {
                                             format!(
                                                 "Left: {:?}, Right: {:?}",
-                                                ol.and_then(|l| self.nodes.get(l).and_then(|n| {
-                                                    Some((
+                                                ol.and_then(|l| self.nodes.get(l).map(|n| {
+                                                    (
                                                         l,
                                                         n.type_.clone(),
                                                         self.spatial_index.get_range_from_node(&l),
                                                         self.get_node_source(&l),
-                                                    ))
+                                                    )
                                                 })),
-                                                or.and_then(|r| other.nodes.get(r).and_then(|n| {
-                                                    Some((
+                                                or.and_then(|r| other.nodes.get(r).map(|n| {
+                                                    (
                                                         r,
                                                         n.type_.clone(),
                                                         other.spatial_index.get_range_from_node(&r),
                                                         self.get_node_source(&r),
-                                                    ))
+                                                    )
                                                 }))
                                             )
                                         })
@@ -1166,18 +1166,15 @@ impl Cpg {
                 );
 
                 // Check if this child is a Function node
-                match node.type_ {
-                    NodeType::Function { .. } => {
-                        // Try to get the function name from properties
-                        let name = node
-                            .properties
-                            .get("name")
-                            .cloned()
-                            .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
-                        debug!("Found function with name: {}", name);
-                        functions.insert(name, edge.to);
-                    }
-                    _ => {}
+                if let NodeType::Function { .. } = node.type_ {
+                    // Try to get the function name from properties
+                    let name = node
+                        .properties
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
+                    debug!("Found function with name: {}", name);
+                    functions.insert(name, edge.to);
                 }
             }
         }
@@ -1334,25 +1331,22 @@ impl Cpg {
                 });
 
             dot.push_str(&format!(
-                "  {:?} [label=\"{} {} {}\" color={}];\n",
+                "  {:?} [label=\"{} {} {} {}\" color={}];\n",
                 id_s,
                 node.type_
                     .to_string()
                     .replace("NodeType::", "")
                     .replace("_", " "),
                 pos,
-                format!(
-                    "{} {}",
-                    node.properties
-                        .get("raw_kind")
-                        .cloned()
-                        .unwrap_or_else(|| "unknown".to_string())
-                        .replace('"', "\\\""),
-                    node.properties
-                        .get("name")
-                        .cloned()
-                        .unwrap_or_else(|| "".to_string())
-                ),
+                node.properties
+                    .get("raw_kind")
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string())
+                    .replace('"', "\\\""),
+                node.properties
+                    .get("name")
+                    .cloned()
+                    .unwrap_or_else(|| "".to_string()),
                 match node.type_ {
                     NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
                     _ => "black",
@@ -1424,9 +1418,9 @@ impl<'query> EdgeQuery<'query> {
             .edges
             .values()
             .filter(|edge| {
-                self.from.map_or(true, |f| edge.from == f.clone())
-                    && self.to.map_or(true, |t| edge.to == t.clone())
-                    && self.type_.map_or(true, |t| &edge.type_ == t)
+                self.from.is_none_or(|f| edge.from == *f)
+                    && self.to.is_none_or(|t| edge.to == *t)
+                    && self.type_.is_none_or(|t| &edge.type_ == t)
             })
             .collect()
     }
@@ -1456,13 +1450,8 @@ mod tests {
             type_: node_type.clone(),
             properties: {
                 let mut prop = HashMap::new();
-                match &node_type {
-                    NodeType::Function { name, .. } => {
-                        if let Some(n) = name {
-                            prop.insert("name".to_string(), n.clone());
-                        }
-                    }
-                    _ => {}
+                if let NodeType::Function { name: Some(n), .. } = &node_type {
+                    prop.insert("name".to_string(), n.clone());
                 }
                 prop
             },

@@ -205,8 +205,8 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
 
             // Edge from parent to child
             cpg.add_edge(Edge {
-                from: id.clone(),
-                to: child_id.clone(),
+                from: id,
+                to: child_id,
                 type_: EdgeType::SyntaxChild,
                 properties: HashMap::new(),
             });
@@ -214,8 +214,8 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
             // Edge from left sibling to current
             if let Some(left_id) = &left_child_id {
                 cpg.add_edge(Edge {
-                    from: left_id.clone(),
-                    to: child_id.clone(),
+                    from: *left_id,
+                    to: child_id,
                     type_: EdgeType::SyntaxSibling,
                     properties: HashMap::new(),
                 });
@@ -232,25 +232,23 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
     }
 
     // Node post processing now that we have the children as well
-    match type_.clone() {
-        NodeType::Function {
-            name_traversal,
-            name: None,
-        } => {
-            let id_node = name_traversal.get_descendent(cpg, &id);
-            if let Some(id_node) = id_node {
-                let name = cpg.get_node_source(&id_node);
+    if let NodeType::Function {
+        name_traversal,
+        name: None,
+    } = type_.clone()
+    {
+        let id_node = name_traversal.get_descendent(cpg, &id);
+        if let Some(id_node) = id_node {
+            let name = cpg.get_node_source(&id_node);
 
-                let n = cpg
-                    .get_node_by_id_mut(&id)
-                    .and_then(|f| f.properties.insert("name".to_string(), name));
-                debug!("Node found: {:?} {:?}", node.kind(), n);
+            let n = cpg
+                .get_node_by_id_mut(&id)
+                .and_then(|f| f.properties.insert("name".to_string(), name));
+            debug!("Node found: {:?} {:?}", node.kind(), n);
 
-                cpg.get_node_by_id_mut(&id)
-                    .and_then(|n| n.update_type(type_.clone()));
-            }
+            cpg.get_node_by_id_mut(&id)
+                .and_then(|n| n.update_type(type_.clone()));
         }
-        _ => {}
     };
 
     Ok(id)

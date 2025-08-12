@@ -49,7 +49,7 @@ fn test_large_graph_operations() {
 
     // Test spatial queries on large graph
     let overlapping = cpg.get_node_ids_by_offsets(500, 600);
-    assert!(overlapping.len() > 0);
+    assert!(!overlapping.is_empty());
 
     // Test edge queries
     let all_control_flow = EdgeQuery::new()
