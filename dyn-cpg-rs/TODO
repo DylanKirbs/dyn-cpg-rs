@@ -1,4 +1,4 @@
-# TODO
+# TODO & FIXMEs
 
 ## Empirical Data
 - [x] Tree sitter
@@ -12,7 +12,6 @@
 - [x] AST rehydration
 - [x] CF pass
 - [ ] DD pass
-
 
 ## Compare ^ for 
 - [ ] Statement level updates
@@ -29,3 +28,8 @@
 - [ ] Integrate with a DBMS
 - [ ] Test the performance with DB integration
   - I suspect that this may swing the tides of how the incremental updates perform compared to the full reparses
+
+## Known Issues
+
+- Control flow pass is not perfect, sometimes the incremental updates do not reflect the same control flow as the full reparses
+- Data flow pass is not implemented yet
