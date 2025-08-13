@@ -7,10 +7,10 @@
 - [x] FFMPEG
 
 ## Compare each stage of the pipeline
-- [ ] File Changes / Edits
-- [ ] Merging dirty ranges
-- [ ] AST rehydration
-- [ ] CF pass
+- [x] File Changes / Edits
+- [x] Merging dirty ranges
+- [x] AST rehydration
+- [x] CF pass
 - [ ] DD pass
 
 
