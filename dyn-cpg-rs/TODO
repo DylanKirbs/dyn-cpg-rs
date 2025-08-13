@@ -1,3 +1,5 @@
+# TODO
+
 ## Empirical Data
 - [x] Tree sitter
 - [ ] VLC
@@ -18,3 +20,12 @@
 - [ ] Full file reparses
 
 ## Look into targeted updates for identifiable (structural) changes like identifier name refactors
+
+## Implementation
+- [ ] Finish debuging the control flow pass
+- [ ] Finish the data flow pass
+
+## Database
+- [ ] Integrate with a DBMS
+- [ ] Test the performance with DB integration
+  - I suspect that this may swing the tides of how the incremental updates perform compared to the full reparses
