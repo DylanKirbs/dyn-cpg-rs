@@ -1,4 +1,6 @@
-use dyn_cpg_rs::{languages::RegisteredLanguage, resource::Resource};
+use dyn_cpg_rs::{
+    cpg::serialization::DotSerializer, languages::RegisteredLanguage, resource::Resource,
+};
 
 #[test]
 fn test_construct_parsing() {
@@ -16,5 +18,6 @@ fn test_construct_parsing() {
         .cst_to_cpg(tree, src)
         .expect("Failed to convert tree to CPG");
 
-    std::fs::write("constructs.dot", cpg.emit_dot()).expect("Failed to write incr.dot");
+    cpg.serialize_to_file(DotSerializer::new(), "constructs.dot")
+        .expect("Failed to write constructs.dot");
 }

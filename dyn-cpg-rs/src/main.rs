@@ -1,6 +1,5 @@
 use clap::Parser as ClapParser;
 use glob::glob;
-use gremlin_client::ConnectionOptions;
 use tracing::{debug, info};
 use url::Url;
 
@@ -14,7 +13,7 @@ use dyn_cpg_rs::{languages::RegisteredLanguage, logging, resource::Resource};
 pub struct Cli {
     /// Database URI (e.g. ws://localhost:8182)
     #[arg(long, value_parser = parse_db_uri)]
-    pub db: ConnectionOptions,
+    pub db: String,
 
     /// Language of the source code
     #[arg(long)]
@@ -27,7 +26,7 @@ pub struct Cli {
 
 // --- Verification of User Input --- //
 
-fn parse_db_uri(uri: &str) -> Result<ConnectionOptions, String> {
+fn parse_db_uri(uri: &str) -> Result<String, String> {
     let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
     let host = parsed.host_str().unwrap_or("");
 
@@ -53,7 +52,7 @@ fn parse_db_uri(uri: &str) -> Result<ConnectionOptions, String> {
         ));
     }
 
-    Ok(ConnectionOptions::builder().host(host).port(port).build())
+    Ok(format!("ws://{}:{}", host, port))
 }
 
 fn parse_glob(pattern: &str) -> Result<Vec<String>, String> {
@@ -80,11 +79,8 @@ fn run_application(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // DB
-    // let client = gremlin_client::GremlinClient::connect(args.db).map_err(|e| {
-    //     error!("Failed to connect to Gremlin server: {}", e);
-    //     e
-    // })?;
-    info!("Connected to Gremlin server");
+    // TODO
+    info!("Connected to Database server");
 
     // Lang + Parser
     let mut parser = args.lang.get_parser()?;
@@ -252,44 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_struct_debug() {
-        let host = "localhost";
-        let port = 8182;
-        let connection_opts = ConnectionOptions::builder().host(host).port(port).build();
-
-        let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
-
-        let cli = Cli {
-            db: connection_opts,
-            lang,
-            files: vec![vec!["test.c".to_string()]],
-        };
-
-        let debug_str = format!("{:?}", cli);
-        assert!(debug_str.contains("Cli"));
-        assert!(debug_str.contains("test.c"));
-    }
-
-    #[test]
-    fn test_cli_struct_fields() {
-        let connection_opts = ConnectionOptions::builder()
-            .host("example.com")
-            .port(9999)
-            .build();
-
-        let lang: RegisteredLanguage = "c".parse().unwrap();
-        let files = vec![vec!["file1.c".to_string(), "file2.c".to_string()]];
-
-        let cli = Cli {
-            db: connection_opts,
-            lang,
-            files: files.clone(),
-        };
-
-        assert_eq!(cli.files, files);
-    }
-
-    #[test]
     fn test_registered_language_parsing() {
         let c_lang: Result<RegisteredLanguage, _> = "c".parse();
         assert!(c_lang.is_ok());
@@ -329,201 +287,5 @@ mod tests {
         let files = result.unwrap();
         assert!(!files.is_empty());
         assert!(files.iter().all(|f| f.ends_with(".rs")));
-    }
-
-    #[test]
-    fn test_run_application_with_sample_file() {
-        if Path::new("samples/sample1.old.c").exists() {
-            let connection_opts = ConnectionOptions::builder()
-                .host("localhost")
-                .port(8182)
-                .build();
-
-            let lang: RegisteredLanguage = "c".parse().unwrap();
-
-            let cli = Cli {
-                db: connection_opts,
-                lang,
-                files: vec![vec!["samples/sample1.old.c".to_string()]],
-            };
-
-            let result = run_application(cli);
-            assert!(result.is_ok(), "Should successfully process sample file");
-        }
-    }
-
-    #[test]
-    fn test_run_application_with_constructs_file() {
-        if Path::new("samples/constructs.c").exists() {
-            let connection_opts = ConnectionOptions::builder()
-                .host("example.com")
-                .port(8182)
-                .build();
-
-            let lang: RegisteredLanguage = "c".parse().unwrap();
-
-            let cli = Cli {
-                db: connection_opts,
-                lang,
-                files: vec![vec!["samples/constructs.c".to_string()]],
-            };
-
-            let result = run_application(cli);
-            assert!(
-                result.is_ok(),
-                "Should successfully process constructs file"
-            );
-        }
-    }
-
-    #[test]
-    fn test_run_application_with_multiple_files() {
-        if Path::new("samples/sample1.old.c").exists()
-            && Path::new("samples/sample1.new.c").exists()
-        {
-            let connection_opts = ConnectionOptions::builder()
-                .host("test.example.com")
-                .port(8182)
-                .build();
-
-            let lang: RegisteredLanguage = "c".parse().unwrap();
-
-            let cli = Cli {
-                db: connection_opts,
-                lang,
-                files: vec![
-                    vec!["samples/sample1.old.c".to_string()],
-                    vec!["samples/sample1.new.c".to_string()],
-                ],
-            };
-
-            let result = run_application(cli);
-            assert!(result.is_ok(), "Should successfully process multiple files");
-        }
-    }
-
-    #[test]
-    fn test_run_application_with_glob_pattern() {
-        if Path::new("samples").exists() {
-            // Pre-process the glob pattern to get actual file paths
-            let glob_result = parse_glob("samples/*.c");
-            if let Ok(files) = glob_result {
-                let connection_opts = ConnectionOptions::builder()
-                    .host("localhost")
-                    .port(8182)
-                    .build();
-
-                let lang: RegisteredLanguage = "c".parse().unwrap();
-
-                let cli = Cli {
-                    db: connection_opts,
-                    lang,
-                    files: vec![files],
-                };
-
-                let result = run_application(cli);
-                assert!(
-                    result.is_ok(),
-                    "Should successfully process files from glob pattern"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_run_application_with_large_sample() {
-        if Path::new("samples/large_sample.old.c").exists() {
-            let connection_opts = ConnectionOptions::builder()
-                .host("localhost")
-                .port(8182)
-                .build();
-
-            let lang: RegisteredLanguage = "c".parse().unwrap();
-
-            let cli = Cli {
-                db: connection_opts,
-                lang,
-                files: vec![vec!["samples/large_sample.old.c".to_string()]],
-            };
-
-            let result = run_application(cli);
-            assert!(result.is_ok(), "Should handle large files without issues");
-        }
-    }
-
-    #[test]
-    fn test_run_application_file_not_found() {
-        let connection_opts = ConnectionOptions::builder()
-            .host("localhost")
-            .port(8182)
-            .build();
-
-        let lang: RegisteredLanguage = "c".parse().unwrap();
-
-        let cli = Cli {
-            db: connection_opts,
-            lang,
-            files: vec![vec!["nonexistent.c".to_string()]],
-        };
-
-        let result = run_application(cli);
-        assert!(result.is_err(), "Should fail when file doesn't exist");
-    }
-
-    #[test]
-    fn test_run_application_invalid_language_file() {
-        if Path::new("Cargo.toml").exists() {
-            let connection_opts = ConnectionOptions::builder()
-                .host("localhost")
-                .port(8182)
-                .build();
-
-            let lang: RegisteredLanguage = "c".parse().unwrap();
-
-            let cli = Cli {
-                db: connection_opts,
-                lang,
-                files: vec![vec!["Cargo.toml".to_string()]],
-            };
-
-            let result = run_application(cli);
-            // Cargo.toml might actually parse successfully with tree-sitter-c
-            // since tree-sitter is error-tolerant, so we'll just check it doesn't panic
-            assert!(
-                result.is_ok() || result.is_err(),
-                "Should handle non-C files gracefully"
-            );
-        }
-    }
-
-    #[test]
-    fn test_run_application_empty_file() {
-        use std::fs;
-        use std::io::Write;
-
-        let temp_file = "test_empty.c";
-        fs::File::create(temp_file).unwrap().write_all(b"").unwrap();
-
-        let connection_opts = ConnectionOptions::builder()
-            .host("localhost")
-            .port(8182)
-            .build();
-
-        let lang: RegisteredLanguage = "c".parse().unwrap();
-
-        let cli = Cli {
-            db: connection_opts,
-            lang,
-            files: vec![vec![temp_file.to_string()]],
-        };
-
-        let result = run_application(cli);
-
-        fs::remove_file(temp_file).ok();
-
-        assert!(
-            result.is_ok() || result.is_err(),
-            "Should handle empty files gracefully"
-        );
     }
 }

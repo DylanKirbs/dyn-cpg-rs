@@ -1,5 +1,7 @@
 use dyn_cpg_rs::{
-    cpg::DetailedComparisonResult, diff::incremental_parse, languages::RegisteredLanguage,
+    cpg::{DetailedComparisonResult, serialization::DotSerializer},
+    diff::incremental_parse,
+    languages::RegisteredLanguage,
     resource::Resource,
 };
 use proptest::prelude::*;
@@ -77,8 +79,11 @@ fn test_incremental_reparse() {
     );
 
     // Compare the incrementally updated CPG with the reference CPG
-    std::fs::write("incr.dot", cpg.emit_dot()).expect("Failed to write incr.dot");
-    std::fs::write("ref.dot", new_cpg.emit_dot()).expect("Failed to write ref.dot");
+    cpg.serialize_to_file(DotSerializer::new(), "incr.dot")
+        .expect("Failed to write incr.dot");
+    new_cpg
+        .serialize_to_file(DotSerializer::new(), "ref.dot")
+        .expect("Failed to write ref.dot");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     match diff {
         DetailedComparisonResult::Equivalent => {}

@@ -1,8 +1,4 @@
-use super::{
-    Cpg, CpgError, NodeId,
-    edge::{Edge, EdgeType},
-    node::NodeType,
-};
+use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
 use similar::TextDiff;
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -470,106 +466,123 @@ impl Cpg {
 
         details.join("\n")
     }
+}
 
-    pub fn emit_dot(&self) -> String {
-        let mut dot = String::new();
-        dot.push_str("digraph CPG {\n");
-        dot.push_str("  rankdir=TB;\n");
-        dot.push_str("  node [shape=box];\n");
+#[cfg(test)]
+mod tests {
 
-        let mut visited = HashSet::new();
+    use crate::{
+        cpg::{
+            DescendantTraversal, DetailedComparisonResult, Edge, EdgeType, NodeType,
+            tests::{create_test_cpg, create_test_node},
+        },
+        desc_trav,
+    };
+    use std::collections::HashMap;
 
-        fn emit_edge(dot: &mut String, edge: &Edge) {
-            let from = format!("{:?}", edge.from)
-                .replace("NodeId(", "")
-                .replace(")", "");
-            let to = format!("{:?}", edge.to)
-                .replace("NodeId(", "")
-                .replace(")", "");
+    #[test]
+    fn test_compare_equivalent_cpgs() {
+        let mut cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
 
-            let col = match edge.type_ {
-                EdgeType::Unknown => "black",
-                EdgeType::SyntaxChild => "blue",
-                EdgeType::SyntaxSibling => "green",
-                EdgeType::ControlFlowEpsilon => "red",
-                EdgeType::ControlFlowTrue => "orange",
-                EdgeType::ControlFlowFalse => "purple",
-                EdgeType::PDControlTrue => "cyan",
-                EdgeType::PDControlFalse => "magenta",
-                EdgeType::PDData(_) => "brown",
-                EdgeType::Listener(_) => "gray",
-            };
+        // Create identical structures
+        for cpg in [&mut cpg1, &mut cpg2] {
+            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+            let func = cpg.add_node(
+                create_test_node(NodeType::Function {
+                    name_traversal: desc_trav![],
+                    name: Some("main".to_string()),
+                }),
+                1,
+                19,
+            );
 
-            dot.push_str(&format!(
-                "  {:?} -> {:?} [label=\"{}\", color=\"{}\"];\n",
-                from,
-                to,
-                edge.type_
-                    .to_string()
-                    .replace("EdgeType::", "")
-                    .replace("_", " "),
-                col
-            ));
+            cpg.add_edge(Edge {
+                from: root,
+                to: func,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
         }
 
-        fn emit_node(dot: &mut String, cpg: &Cpg, node_id: NodeId, visited: &mut HashSet<NodeId>) {
-            if !visited.insert(node_id) {
-                return; // Already visited this node
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        assert!(matches!(result, DetailedComparisonResult::Equivalent));
+    }
+
+    #[test]
+    fn test_compare_different_functions() {
+        let mut cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
+
+        // CPG1 has function "main"
+        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let func1 = cpg1.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            1,
+            19,
+        );
+        cpg1.add_edge(Edge {
+            from: root1,
+            to: func1,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        // CPG2 has function "test"
+        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let func2 = cpg2.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("test".to_string()),
+            }),
+            1,
+            19,
+        );
+        cpg2.add_edge(Edge {
+            from: root2,
+            to: func2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        });
+
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        match result {
+            DetailedComparisonResult::StructuralMismatch {
+                only_in_left,
+                only_in_right,
+                ..
+            } => {
+                assert!(only_in_left.contains(&"main".to_string()));
+                assert!(only_in_right.contains(&"test".to_string()));
             }
+            _ => panic!("Expected structural mismatch"),
+        }
+    }
 
-            let node = cpg.get_node_by_id(&node_id).expect("Node should exist");
-            let id_s = format!("{:?}", node_id)
-                .replace("NodeId(", "")
-                .replace(")", "");
+    #[test]
+    fn test_compare_no_roots() {
+        let cpg1 = create_test_cpg();
+        let cpg2 = create_test_cpg();
 
-            let pos = cpg
-                .spatial_index
-                .get_range_from_node(&node_id)
-                .map_or("unknown".to_string(), |(start, end)| {
-                    format!("{}-{}", start, end)
-                });
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        assert!(matches!(result, DetailedComparisonResult::Equivalent));
+    }
 
-            dot.push_str(&format!(
-                "  {:?} [label=\"{} {} {} {}\" color={}];\n",
-                id_s,
-                node.type_
-                    .to_string()
-                    .replace("NodeType::", "")
-                    .replace("_", " "),
-                pos,
-                node.properties
-                    .get("raw_kind")
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string())
-                    .replace('"', "\\\""),
-                node.properties
-                    .get("name")
-                    .cloned()
-                    .unwrap_or_else(|| "".to_string()),
-                match node.type_ {
-                    NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
-                    _ => "black",
-                }
-            ));
+    #[test]
+    fn test_compare_one_empty() {
+        let cpg1 = create_test_cpg();
+        let mut cpg2 = create_test_cpg();
+        cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 10);
 
-            for edge in cpg.get_outgoing_edges(node_id) {
-                emit_node(dot, cpg, edge.to, visited);
+        let result = cpg1.compare(&cpg2).expect("Comparison failed");
+        match result {
+            DetailedComparisonResult::StructuralMismatch { only_in_right, .. } => {
+                assert!(only_in_right.contains(&"root".to_string()));
             }
+            _ => panic!("Expected structural mismatch"),
         }
-
-        // Recursive walk emitting nodes
-        if let Some(root) = self.get_root() {
-            emit_node(&mut dot, self, root, &mut visited);
-        } else {
-            dot.push_str("  // No root node set\n");
-        }
-
-        // Emit edges
-        for edge in self.edges.values() {
-            emit_edge(&mut dot, edge);
-        }
-
-        dot.push_str("}\n");
-        dot
     }
 }

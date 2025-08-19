@@ -88,3 +88,134 @@ impl<'a> Default for EdgeQuery<'a> {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{
+        cpg::{
+            DescendantTraversal, Edge, EdgeQuery, EdgeType, NodeType,
+            tests::{create_test_cpg, create_test_node},
+        },
+        desc_trav,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_complex_edge_query() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
+
+        let edge1 = Edge {
+            from: node1,
+            to: node2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        };
+        let edge2 = Edge {
+            from: node1,
+            to: node3,
+            type_: EdgeType::ControlFlowTrue,
+            properties: HashMap::new(),
+        };
+        cpg.add_edge(edge1);
+        cpg.add_edge(edge2);
+
+        let query = EdgeQuery::new()
+            .from(&node1)
+            .edge_type(&EdgeType::SyntaxChild);
+        let results = query.query(&cpg);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].to, node2);
+    }
+
+    #[test]
+    fn test_all_incoming_edges() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
+
+        let edge1 = Edge {
+            from: node1,
+            to: node2,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        };
+        let edge2 = Edge {
+            from: node3,
+            to: node2,
+            type_: EdgeType::ControlFlowTrue,
+            properties: HashMap::new(),
+        };
+        cpg.add_edge(edge1);
+        cpg.add_edge(edge2);
+
+        let query = EdgeQuery::new().to(&node2);
+        let results = query.query(&cpg);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].from, node1);
+        assert_eq!(results[1].from, node3);
+    }
+
+    #[test]
+    fn test_edge_query_combinations() {
+        let mut cpg = create_test_cpg();
+        let node1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            1,
+        );
+        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node3 = cpg.add_node(create_test_node(NodeType::Statement), 2, 3);
+
+        // Add edges with properties
+        let mut edge_props = HashMap::new();
+        edge_props.insert("weight".to_string(), "high".to_string());
+
+        let edge1 = Edge {
+            from: node1,
+            to: node2,
+            type_: EdgeType::SyntaxChild,
+            properties: edge_props.clone(),
+        };
+        let edge2 = Edge {
+            from: node2,
+            to: node3,
+            type_: EdgeType::SyntaxChild,
+            properties: HashMap::new(),
+        };
+        cpg.add_edge(edge1);
+        cpg.add_edge(edge2);
+
+        // Query with multiple criteria
+        let all_syntax_child = EdgeQuery::new()
+            .edge_type(&EdgeType::SyntaxChild)
+            .query(&cpg);
+        assert_eq!(all_syntax_child.len(), 2);
+
+        // Query specific edge
+        let specific = EdgeQuery::new().from(&node1).to(&node2).query(&cpg);
+        assert_eq!(specific.len(), 1);
+        assert_eq!(specific[0].properties, edge_props);
+    }
+}

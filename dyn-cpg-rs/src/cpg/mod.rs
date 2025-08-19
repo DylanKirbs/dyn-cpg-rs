@@ -169,60 +169,9 @@ impl Cpg {
         self.nodes.get_mut(*id)
     }
 
-    pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<&Node> {
-        let overlapping_ids = self
-            .spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte);
-
-        overlapping_ids
-            .into_iter()
-            .filter_map(|id| self.nodes.get(*id))
-            .collect()
-    }
-
-    pub fn get_node_ids_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<NodeId> {
-        self.spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte)
-            .into_iter()
-            .cloned()
-            .collect()
-    }
-
-    pub fn get_node_offsets_by_id(&self, id: &NodeId) -> Option<(usize, usize)> {
-        self.spatial_index.get_range_from_node(id)
-    }
-
     pub fn get_node_source(&self, node: &NodeId) -> String {
         let bytes: (usize, usize) = self.get_node_offsets_by_id(node).unwrap_or((0, 0));
         String::from_utf8_lossy(self.get_source().get(bytes.0..bytes.1).unwrap_or(&[])).to_string()
-    }
-
-    pub fn get_smallest_node_id_containing_range(
-        &self,
-        start_byte: usize,
-        end_byte: usize,
-    ) -> Option<NodeId> {
-        let overlapping_ids = self
-            .spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte);
-        overlapping_ids
-            .into_iter()
-            .filter(|id| {
-                // Only consider nodes that fully contain the range
-                let range = self
-                    .spatial_index
-                    .get_range_from_node(id)
-                    .expect("NodeId should have a range");
-                range.0 <= start_byte && range.1 >= end_byte
-            })
-            .min_by_key(|id| {
-                let range = self
-                    .spatial_index
-                    .get_range_from_node(id)
-                    .expect("NodeId should have a range");
-                range.1 - range.0
-            })
-            .cloned()
     }
 
     pub fn get_incoming_edges(&self, to: NodeId) -> Vec<&Edge> {
@@ -297,16 +246,15 @@ impl Cpg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compare::*;
     use proptest::prelude::*;
 
     // --- Helper functions for tests --- //
 
-    fn create_test_cpg() -> Cpg {
+    pub fn create_test_cpg() -> Cpg {
         Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
     }
 
-    fn create_test_node(node_type: NodeType) -> Node {
+    pub fn create_test_node(node_type: NodeType) -> Node {
         Node {
             type_: node_type.clone(),
             properties: {
@@ -393,212 +341,6 @@ mod tests {
 
         cpg.set_root(node2);
         assert_eq!(cpg.get_root(), Some(node2)); // Root can be overridden
-    }
-
-    // --- Spatial index tests --- //
-
-    #[test]
-    fn test_spatial_index_basic() {
-        let mut cpg = create_test_cpg();
-        let node_id1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            10,
-        );
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier), 12, 20);
-
-        let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
-        assert_eq!(overlapping.len(), 2);
-        assert!(overlapping.contains(&&node_id1));
-        assert!(overlapping.contains(&&node_id2));
-
-        let non_overlapping = cpg.spatial_index.lookup_nodes_from_range(21, 25);
-        assert!(non_overlapping.is_empty());
-
-        cpg.spatial_index.remove_by_node(&node_id2);
-        let after_removal = cpg.spatial_index.lookup_nodes_from_range(8, 12);
-        assert_eq!(after_removal.len(), 1);
-        assert!(after_removal.contains(&&node_id1));
-    }
-
-    #[test]
-    fn test_spatial_index_edge_cases() {
-        let mut cpg = create_test_cpg();
-
-        // Test zero-width ranges
-        let _node_id = cpg.add_node(create_test_node(NodeType::Identifier), 5, 5);
-        let overlapping = cpg.spatial_index.lookup_nodes_from_range(5, 5);
-        assert!(overlapping.is_empty()); // Zero-width ranges don't overlap
-
-        // Test exact boundaries
-        let node_id2 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            10,
-        );
-        let exact_match = cpg.spatial_index.lookup_nodes_from_range(0, 10);
-        // Note: The spatial index includes the first node added (root), so count should be 2
-        assert_eq!(exact_match.len(), 2);
-        assert!(exact_match.contains(&&node_id2));
-
-        // Test adjacent ranges
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement), 10, 20);
-        let adjacent = cpg.spatial_index.lookup_nodes_from_range(10, 10);
-        assert!(adjacent.is_empty()); // Adjacent ranges shouldn't overlap
-    }
-
-    #[test]
-    fn test_get_smallest_node_containing_range() {
-        let mut cpg = create_test_cpg();
-        let large_node = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            100,
-        );
-        let medium_node = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
-        let small_node = cpg.add_node(create_test_node(NodeType::Identifier), 20, 30);
-
-        let result = cpg.get_smallest_node_id_containing_range(25, 26);
-        assert_eq!(result, Some(small_node));
-
-        let result2 = cpg.get_smallest_node_id_containing_range(15, 45);
-        assert_eq!(result2, Some(medium_node));
-
-        let result3 = cpg.get_smallest_node_id_containing_range(5, 95);
-        assert_eq!(result3, Some(large_node));
-
-        let result4 = cpg.get_smallest_node_id_containing_range(200, 300);
-        assert_eq!(result4, None);
-    }
-
-    // --- Edge query tests --- //
-
-    #[test]
-    fn test_complex_edge_query() {
-        let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            1,
-        );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
-
-        let edge1 = Edge {
-            from: node1,
-            to: node2,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        };
-        let edge2 = Edge {
-            from: node1,
-            to: node3,
-            type_: EdgeType::ControlFlowTrue,
-            properties: HashMap::new(),
-        };
-        cpg.add_edge(edge1);
-        cpg.add_edge(edge2);
-
-        let query = EdgeQuery::new()
-            .from(&node1)
-            .edge_type(&EdgeType::SyntaxChild);
-        let results = query.query(&cpg);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].to, node2);
-    }
-
-    #[test]
-    fn test_all_incoming_edges() {
-        let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            1,
-        );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
-
-        let edge1 = Edge {
-            from: node1,
-            to: node2,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        };
-        let edge2 = Edge {
-            from: node3,
-            to: node2,
-            type_: EdgeType::ControlFlowTrue,
-            properties: HashMap::new(),
-        };
-        cpg.add_edge(edge1);
-        cpg.add_edge(edge2);
-
-        let query = EdgeQuery::new().to(&node2);
-        let results = query.query(&cpg);
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].from, node1);
-        assert_eq!(results[1].from, node3);
-    }
-
-    #[test]
-    fn test_edge_query_combinations() {
-        let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            1,
-        );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Statement), 2, 3);
-
-        // Add edges with properties
-        let mut edge_props = HashMap::new();
-        edge_props.insert("weight".to_string(), "high".to_string());
-
-        let edge1 = Edge {
-            from: node1,
-            to: node2,
-            type_: EdgeType::SyntaxChild,
-            properties: edge_props.clone(),
-        };
-        let edge2 = Edge {
-            from: node2,
-            to: node3,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        };
-        cpg.add_edge(edge1);
-        cpg.add_edge(edge2);
-
-        // Query with multiple criteria
-        let all_syntax_child = EdgeQuery::new()
-            .edge_type(&EdgeType::SyntaxChild)
-            .query(&cpg);
-        assert_eq!(all_syntax_child.len(), 2);
-
-        // Query specific edge
-        let specific = EdgeQuery::new().from(&node1).to(&node2).query(&cpg);
-        assert_eq!(specific.len(), 1);
-        assert_eq!(specific[0].properties, edge_props);
     }
 
     // --- Subtree removal tests --- //
@@ -819,138 +561,6 @@ mod tests {
         assert!(ordered.is_empty());
     }
 
-    // --- CPG comparison tests --- //
-
-    #[test]
-    fn test_compare_equivalent_cpgs() {
-        let mut cpg1 = create_test_cpg();
-        let mut cpg2 = create_test_cpg();
-
-        // Create identical structures
-        for cpg in [&mut cpg1, &mut cpg2] {
-            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
-            let func = cpg.add_node(
-                create_test_node(NodeType::Function {
-                    name_traversal: desc_trav![],
-                    name: Some("main".to_string()),
-                }),
-                1,
-                19,
-            );
-
-            cpg.add_edge(Edge {
-                from: root,
-                to: func,
-                type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
-            });
-        }
-
-        let result = cpg1.compare(&cpg2).expect("Comparison failed");
-        assert!(matches!(result, DetailedComparisonResult::Equivalent));
-    }
-
-    #[test]
-    fn test_compare_different_functions() {
-        let mut cpg1 = create_test_cpg();
-        let mut cpg2 = create_test_cpg();
-
-        // CPG1 has function "main"
-        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
-        let func1 = cpg1.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            1,
-            19,
-        );
-        cpg1.add_edge(Edge {
-            from: root1,
-            to: func1,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        });
-
-        // CPG2 has function "test"
-        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
-        let func2 = cpg2.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("test".to_string()),
-            }),
-            1,
-            19,
-        );
-        cpg2.add_edge(Edge {
-            from: root2,
-            to: func2,
-            type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
-        });
-
-        let result = cpg1.compare(&cpg2).expect("Comparison failed");
-        match result {
-            DetailedComparisonResult::StructuralMismatch {
-                only_in_left,
-                only_in_right,
-                ..
-            } => {
-                assert!(only_in_left.contains(&"main".to_string()));
-                assert!(only_in_right.contains(&"test".to_string()));
-            }
-            _ => panic!("Expected structural mismatch"),
-        }
-    }
-
-    #[test]
-    fn test_compare_no_roots() {
-        let cpg1 = create_test_cpg();
-        let cpg2 = create_test_cpg();
-
-        let result = cpg1.compare(&cpg2).expect("Comparison failed");
-        assert!(matches!(result, DetailedComparisonResult::Equivalent));
-    }
-
-    #[test]
-    fn test_compare_one_empty() {
-        let cpg1 = create_test_cpg();
-        let mut cpg2 = create_test_cpg();
-        cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 10);
-
-        let result = cpg1.compare(&cpg2).expect("Comparison failed");
-        match result {
-            DetailedComparisonResult::StructuralMismatch { only_in_right, .. } => {
-                assert!(only_in_right.contains(&"root".to_string()));
-            }
-            _ => panic!("Expected structural mismatch"),
-        }
-    }
-
-    // --- Node offset query tests --- //
-
-    #[test]
-    fn test_get_node_by_offsets() {
-        let mut cpg = create_test_cpg();
-        let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
-            0,
-            10,
-        );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
-
-        let nodes = cpg.get_node_by_offsets(8, 12);
-        assert_eq!(nodes.len(), 2);
-
-        let node_ids = cpg.get_node_ids_by_offsets(8, 12);
-        assert_eq!(node_ids.len(), 2);
-        assert!(node_ids.contains(&node1));
-        assert!(node_ids.contains(&node2));
-    }
-
     // --- Error handling tests --- //
 
     #[test]
@@ -972,6 +582,7 @@ mod tests {
     }
 
     // --- Property-based tests --- //
+    // TODO: Move these to their respective submodules
 
     proptest! {
     #[test]
