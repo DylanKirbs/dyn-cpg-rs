@@ -1,5 +1,8 @@
 use dyn_cpg_rs::{
-    cpg::{DetailedComparisonResult, serialization::DotSerializer},
+    cpg::{
+        DetailedComparisonResult,
+        serialization::{DotSerializer, SexpSerializer},
+    },
     diff::incremental_parse,
     languages::RegisteredLanguage,
     resource::Resource,
@@ -79,10 +82,10 @@ fn test_incremental_reparse() {
     );
 
     // Compare the incrementally updated CPG with the reference CPG
-    cpg.serialize_to_file(DotSerializer::new(), "incr.dot")
+    cpg.serialize_to_file(&mut DotSerializer::new(), "incr.dot")
         .expect("Failed to write incr.dot");
     new_cpg
-        .serialize_to_file(DotSerializer::new(), "ref.dot")
+        .serialize_to_file(&mut DotSerializer::new(), "ref.dot")
         .expect("Failed to write ref.dot");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     match diff {
@@ -248,6 +251,12 @@ fn test_multiple_incremental_updates() {
     let reference_cpg = lang
         .cst_to_cpg(new_tree2, source3.to_vec())
         .expect("Failed to create reference CPG");
+
+    cpg.serialize_to_file(&mut SexpSerializer::new(), "incr.sexp")
+        .expect("Failed to write incr.sexp");
+    reference_cpg
+        .serialize_to_file(&mut SexpSerializer::new(), "ref.sexp")
+        .expect("Failed to write ref.sexp");
 
     let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
     assert!(

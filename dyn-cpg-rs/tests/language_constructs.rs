@@ -18,6 +18,6 @@ fn test_construct_parsing() {
         .cst_to_cpg(tree, src)
         .expect("Failed to convert tree to CPG");
 
-    cpg.serialize_to_file(DotSerializer::new(), "constructs.dot")
+    cpg.serialize_to_file(&mut DotSerializer::new(), "constructs.dot")
         .expect("Failed to write constructs.dot");
 }

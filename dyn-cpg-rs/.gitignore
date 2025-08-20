@@ -10,3 +10,4 @@ tarpaulin*
 benchmarks/
 samples/
 *.dot*
+*.sexp
