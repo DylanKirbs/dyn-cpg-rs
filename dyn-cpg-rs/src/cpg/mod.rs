@@ -2,7 +2,7 @@
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
 use crate::languages::RegisteredLanguage;
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{new_key_type, SlotMap};
 use std::collections::{HashMap, HashSet};
 use strum_macros::Display;
 use thiserror::Error;

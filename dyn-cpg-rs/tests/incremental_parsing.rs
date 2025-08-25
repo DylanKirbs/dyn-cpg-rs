@@ -1,7 +1,7 @@
 use dyn_cpg_rs::{
     cpg::{
-        DetailedComparisonResult,
         serialization::{DotSerializer, SexpSerializer},
+        DetailedComparisonResult,
     },
     diff::incremental_parse,
     languages::RegisteredLanguage,

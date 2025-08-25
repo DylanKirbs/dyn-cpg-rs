@@ -1,0 +1,9 @@
+# treefmt configuration file
+
+[formatter.rust]
+command = "rustfmt"
+includes = ["*.rs"]
+
+[formatter.nixfmt-rfc-style]
+command = "nixfmt"
+includes = ["*.nix"]

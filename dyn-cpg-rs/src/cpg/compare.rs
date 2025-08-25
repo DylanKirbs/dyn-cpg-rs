@@ -1,4 +1,4 @@
-use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
+use super::{edge::EdgeType, node::NodeType, Cpg, CpgError, NodeId};
 use similar::TextDiff;
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -399,7 +399,8 @@ impl Cpg {
                         }
 
                         for (lc, rc) in ordered_left.iter().zip(ordered_right.iter()) {
-                            self.compare_subtrees(other, mismatches, *lc, *rc, visited)?; // Pass visited
+                            self.compare_subtrees(other, mismatches, *lc, *rc, visited)?;
+                            // Pass visited
                         }
                     } else {
                         if left_group.len() != rg.len() {
@@ -473,8 +474,8 @@ mod tests {
 
     use crate::{
         cpg::{
-            DescendantTraversal, DetailedComparisonResult, Edge, EdgeType, NodeType,
             tests::{create_test_cpg, create_test_node},
+            DescendantTraversal, DetailedComparisonResult, Edge, EdgeType, NodeType,
         },
         desc_trav,
     };

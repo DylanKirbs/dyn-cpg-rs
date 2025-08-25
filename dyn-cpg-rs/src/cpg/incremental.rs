@@ -1,7 +1,7 @@
 use super::{
-    Cpg, CpgError, NodeId,
     edge::{Edge, EdgeType},
     node::NodeType,
+    Cpg, CpgError, NodeId,
 };
 use crate::{
     diff::SourceEdit,

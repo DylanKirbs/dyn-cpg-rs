@@ -94,8 +94,8 @@ mod tests {
 
     use crate::{
         cpg::{
-            DescendantTraversal, Edge, EdgeQuery, EdgeType, NodeType,
             tests::{create_test_cpg, create_test_node},
+            DescendantTraversal, Edge, EdgeQuery, EdgeType, NodeType,
         },
         desc_trav,
     };

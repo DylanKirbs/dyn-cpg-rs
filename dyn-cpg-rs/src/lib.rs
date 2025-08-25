@@ -13,7 +13,7 @@ pub mod logging {
 }
 
 pub mod diff {
-    use similar::{Algorithm, DiffOp, capture_diff_slices};
+    use similar::{capture_diff_slices, Algorithm, DiffOp};
     use tracing::debug;
     use tree_sitter::{Parser, Point, Tree};
 

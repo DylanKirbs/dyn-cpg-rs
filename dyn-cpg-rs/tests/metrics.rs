@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use dyn_cpg_rs::{
     cpg::{Cpg, DetailedComparisonResult},
-    diff::{SourceEdit, incremental_parse},
+    diff::{incremental_parse, SourceEdit},
     languages::RegisteredLanguage,
     resource::Resource,
 };

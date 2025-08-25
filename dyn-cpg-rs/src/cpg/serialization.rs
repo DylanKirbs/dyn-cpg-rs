@@ -259,7 +259,9 @@ impl EdgeType {
 
 impl NodeId {
     pub fn as_str(&self) -> String {
-        format!("{:?}", self)
+        format!("\"{:?}\"", self)
+            .replace("NodeId(", "")
+            .replace(')', "")
     }
 }
 

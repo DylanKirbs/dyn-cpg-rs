@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
+use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
+use std::collections::HashMap;
+use tracing::{debug, warn};
 
 mod c;
-
 use c::C;
-use tracing::{debug, warn};
 
 // --- The Language Trait and Construction Macros --- //
 
@@ -28,105 +26,104 @@ trait Language: Default + std::fmt::Debug {
 
 #[macro_export]
 /// Macro to define a new language complying with the `Language` trait.
-macro_rules! define_language {
-    (
-        $name:ident, [$($variant_names:expr),+], $lang:path, $map_kind:expr
-    ) => {
+macro_rules! define_language {(
+    $name:ident, [$($variant_names:expr),+], $lang:path, $map_kind:expr
+) => {
 
-            #[derive(Debug, Clone)]
-            /// A struct representing the language, implementing the `Language` trait.
-            pub struct $name;
+    #[derive(Debug, Clone)]
+    /// A struct representing the language, implementing the `Language` trait.
+    pub struct $name;
 
-            impl Default for $name {
-                fn default() -> Self {
-                    Self
-                }
-            }
+    impl Default for $name {
+    fn default() -> Self {
+    Self
+    }
+    }
 
-            impl Language for $name {
-                const DISPLAY_NAME: &'static str = stringify!($name);
-                const VARIANT_NAMES: &'static [&'static str] = &[$($variant_names),+];
+    impl Language for $name {
+    const DISPLAY_NAME: &'static str = stringify!($name);
+    const VARIANT_NAMES: &'static [&'static str] = &[$($variant_names),+];
 
-                fn get_parser(&self) -> Result<tree_sitter::Parser, String> {
-                    let mut parser = tree_sitter::Parser::new();
-                    parser.set_language(&($lang).into())
-                        .map(|_| parser)
-                        .map_err(|e| format!("Failed to set parser for {}: {}", stringify!($name), e))
-                }
+    fn get_parser(&self) -> Result<tree_sitter::Parser, String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&($lang).into())
+    .map(|_| parser)
+    .map_err(|e| format!("Failed to set parser for {}: {}", stringify!($name), e))
+    }
 
-                fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
-                    $map_kind(self, node_kind)
-                }
-            }
+    fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
+    $map_kind(self, node_kind)
+    }
+    }
 
-    };
+};
 }
 
 /// Macro to register multiple languages, creating an enum to handle them.
 macro_rules! register_languages {
     (
-        $($variant:ident),+
-    ) => {
+    $($variant:ident),+
+) => {
 
-        #[derive(Debug, Clone)]
-        /// An enum representing all registered languages and allowing for easy parsing and handling.
-        pub enum RegisteredLanguage {
-            $(
-                $variant($variant),
-            )+
-        }
+    #[derive(Debug, Clone)]
+    /// An enum representing all registered languages and allowing for easy parsing and handling.
+    pub enum RegisteredLanguage {
+    $(
+    $variant($variant),
+    )+
+    }
 
-        impl std::str::FromStr for RegisteredLanguage {
-            type Err = String;
+    impl std::str::FromStr for RegisteredLanguage {
+    type Err = String;
 
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                let s = s.to_lowercase();
-                let candidates = vec![
-                    $(
-                        (&$variant::VARIANT_NAMES, RegisteredLanguage::$variant($variant::default())),
-                    )+
-                ];
-                for (aliases, language) in candidates {
-                    if aliases.contains(&s.as_str()) {
-                        return Ok(language);
-                    }
-                }
-                Err(format!("Unknown language: {}", s))
-            }
-        }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let s = s.to_lowercase();
+    let candidates = vec![
+    $(
+    (&$variant::VARIANT_NAMES, RegisteredLanguage::$variant($variant::default())),
+    )+
+    ];
+    for (aliases, language) in candidates {
+    if aliases.contains(&s.as_str()) {
+    return Ok(language);
+    }
+    }
+    Err(format!("Unknown language: {}", s))
+    }
+    }
 
-        impl RegisteredLanguage {
-            pub fn get_display_name(&self) -> &'static str {
-                match self {
-                    $(RegisteredLanguage::$variant(_) => <$variant as Language>::DISPLAY_NAME,)+
-                }
-            }
+    impl RegisteredLanguage {
+    pub fn get_display_name(&self) -> &'static str {
+    match self {
+    $(RegisteredLanguage::$variant(_) => <$variant as Language>::DISPLAY_NAME,)+
+    }
+    }
 
-            pub fn get_variant_names(&self) -> &'static [&'static str] {
-                match self {
-                    $(RegisteredLanguage::$variant(_) => <$variant as Language>::VARIANT_NAMES,)+
-                }
-            }
+    pub fn get_variant_names(&self) -> &'static [&'static str] {
+    match self {
+    $(RegisteredLanguage::$variant(_) => <$variant as Language>::VARIANT_NAMES,)+
+    }
+    }
 
-            pub fn get_parser(&self) -> Result<tree_sitter::Parser, String> {
-                match self {
-                    $(RegisteredLanguage::$variant(language) => language.get_parser(),)+
-                }
-            }
+    pub fn get_parser(&self) -> Result<tree_sitter::Parser, String> {
+    match self {
+    $(RegisteredLanguage::$variant(language) => language.get_parser(),)+
+    }
+    }
 
-            pub fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
-                match self {
-                    $(RegisteredLanguage::$variant(language) => language.map_node_kind(node_kind),)+
-                }
-            }
+    pub fn map_node_kind(&self, node_kind: &'static str) -> NodeType {
+    match self {
+    $(RegisteredLanguage::$variant(language) => language.map_node_kind(node_kind),)+
+    }
+    }
 
-            pub fn cst_to_cpg(&self, tree: tree_sitter::Tree, source: Vec<u8>) -> Result<Cpg, String> {
-                match self {
-                    $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree, source),)+
-                }
-            }
-        }
-    };
+    pub fn cst_to_cpg(&self, tree: tree_sitter::Tree, source: Vec<u8>) -> Result<Cpg, String> {
+    match self {
+    $(RegisteredLanguage::$variant(_) => cst_to_cpg(&self, tree, source),)+
+    }
+    }
+    }
+};
 }
 
 // --- Language Definitions --- //

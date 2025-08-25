@@ -105,8 +105,8 @@ impl Cpg {
 #[cfg(test)]
 mod tests {
 
-    use crate::cpg::DescendantTraversal;
     use crate::cpg::tests::{create_test_cpg, create_test_node};
+    use crate::cpg::DescendantTraversal;
     use crate::{cpg::NodeType, desc_trav};
 
     #[test]

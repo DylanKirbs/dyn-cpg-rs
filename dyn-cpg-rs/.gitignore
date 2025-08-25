@@ -11,3 +11,6 @@ benchmarks/
 samples/
 *.dot*
 *.sexp
+
+# Misc
+tmp
