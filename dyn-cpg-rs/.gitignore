@@ -9,6 +9,7 @@ perf.*
 tarpaulin*
 benchmarks/
 samples/
+repos/
 *.dot*
 *.sexp
 
