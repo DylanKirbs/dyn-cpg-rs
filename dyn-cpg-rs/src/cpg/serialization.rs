@@ -1,3 +1,5 @@
+use crate::cpg::spatial_index::SpatialIndex;
+
 use super::{Cpg, Edge, EdgeType, NodeId, NodeType};
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -36,7 +38,7 @@ impl DotSerializer {
         let id_str = id.as_str();
         let pos = cpg
             .spatial_index
-            .get_range_from_node(&id)
+            .get_node_span(id)
             .map_or("unknown".to_string(), |(s, e)| format!("{s}-{e}"));
 
         let label = format!(

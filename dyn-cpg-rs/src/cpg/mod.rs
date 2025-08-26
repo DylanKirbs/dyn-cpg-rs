@@ -2,7 +2,7 @@
 /// This module provides functionality to generate and update a Code Property Graph (CPG) from source code files.
 /// As well as serialize and deserialize the CPG to and from a Gremlin database.
 use crate::languages::RegisteredLanguage;
-use slotmap::{new_key_type, SlotMap};
+use slotmap::{SlotMap, new_key_type};
 use std::collections::{HashMap, HashSet};
 use strum_macros::Display;
 use thiserror::Error;
@@ -19,7 +19,7 @@ pub use node::*;
 
 // Private submodules
 mod spatial_index;
-use spatial_index::SpatialIndex;
+use spatial_index::{BTreeIndex, SpatialIndex};
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum ListenerType {
@@ -78,6 +78,8 @@ macro_rules! desc_trav {
 
 // --- The graph structure for the CPG --- //
 
+type Index = BTreeIndex;
+
 #[derive(Debug, Clone)]
 /// The Code Property Graph (CPG) structure
 pub struct Cpg {
@@ -92,7 +94,7 @@ pub struct Cpg {
     /// Maps NodeId to a list of EdgeIds that point from it
     outgoing: HashMap<NodeId, Vec<EdgeId>>,
     /// Spatial index for fast lookups by byte range
-    spatial_index: SpatialIndex,
+    spatial_index: Index,
     /// The language of the CPG
     language: RegisteredLanguage,
     /// The source that the tree/CPG was parsed from
@@ -108,7 +110,7 @@ impl Cpg {
             edges: SlotMap::with_key(),
             incoming: HashMap::new(),
             outgoing: HashMap::new(),
-            spatial_index: SpatialIndex::new(),
+            spatial_index: Index::default(),
             root: None,
             language,
             source,
@@ -145,7 +147,7 @@ impl Cpg {
     /// If no root is set, the first node added will be assumed to be the root, this can be overridden using `set_root`.
     pub fn add_node(&mut self, node: Node, start_byte: usize, end_byte: usize) -> NodeId {
         let node_id = self.nodes.insert(node);
-        self.spatial_index.insert(start_byte, end_byte, node_id);
+        self.spatial_index.insert(node_id, start_byte, end_byte);
 
         if self.root.is_none() {
             self.set_root(node_id);
@@ -285,10 +287,7 @@ mod tests {
 
         assert_eq!(cpg.get_node_by_id(&node_id), Some(&node));
         assert_eq!(cpg.get_root(), Some(node_id));
-        assert_eq!(
-            cpg.spatial_index.get_range_from_node(&node_id),
-            Some((0, 10))
-        );
+        assert_eq!(cpg.spatial_index.get_node_span(node_id), Some((0, 10)));
     }
 
     #[test]
@@ -603,7 +602,7 @@ mod tests {
         // BUT: Zero-width ranges don't overlap with anything (including themselves)
         for (i, (start, end)) in ranges.iter().enumerate() {
             let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
-            let overlapping = cpg.spatial_index.lookup_nodes_from_range(start, end);
+            let overlapping = cpg.spatial_index.get_nodes_covering_range(start, end);
 
             if start == end {
                 // Zero-width ranges should NOT be found (they don't overlap with anything)
@@ -633,12 +632,12 @@ mod tests {
 
         // Remove every other node
         for (i, &node_id) in node_ids.iter().enumerate().step_by(2) {
-            cpg.spatial_index.remove_by_node(&node_id);
+            cpg.spatial_index.delete(node_id);
 
             // Property: Removed node should not be found in spatial index
             let (start, end) = ranges[i];
             let (start, end) = if start <= end { (start, end) } else { (end, start) };
-            let overlapping = cpg.spatial_index.lookup_nodes_from_range(start, end);
+            let overlapping = cpg.spatial_index.get_nodes_covering_range(start, end);
             prop_assert!(!overlapping.contains(&&node_id),
                 "Removed node {} should not be found in spatial index", i);
         }

@@ -1,26 +1,111 @@
 use super::{Cpg, Node, NodeId};
 use std::collections::{BTreeMap, HashMap};
 
+#[allow(dead_code)] // We have a few methods that need not be used, but are useful to have and may become useful in the incremental side of things
+pub trait SpatialIndex
+where
+    Self: Default,
+    Self: Sized,
+    Self: Clone,
+    Self: std::fmt::Debug,
+    Self::NodeId: std::cmp::Eq + std::hash::Hash + Copy,
+{
+    type NodeId;
+
+    /// Insert a node's span into the index.
+    fn insert(&mut self, id: Self::NodeId, start: usize, end: usize);
+
+    /// Delete a node's span from the index.
+    fn delete(&mut self, id: Self::NodeId);
+
+    /// Edit a nodes span within the index.
+    fn edit(&mut self, id: Self::NodeId, start: usize, end: usize);
+
+    /// Query all nodes covering a point.
+    fn get_nodes_covering_point(&self, pos: usize) -> Vec<Self::NodeId>;
+
+    /// Query all nodes overlapping a range.
+    fn get_nodes_covering_range(&self, start: usize, end: usize) -> Vec<Self::NodeId>;
+
+    /// Query all nodes contained within a range.
+    fn get_nodes_within_range(&self, start: usize, end: usize) -> Vec<Self::NodeId>;
+
+    /// Query the span of a given node.
+    fn get_node_span(&self, id: Self::NodeId) -> Option<(usize, usize)>;
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct SpatialIndex {
+pub struct BTreeIndex {
     map: BTreeMap<(usize, usize), Vec<NodeId>>,
     reverse: HashMap<NodeId, (usize, usize)>,
 }
 
-impl SpatialIndex {
-    pub fn new() -> Self {
-        Self {
-            map: BTreeMap::new(),
-            reverse: HashMap::new(),
+impl SpatialIndex for BTreeIndex {
+    type NodeId = NodeId;
+
+    fn insert(&mut self, id: Self::NodeId, start: usize, end: usize) {
+        self.map.entry((start, end)).or_default().push(id);
+        self.reverse.insert(id, (start, end));
+    }
+
+    fn delete(&mut self, id: Self::NodeId) {
+        if let Some((start, end)) = self.reverse.remove(&id) {
+            let key = (start, end);
+            let mut remove_key = false;
+            if let Some(ids) = self.map.get_mut(&key) {
+                ids.retain(|i| i != &id);
+                if ids.is_empty() {
+                    remove_key = true;
+                }
+            }
+            if remove_key {
+                self.map.remove(&key);
+            }
         }
     }
 
-    pub fn insert(&mut self, start: usize, end: usize, node_id: NodeId) {
-        self.map.entry((start, end)).or_default().push(node_id);
-        self.reverse.insert(node_id, (start, end));
+    fn edit(&mut self, id: Self::NodeId, start: usize, end: usize) {
+        if let Some((old_start, old_end)) = self.reverse.remove(&id) {
+            let key = (old_start, old_end);
+            let mut remove_key = false;
+            if let Some(ids) = self.map.get_mut(&key) {
+                ids.retain(|i| i != &id);
+                if ids.is_empty() {
+                    remove_key = true;
+                }
+            }
+            if remove_key {
+                self.map.remove(&key);
+            }
+        }
+        self.map.entry((start, end)).or_default().push(id);
+        self.reverse.insert(id, (start, end));
     }
 
-    pub fn lookup_nodes_from_range(&self, start: usize, end: usize) -> Vec<&NodeId> {
+    fn get_nodes_covering_point(&self, pos: usize) -> Vec<Self::NodeId> {
+        self.map
+            .iter()
+            .filter(|((s, e), _)| *s <= pos && pos < *e)
+            .flat_map(|(_, ids)| ids)
+            .cloned()
+            .collect()
+    }
+
+    fn get_nodes_covering_range(&self, start: usize, end: usize) -> Vec<Self::NodeId> {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.map
+            .iter()
+            .filter(|((s, e), _)| start <= *e && *s < end)
+            .flat_map(|(_, ids)| ids)
+            .cloned()
+            .collect()
+    }
+
+    fn get_nodes_within_range(&self, start: usize, end: usize) -> Vec<Self::NodeId> {
         let (start, end) = if start <= end {
             (start, end)
         } else {
@@ -30,22 +115,12 @@ impl SpatialIndex {
             .iter()
             .filter(|((s, e), _)| start < *e && *s < end)
             .flat_map(|(_, ids)| ids)
+            .cloned()
             .collect()
     }
 
-    pub fn remove_by_node(&mut self, node_id: &NodeId) {
-        if let Some(range) = self.reverse.remove(node_id) {
-            if let Some(ids) = self.map.get_mut(&range) {
-                ids.retain(|id| id != node_id);
-                if ids.is_empty() {
-                    self.map.remove(&range);
-                }
-            }
-        }
-    }
-
-    pub fn get_range_from_node(&self, node_id: &NodeId) -> Option<(usize, usize)> {
-        self.reverse.get(node_id).copied()
+    fn get_node_span(&self, id: Self::NodeId) -> Option<(usize, usize)> {
+        self.reverse.get(&id).cloned()
     }
 }
 
@@ -53,24 +128,23 @@ impl Cpg {
     pub fn get_node_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<&Node> {
         let overlapping_ids = self
             .spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte);
+            .get_nodes_covering_range(start_byte, end_byte);
 
         overlapping_ids
             .into_iter()
-            .filter_map(|id| self.nodes.get(*id))
+            .filter_map(|id| self.nodes.get(id))
             .collect()
     }
 
     pub fn get_node_ids_by_offsets(&self, start_byte: usize, end_byte: usize) -> Vec<NodeId> {
         self.spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte)
+            .get_nodes_covering_range(start_byte, end_byte)
             .into_iter()
-            .cloned()
-            .collect()
+            .collect::<Vec<_>>()
     }
 
     pub fn get_node_offsets_by_id(&self, id: &NodeId) -> Option<(usize, usize)> {
-        self.spatial_index.get_range_from_node(id)
+        self.spatial_index.get_node_span(*id)
     }
 
     pub fn get_smallest_node_id_containing_range(
@@ -80,33 +154,33 @@ impl Cpg {
     ) -> Option<NodeId> {
         let overlapping_ids = self
             .spatial_index
-            .lookup_nodes_from_range(start_byte, end_byte);
+            .get_nodes_covering_range(start_byte, end_byte);
         overlapping_ids
             .into_iter()
             .filter(|id| {
                 // Only consider nodes that fully contain the range
                 let range = self
                     .spatial_index
-                    .get_range_from_node(id)
+                    .get_node_span(*id)
                     .expect("NodeId should have a range");
                 range.0 <= start_byte && range.1 >= end_byte
             })
             .min_by_key(|id| {
                 let range = self
                     .spatial_index
-                    .get_range_from_node(id)
+                    .get_node_span(*id)
                     .expect("NodeId should have a range");
                 range.1 - range.0
             })
-            .cloned()
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::cpg::tests::{create_test_cpg, create_test_node};
     use crate::cpg::DescendantTraversal;
+    use crate::cpg::spatial_index::SpatialIndex;
+    use crate::cpg::tests::{create_test_cpg, create_test_node};
     use crate::{cpg::NodeType, desc_trav};
 
     #[test]
@@ -123,16 +197,16 @@ mod tests {
         let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
         let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier), 12, 20);
 
-        let overlapping = cpg.spatial_index.lookup_nodes_from_range(8, 12);
+        let overlapping = cpg.spatial_index.get_nodes_covering_range(8, 12);
         assert_eq!(overlapping.len(), 2);
         assert!(overlapping.contains(&&node_id1));
         assert!(overlapping.contains(&&node_id2));
 
-        let non_overlapping = cpg.spatial_index.lookup_nodes_from_range(21, 25);
+        let non_overlapping = cpg.spatial_index.get_nodes_covering_range(21, 25);
         assert!(non_overlapping.is_empty());
 
-        cpg.spatial_index.remove_by_node(&node_id2);
-        let after_removal = cpg.spatial_index.lookup_nodes_from_range(8, 12);
+        cpg.spatial_index.delete(node_id2);
+        let after_removal = cpg.spatial_index.get_nodes_covering_range(8, 12);
         assert_eq!(after_removal.len(), 1);
         assert!(after_removal.contains(&&node_id1));
     }
@@ -143,7 +217,7 @@ mod tests {
 
         // Test zero-width ranges
         let _node_id = cpg.add_node(create_test_node(NodeType::Identifier), 5, 5);
-        let overlapping = cpg.spatial_index.lookup_nodes_from_range(5, 5);
+        let overlapping = cpg.spatial_index.get_nodes_covering_range(5, 5);
         assert!(overlapping.is_empty()); // Zero-width ranges don't overlap
 
         // Test exact boundaries
@@ -155,15 +229,15 @@ mod tests {
             0,
             10,
         );
-        let exact_match = cpg.spatial_index.lookup_nodes_from_range(0, 10);
+        let exact_match = cpg.spatial_index.get_nodes_covering_range(0, 10);
         // Note: The spatial index includes the first node added (root), so count should be 2
         assert_eq!(exact_match.len(), 2);
         assert!(exact_match.contains(&&node_id2));
 
         // Test adjacent ranges
         let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement), 10, 20);
-        let adjacent = cpg.spatial_index.lookup_nodes_from_range(10, 10);
-        assert!(adjacent.is_empty()); // Adjacent ranges shouldn't overlap
+        let adjacent = cpg.spatial_index.get_nodes_covering_range(10, 10);
+        assert!(!adjacent.is_empty());
     }
 
     #[test]

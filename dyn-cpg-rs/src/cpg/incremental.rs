@@ -1,9 +1,10 @@
 use super::{
+    Cpg, CpgError, NodeId,
     edge::{Edge, EdgeType},
     node::NodeType,
-    Cpg, CpgError, NodeId,
 };
 use crate::{
+    cpg::spatial_index::SpatialIndex,
     diff::SourceEdit,
     languages::{cf_pass, data_dep_pass},
 };
@@ -132,18 +133,17 @@ impl Cpg {
                 // Get all nodes that contain the merged range
                 let candidates = self
                     .spatial_index
-                    .lookup_nodes_from_range(range.0, range.1)
+                    .get_nodes_covering_range(range.0, range.1)
                     .into_iter()
                     .filter(|node_id| {
                         // Only consider nodes that fully contain the range
-                        let node_range = self.spatial_index.get_range_from_node(node_id);
+                        let node_range = self.spatial_index.get_node_span(*node_id);
                         if let Some((start, end)) = node_range {
                             start <= range.0 && range.1 <= end
                         } else {
                             false
                         }
                     })
-                    .cloned()
                     .collect::<Vec<_>>();
 
                 // Choose the most appropriate node to rehydrate:
@@ -154,7 +154,7 @@ impl Cpg {
                     .into_iter()
                     .filter_map(|node_id| {
                         let node = self.get_node_by_id(&node_id)?;
-                        let node_range = self.spatial_index.get_range_from_node(&node_id)?;
+                        let node_range = self.spatial_index.get_node_span(node_id)?;
                         let range_size = node_range.1 - node_range.0;
 
                         // Assign priority weights - lower values = higher priority
@@ -218,7 +218,7 @@ impl Cpg {
 
             // Debug: Log the dirty node info before removal
             if let Some(node) = self.get_node_by_id(&id) {
-                let range = self.spatial_index.get_range_from_node(&id);
+                let range = self.spatial_index.get_node_span(id);
                 debug!("Dirty node type: {:?}, range: {:?}", node.type_, range);
 
                 // Count children to understand node size
@@ -454,7 +454,7 @@ impl Cpg {
         // 2. Now remove the root node itself and its associated edges
         // Remove the node data and spatial index entry
         self.nodes.remove(root);
-        self.spatial_index.remove_by_node(&root);
+        self.spatial_index.delete(root);
 
         // 3. Crucially: Remove all edges connected to this node
         // First collect ALL edge IDs that reference this node from the main edges SlotMap
