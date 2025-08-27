@@ -266,6 +266,10 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
             });
         }
     };
+    if matches!(type_.clone(), NodeType::Statement | NodeType::Expression) {
+        // Check if it is a read or write and set the read_var and assigned_var properties respectively by finding the appropriate identifier descendant
+        // TODO
+    }
 
     Ok(id)
 }
@@ -654,8 +658,46 @@ fn process_sequential_statements(
 /// Idempotent computation of the data dependence for a subtree in the CPG.
 /// This pass assumes that the control flow has already been computed.
 pub fn data_dep_pass(_cpg: &mut Cpg, _subtree_root: NodeId) -> Result<(), String> {
-    // TODO: Implement data dependence analysis
+    let cpg = _cpg;
+    let root = _subtree_root;
 
+    // Collect all nodes in the subtree (simple BFS)
+    let mut queue = vec![root];
+    let mut all_nodes = Vec::new();
+    while let Some(nid) = queue.pop() {
+        all_nodes.push(nid);
+        for child in cpg.ordered_syntax_children(nid) {
+            queue.push(child);
+        }
+    }
+
+    // Map from variable name to last write node id
+    use std::collections::HashMap;
+    let mut last_write: HashMap<String, NodeId> = HashMap::new();
+
+    // For each node in control flow order, track writes and add edges to reads
+    // This is a naive approach: just walk all nodes in BFS order
+    for &nid in &all_nodes {
+        let node = match cpg.get_node_by_id(&nid) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Check for variable write (assignment)
+        if let Some(var) = node.properties.get("assigned_var") {
+            last_write.insert(var.clone(), nid);
+        }
+        // Check for variable read
+        if let Some(var) = node.properties.get("read_var") {
+            if let Some(&def_id) = last_write.get(var) {
+                cpg.add_edge(crate::cpg::Edge {
+                    from: def_id,
+                    to: nid,
+                    type_: EdgeType::PDData(var.clone()),
+                    properties: HashMap::new(),
+                });
+            }
+        }
+    }
     Ok(())
 }
 
