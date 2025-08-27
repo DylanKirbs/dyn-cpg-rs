@@ -1,9 +1,8 @@
-use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
+use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
 use std::collections::HashMap;
 use tracing::{debug, warn};
-
 mod c;
 use c::C;
 
@@ -137,13 +136,13 @@ pub fn cst_to_cpg(
     tree: tree_sitter::Tree,
     source: Vec<u8>,
 ) -> Result<Cpg, String> {
-    debug!("Converting CST to CPG for {:?}", lang);
+    debug!("[CPG TO CST] Converting CST to CPG for {:?}", lang);
 
     let mut cpg = Cpg::new(lang.clone(), source);
     let mut cursor = tree.walk();
 
     translate(&mut cpg, &mut cursor).map_err(|e| {
-        warn!("Failed to translate CST: {}", e);
+        warn!("[CPG TO CST] Failed to translate CST: {}", e);
         e
     })?;
 
@@ -156,12 +155,12 @@ pub fn cst_to_cpg(
     let root = root_opt.expect("Root node must be present if it is not None");
 
     cf_pass(&mut cpg, root).map_err(|e| {
-        warn!("Failed to compute control flow: {}", e);
+        warn!("[CPG TO CST] Failed to compute control flow: {}", e);
         e
     })?;
 
     data_dep_pass(&mut cpg, root).map_err(|e| {
-        warn!("Failed to compute data dependence: {}", e);
+        warn!("[CPG TO CST] Failed to compute data dependence: {}", e);
         e
     })?;
 
@@ -234,6 +233,7 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         name: None,
     } = type_.clone()
     {
+        // Track the name of the function
         let id_node = name_traversal.get_descendent(cpg, &id);
         if let Some(id_node) = id_node {
             let name = cpg.get_node_source(&id_node);
@@ -241,10 +241,29 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
             let n = cpg
                 .get_node_by_id_mut(&id)
                 .and_then(|f| f.properties.insert("name".to_string(), name));
-            debug!("Node found: {:?} {:?}", node.kind(), n);
+            debug!("[TRANSLATE] Node found: {:?} {:?}", node.kind(), n);
 
             cpg.get_node_by_id_mut(&id)
                 .and_then(|n| n.update_type(type_.clone()));
+        }
+
+        // Add a CF Function Return to the function
+        if let Some((s, e)) = cpg.get_node_offsets_by_id(&id) {
+            let fn_end = cpg.add_node(
+                Node {
+                    type_: NodeType::FunctionReturn,
+                    properties: HashMap::new(),
+                },
+                s,
+                e,
+            );
+
+            cpg.add_edge(Edge {
+                from: id,
+                to: fn_end,
+                type_: EdgeType::ControlFlowFunctionReturn,
+                properties: HashMap::new(),
+            });
         }
     };
 
@@ -274,14 +293,17 @@ fn add_control_flow_edge(
     edge_type: EdgeType,
 ) -> Result<(), String> {
     debug!(
-        "Adding control flow edge: {:?} -> {:?} of type: {:?}",
+        "[CONTROL FLOW] Adding control flow edge: {:?} -> {:?} of type: {:?}",
         from, to, edge_type
     );
 
     let existing_edges = cpg.get_outgoing_edges(from);
     for edge in existing_edges {
         if edge.to == to && edge.type_ == edge_type {
-            debug!("Control flow edge already exists: {:?} -> {:?}", from, to);
+            debug!(
+                "[CONTROL FLOW] Control flow edge already exists: {:?} -> {:?}",
+                from, to
+            );
             return Ok(());
         }
     }
@@ -329,7 +351,7 @@ fn find_first_processable_descendant(cpg: &Cpg, node_id: NodeId) -> Option<NodeI
 
 /// Navigate up the CPG via SyntaxChild edges until we get to a parent Block, Function or TranslationUnit
 /// If the node is already one of these, return it directly.
-fn get_container_parent(cpg: &Cpg, node_id: NodeId) -> NodeId {
+pub fn get_container_parent(cpg: &Cpg, node_id: NodeId) -> NodeId {
     match cpg.get_node_by_id(&node_id) {
         Some(node)
             if matches!(
@@ -361,10 +383,28 @@ fn get_container_parent(cpg: &Cpg, node_id: NodeId) -> NodeId {
             }
         }
         None => {
-            warn!("No container parent found for node: {:?}", node_id);
+            warn!(
+                "[CONTROL FLOW] No container parent found for node: {:?}",
+                node_id
+            );
             node_id // Fallback to the original node if no parent found
         }
     }
+}
+
+pub fn get_containing_function(cpg: &Cpg, node_id: NodeId) -> Option<NodeId> {
+    let mut current = node_id;
+    while let Some(node) = cpg.get_node_by_id(&current) {
+        if matches!(node.type_, NodeType::Function { .. }) {
+            return Some(current);
+        }
+        current = cpg
+            .get_incoming_edges(current)
+            .into_iter()
+            .find(|e| e.type_ == EdgeType::SyntaxChild)
+            .map(|e| e.from)?;
+    }
+    None
 }
 
 // --- Control Flow & Data Dependence --- //
@@ -372,13 +412,21 @@ fn get_container_parent(cpg: &Cpg, node_id: NodeId) -> NodeId {
 /// Idempotent computation of the control flow for a subtree in the CPG.
 /// This pass assumes that the AST has been construed into a CPG.
 pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
-    compute_control_flow_postorder(cpg, get_container_parent(cpg, subtree_root))?;
+    compute_control_flow_postorder(
+        cpg,
+        get_container_parent(cpg, subtree_root),
+        get_containing_function(cpg, subtree_root),
+    )?;
     Ok(())
 }
 
 /// Control flow computation
 /// Returns the exit points (last reachable statements) of this subtree
-fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<NodeId>, String> {
+fn compute_control_flow_postorder(
+    cpg: &mut Cpg,
+    node_id: NodeId,
+    parent_function: Option<NodeId>,
+) -> Result<Vec<NodeId>, String> {
     let node = cpg
         .get_node_by_id(&node_id)
         .ok_or_else(|| format!("Node not found: {:?}", node_id))?;
@@ -409,12 +457,14 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
             })?;
 
             debug!(
-                "Branch - condition: {:?}, then: {:?}, else: {:?}",
+                "[CONTROL FLOW] Branch - condition: {:?}, then: {:?}, else: {:?}",
                 condition, then_block, else_block
             );
 
             // Process condition first
-            let _condition_exits = compute_control_flow_postorder(cpg, condition)?;
+            let _condition_exits = compute_control_flow_postorder(cpg, condition, parent_function)?;
+
+            add_control_flow_edge(cpg, node_id, condition, EdgeType::ControlFlowEpsilon)?;
 
             // Add control flow edges from condition to branches
             add_control_flow_edge(cpg, condition, then_block, EdgeType::ControlFlowTrue)?;
@@ -422,13 +472,13 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
             let mut branch_exits = Vec::new();
 
             // Process then branch
-            let then_exits = compute_control_flow_postorder(cpg, then_block)?;
+            let then_exits = compute_control_flow_postorder(cpg, then_block, parent_function)?;
             branch_exits.extend(then_exits);
 
             // Process else branch if present
             if let Some(else_block) = else_block {
                 add_control_flow_edge(cpg, condition, else_block, EdgeType::ControlFlowFalse)?;
-                let else_exits = compute_control_flow_postorder(cpg, else_block)?;
+                let else_exits = compute_control_flow_postorder(cpg, else_block, parent_function)?;
                 branch_exits.extend(else_exits);
             } else {
                 // No else branch - condition can fall through
@@ -459,13 +509,16 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
                 )
             })?;
 
-            debug!("Loop - condition: {:?}, body: {:?}", condition, body);
+            debug!(
+                "[CONTROL FLOW] Loop - condition: {:?}, body: {:?}",
+                condition, body
+            );
 
             // Process condition
-            let _condition_exits = compute_control_flow_postorder(cpg, condition)?;
+            let _condition_exits = compute_control_flow_postorder(cpg, condition, parent_function)?;
 
             // Process body
-            let body_exits = compute_control_flow_postorder(cpg, body)?;
+            let body_exits = compute_control_flow_postorder(cpg, body, parent_function)?;
 
             // Add control flow edges
             add_control_flow_edge(cpg, condition, body, EdgeType::ControlFlowTrue)?;
@@ -480,20 +533,72 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
         }
 
         NodeType::Return => {
-            debug!("Found return statement: {:?}", node_id);
+            if let Some(par) = parent_function {
+                let outgoing_edges: Vec<_> = cpg.get_outgoing_edges(par).into_iter().collect();
+                let targets: Vec<_> = outgoing_edges
+                    .iter()
+                    .filter(|e| e.type_ == EdgeType::ControlFlowFunctionReturn)
+                    .map(|e| e.to)
+                    .collect();
+                for target in targets {
+                    add_control_flow_edge(cpg, node_id, target, EdgeType::ControlFlowEpsilon).ok();
+                }
+            }
             // Return statements don't have exit points (they terminate)
+            Ok(vec![])
+        }
+
+        NodeType::Function { .. } => {
+            let statement_children = get_descent_children(cpg, node_id);
+            let mut exits = Vec::new();
+
+            if !statement_children.is_empty() {
+                add_control_flow_edge(
+                    cpg,
+                    node_id,
+                    statement_children[0],
+                    EdgeType::ControlFlowEpsilon,
+                )?;
+                exits = process_sequential_statements(cpg, &statement_children, Some(node_id))?;
+            } else {
+                exits.push(node_id);
+            }
+
+            // patch exits to function return node
+            let outgoing_edges = cpg.get_outgoing_edges(node_id);
+            let fn_return = outgoing_edges
+                .iter()
+                .find(|e| e.type_ == EdgeType::ControlFlowFunctionReturn)
+                .map(|e| e.to);
+
+            if let Some(fn_ret) = fn_return {
+                for exit in &exits {
+                    add_control_flow_edge(cpg, *exit, fn_ret, EdgeType::ControlFlowEpsilon)?;
+                }
+            }
+
             Ok(vec![])
         }
 
         // For other statement types (expressions, calls, etc.)
         _ if should_descend(&node.type_) => {
-            // Process any statement children first (post-order)
             let statement_children = get_descent_children(cpg, node_id);
             if !statement_children.is_empty() {
-                process_sequential_statements(cpg, &statement_children)?;
+                // NEW: connect parent node to first child
+                add_control_flow_edge(
+                    cpg,
+                    node_id,
+                    statement_children[0],
+                    EdgeType::ControlFlowEpsilon,
+                )?;
+
+                // Chain children in sequence
+                let exits =
+                    process_sequential_statements(cpg, &statement_children, parent_function)?;
+                return Ok(exits);
             }
 
-            // This node itself is an exit point
+            // No children, node itself is an exit
             Ok(vec![node_id])
         }
 
@@ -501,7 +606,7 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
             let non_seq_children = cpg.ordered_syntax_children(node_id);
             for node in &non_seq_children {
                 if let Some(stmt_child) = find_first_processable_descendant(cpg, *node) {
-                    compute_control_flow_postorder(cpg, stmt_child)?;
+                    compute_control_flow_postorder(cpg, stmt_child, parent_function)?;
                 }
             }
             Ok(vec![])
@@ -514,6 +619,7 @@ fn compute_control_flow_postorder(cpg: &mut Cpg, node_id: NodeId) -> Result<Vec<
 fn process_sequential_statements(
     cpg: &mut Cpg,
     statements: &[NodeId],
+    parent_function: Option<NodeId>,
 ) -> Result<Vec<NodeId>, String> {
     if statements.is_empty() {
         return Ok(vec![]);
@@ -528,12 +634,12 @@ fn process_sequential_statements(
         }
 
         // Process this statement
-        let stmt_exits = compute_control_flow_postorder(cpg, stmt)?;
+        let stmt_exits = compute_control_flow_postorder(cpg, stmt, parent_function)?;
 
         // If this statement has no exits (e.g., return), stop processing
         if stmt_exits.is_empty() {
             debug!(
-                "Statement {:?} has no exits (unreachable code follows)",
+                "[CONTROL FLOW] Statement {:?} has no exits (unreachable code follows)",
                 stmt
             );
             return Ok(vec![]);

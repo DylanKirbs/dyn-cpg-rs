@@ -19,6 +19,8 @@ pub enum NodeType {
         /// Optional name, can be derived from the traversal
         name: Option<String>,
     },
+    /// An internal node used to connect all return statements within a function.
+    FunctionReturn,
 
     /// An identifier (variable, etc.)
     Identifier,

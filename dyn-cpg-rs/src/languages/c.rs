@@ -23,7 +23,7 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         "if_statement" => NodeType::Branch {
             condition: desc_trav![1],
             then_branch: desc_trav![2],
-            else_branch: desc_trav![3],
+            else_branch: desc_trav![3, 1],
         }, // TODO: Figure out switch
 
         "for_statement" => NodeType::Loop {

@@ -1,12 +1,24 @@
+use super::{Cpg, Edge, EdgeId, EdgeType, NodeId, NodeType};
 use crate::cpg::spatial_index::SpatialIndex;
-
-use super::{Cpg, Edge, EdgeType, NodeId, NodeType};
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::PathBuf;
+use strum::Display;
+use thiserror::Error;
+
+#[derive(Debug, Error, Display)]
+pub enum SerializationError {
+    BadRequest(String),
+    NodeNotFound(NodeId),
+    EdgeNotFound(EdgeId),
+    FmtError(#[from] std::fmt::Error),
+    IoError(#[from] std::io::Error),
+}
 
 pub trait CpgSerializer {
-    fn serialize(&mut self, cpg: &Cpg) -> String;
+    /// Serialize the CPG into a string representation.
+    /// Optionally specify a "subtree" root to serialize instead of the entire graph.
+    fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError>;
 }
 
 // --- DOT --- //
@@ -24,17 +36,20 @@ impl DotSerializer {
         }
     }
 
-    fn start(&mut self, _cpg: &Cpg) {
-        writeln!(self.buf, "digraph CPG {{").unwrap();
-        writeln!(self.buf, "  rankdir=TB;").unwrap();
-        writeln!(self.buf, "  node [shape=box];").unwrap();
+    fn start(&mut self, _cpg: &Cpg) -> Result<(), SerializationError> {
+        writeln!(self.buf, "digraph CPG {{")?;
+        writeln!(self.buf, "  rankdir=TB;")?;
+        writeln!(self.buf, "  node [shape=box];")?;
+        Ok(())
     }
 
-    fn on_node(&mut self, cpg: &Cpg, id: NodeId) {
+    fn on_node(&mut self, cpg: &Cpg, id: NodeId) -> Result<(), SerializationError> {
         if !self.visited.insert(id) {
-            return;
+            return Ok(());
         }
-        let node = cpg.get_node_by_id(&id).unwrap();
+        let node = cpg
+            .get_node_by_id(&id)
+            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
         let id_str = id.as_str();
         let pos = cpg
             .spatial_index
@@ -42,7 +57,7 @@ impl DotSerializer {
             .map_or("unknown".to_string(), |(s, e)| format!("{s}-{e}"));
 
         let label = format!(
-            "{} {} {} {}",
+            "{} {} {} {} {}",
             node.type_.label(),
             pos,
             node.properties
@@ -53,6 +68,7 @@ impl DotSerializer {
                 .get("name")
                 .map(String::as_str)
                 .unwrap_or(""),
+            id_str,
         )
         .replace('"', "\\\"");
 
@@ -62,11 +78,12 @@ impl DotSerializer {
             id_str,
             label,
             node.type_.colour()
-        )
-        .unwrap();
+        )?;
+
+        Ok(())
     }
 
-    fn on_edge(&mut self, _cpg: &Cpg, edge: &Edge) {
+    fn on_edge(&mut self, _cpg: &Cpg, edge: &Edge) -> Result<(), SerializationError> {
         writeln!(
             self.buf,
             "  {} -> {} [label=\"{}\", color=\"{}\"];",
@@ -74,11 +91,12 @@ impl DotSerializer {
             edge.to.as_str(),
             edge.type_.label(),
             edge.type_.colour()
-        )
-        .unwrap();
+        )?;
+
+        Ok(())
     }
 
-    fn walk(&mut self, cpg: &Cpg, root: NodeId) {
+    fn walk(&mut self, cpg: &Cpg, root: NodeId) -> Result<(), SerializationError> {
         let mut stack = vec![root];
         let mut visited = HashSet::new();
 
@@ -86,12 +104,14 @@ impl DotSerializer {
             if !visited.insert(id) {
                 continue;
             }
-            self.on_node(cpg, id);
+            self.on_node(cpg, id)?;
             for edge in cpg.get_outgoing_edges(id) {
                 stack.push(edge.to);
-                self.on_edge(cpg, edge);
+                self.on_edge(cpg, edge)?;
             }
         }
+
+        Ok(())
     }
 
     fn finish(&mut self, _cpg: &Cpg) {
@@ -104,13 +124,19 @@ impl DotSerializer {
 }
 
 impl CpgSerializer for DotSerializer {
-    fn serialize(&mut self, cpg: &Cpg) -> String {
-        self.start(cpg);
-        if let Some(root) = cpg.get_root() {
-            self.walk(cpg, root);
+    fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError> {
+        self.start(cpg)?;
+        if let Some(root) = root {
+            self.walk(cpg, root)?;
+        } else if let Some(root) = cpg.get_root() {
+            self.walk(cpg, root)?;
+        } else {
+            Err(SerializationError::BadRequest(
+                "Invalid or missing root".to_string(),
+            ))?;
         }
         self.finish(cpg);
-        self.into_string()
+        Ok(self.into_string())
     }
 }
 
@@ -129,55 +155,93 @@ impl SexpSerializer {
         }
     }
 
-    fn on_node_enter(&mut self, cpg: &Cpg, id: NodeId) {
-        let node = cpg.get_node_by_id(&id).unwrap();
-        write!(self.buf, "({}", node.type_.label()).unwrap();
+    fn on_node_enter(&mut self, cpg: &Cpg, id: NodeId) -> Result<(), SerializationError> {
+        let node = cpg
+            .get_node_by_id(&id)
+            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
+        write!(self.buf, "({} :id \"{}\"", node.type_.label(), id.as_str())?;
 
         if self.include_common_props {
             let name = node.properties.get("name").map(String::as_str);
             let kind = node.properties.get("raw_kind").map(String::as_str);
             match (name, kind) {
-                (Some(n), Some(k)) => {
-                    write!(self.buf, " :name \"{}\" :kind {}", escape_sexp(n), k).unwrap()
-                }
-                (Some(n), None) => write!(self.buf, " :name \"{}\"", escape_sexp(n)).unwrap(),
-                (None, Some(k)) => write!(self.buf, " :kind {}", k).unwrap(),
-                (None, None) => {}
-            }
+                (Some(n), Some(k)) => write!(
+                    self.buf,
+                    " :name \"{}\" :kind \"{}\"",
+                    escape_sexp(n),
+                    escape_sexp(k)
+                ),
+                (Some(n), None) => write!(self.buf, " :name \"{}\"", escape_sexp(n)),
+                (None, Some(k)) => write!(self.buf, " :kind \"{}\"", escape_sexp(k)),
+                (None, None) => Ok(()),
+            }?;
         }
+
+        Ok(())
     }
 
-    fn on_loop_enter(&mut self, cpg: &Cpg, id: NodeId) {
-        let node = cpg.get_node_by_id(&id).unwrap();
-        write!(self.buf, "{} [loop]", node.type_.label()).unwrap();
+    fn on_loop_enter(&mut self, cpg: &Cpg, id: NodeId) -> Result<(), SerializationError> {
+        let node = cpg
+            .get_node_by_id(&id)
+            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
+        write!(
+            self.buf,
+            "{} [visited \"{}\"]",
+            node.type_.label(),
+            id.as_str()
+        )?;
+        Ok(())
     }
 
-    fn walk_recursive(&mut self, cpg: &Cpg, id: NodeId, visiting: &mut HashSet<NodeId>) {
+    fn walk_recursive(
+        &mut self,
+        cpg: &Cpg,
+        id: NodeId,
+        visiting: &mut HashSet<NodeId>,
+        visited: &mut HashSet<NodeId>,
+        depth: usize,
+    ) -> Result<(), SerializationError> {
+        if visited.contains(&id) {
+            // Already serialized this node elsewhere → just emit a loop marker
+            write!(self.buf, "(")?;
+            self.on_loop_enter(cpg, id)?;
+            write!(self.buf, ")")?;
+            return Ok(());
+        }
+
         if !visiting.insert(id) {
-            // This branch means we're re-entering a node that's on the current path -> cycle.
-            // Emit a compact loop mention (node type + [loop]).
-            write!(self.buf, "(").unwrap();
-            self.on_loop_enter(cpg, id);
-            write!(self.buf, ")").unwrap();
-            return;
+            // We're re-entering a node already on the current path → cycle
+            write!(self.buf, "(")?;
+            self.on_loop_enter(cpg, id)?;
+            write!(self.buf, ")")?;
+            return Ok(());
         }
 
-        self.on_node_enter(cpg, id);
+        self.on_node_enter(cpg, id)?;
 
         for edge in cpg.get_outgoing_edges(id) {
-            write!(self.buf, " (-> {} ", edge.type_.label()).unwrap();
+            write!(
+                self.buf,
+                "\n{}(-> {} ",
+                "  ".repeat(depth),
+                edge.type_.label()
+            )?;
 
             if visiting.contains(&edge.to) {
-                self.on_loop_enter(cpg, edge.to);
+                self.on_loop_enter(cpg, edge.to)?;
             } else {
-                self.walk_recursive(cpg, edge.to, visiting);
+                self.walk_recursive(cpg, edge.to, visiting, visited, depth + 1)?;
             }
 
-            write!(self.buf, ")").unwrap();
+            write!(self.buf, ")")?;
         }
 
-        write!(self.buf, ")").unwrap();
+        write!(self.buf, ")")?;
+
         visiting.remove(&id);
+        visited.insert(id);
+
+        Ok(())
     }
 
     fn start(&mut self, _cpg: &Cpg) {
@@ -194,30 +258,45 @@ impl SexpSerializer {
 }
 
 impl CpgSerializer for SexpSerializer {
-    fn serialize(&mut self, cpg: &Cpg) -> String {
+    fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError> {
         self.start(cpg);
-        if let Some(root) = cpg.get_root() {
+        if let Some(root) = root {
             let mut visiting = HashSet::new();
-            self.walk_recursive(cpg, root, &mut visiting);
+            let mut visited = HashSet::new();
+            self.walk_recursive(cpg, root, &mut visiting, &mut visited, 1)?;
+        } else if let Some(root) = cpg.get_root() {
+            let mut visiting = HashSet::new();
+            let mut visited = HashSet::new();
+            self.walk_recursive(cpg, root, &mut visiting, &mut visited, 1)?;
+        } else {
+            Err(SerializationError::BadRequest(
+                "Invalid or missing root".to_string(),
+            ))?;
         }
         self.finish(cpg);
-        self.into_string()
+        Ok(self.into_string())
     }
 }
 
 // --- CPG --- //
 
 impl Cpg {
-    pub fn serialize<S: CpgSerializer>(&self, serializer: &mut S) -> String {
-        serializer.serialize(self)
+    pub fn serialize<S: CpgSerializer>(
+        &self,
+        serializer: &mut S,
+        root: Option<NodeId>,
+    ) -> Result<String, SerializationError> {
+        serializer.serialize(self, root)
     }
 
     pub fn serialize_to_file<S: CpgSerializer, P: Into<PathBuf>>(
         &self,
         serializer: &mut S,
         path: P,
-    ) -> std::io::Result<()> {
-        std::fs::write(path.into(), serializer.serialize(self))
+        root: Option<NodeId>,
+    ) -> Result<(), SerializationError> {
+        std::fs::write(path.into(), serializer.serialize(self, root)?)?;
+        Ok(())
     }
 }
 
@@ -243,6 +322,7 @@ impl EdgeType {
             EdgeType::SyntaxChild => "blue",
             EdgeType::SyntaxSibling => "green",
             EdgeType::ControlFlowEpsilon => "red",
+            EdgeType::ControlFlowFunctionReturn => "darkred",
             EdgeType::ControlFlowTrue => "orange",
             EdgeType::ControlFlowFalse => "purple",
             EdgeType::PDControlTrue => "cyan",

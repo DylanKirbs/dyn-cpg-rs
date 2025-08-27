@@ -1,8 +1,4 @@
-use super::{
-    Cpg, CpgError, NodeId,
-    edge::{Edge, EdgeType},
-    node::NodeType,
-};
+use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
 use crate::{
     cpg::spatial_index::SpatialIndex,
     diff::SourceEdit,
@@ -23,14 +19,14 @@ impl Cpg {
         new_tree: &tree_sitter::Tree,
     ) {
         debug!(
-            "Incremental update with {} edits and {} changed ranges",
+            "[INCREMENTAL UPDATE] Update with {} edits and {} changed ranges",
             edits.len(),
             changed_ranges.len()
         );
 
         let mut dirty_nodes = HashMap::new();
         for range in changed_ranges {
-            debug!("TS Changed range: {:?}", range);
+            debug!("[INCREMENTAL UPDATE] TS Changed range: {:?}", range);
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
             {
@@ -45,14 +41,14 @@ impl Cpg {
                 );
             } else {
                 debug!(
-                    "No node found for changed range: {:?}",
+                    "[INCREMENTAL UPDATE] No node found for changed range: {:?}",
                     (range.start_byte, range.end_byte)
                 );
             }
         }
 
         for edit in edits {
-            debug!("Textual edit: {:?}", edit);
+            debug!("[INCREMENTAL UPDATE] Textual edit: {:?}", edit);
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
             {
@@ -69,13 +65,16 @@ impl Cpg {
                     .or_insert((edit.old_start, edit.old_end, edit.new_start, edit.new_end));
             } else {
                 debug!(
-                    "No node found for edit range: {:?}",
+                    "[INCREMENTAL UPDATE] No node found for edit range: {:?}",
                     (edit.old_start, edit.old_end)
                 );
             }
         }
 
-        debug!("Filtering {} dirty nodes", dirty_nodes.len());
+        debug!(
+            "[INCREMENTAL UPDATE] Filtering {} dirty nodes",
+            dirty_nodes.len()
+        );
 
         fn ranges_overlap(
             a: (usize, usize, usize, usize),
@@ -121,7 +120,7 @@ impl Cpg {
         }
 
         debug!(
-            "Merged {} overlapping ranges into {} ranges",
+            "[INCREMENTAL UPDATE] Merged {} overlapping ranges into {} ranges",
             dirty_nodes.len(),
             merged_ranges.len()
         );
@@ -191,273 +190,240 @@ impl Cpg {
 
                 if let Some(node_id) = containing_node {
                     debug!(
-                        "Found containing node {:?} for merged range {:?}",
+                        "[INCREMENTAL UPDATE] Found containing node {:?} for merged range {:?}",
                         node_id, range
                     );
                     Some((node_id, range))
                 } else {
-                    debug!("No containing node found for merged range {:?}", range);
+                    debug!(
+                        "[INCREMENTAL UPDATE] No containing node found for merged range {:?}",
+                        range
+                    );
                     None
                 }
             })
             .collect();
 
         debug!(
-            "Rehydrating {} dirty nodes: {:?}",
+            "[INCREMENTAL UPDATE] Updating {} dirty nodes: {:?}",
             dirty_nodes.len(),
             dirty_nodes
         );
-        let mut rehydrated_nodes = Vec::new();
 
-        // Rehydrate dirty nodes
-        for (id, pos) in dirty_nodes {
-            debug!(
-                "Attempting to rehydrate dirty node {:?} with position {:?}",
-                id, pos
-            );
-
-            // Debug: Log the dirty node info before removal
-            if let Some(node) = self.get_node_by_id(&id) {
-                let range = self.spatial_index.get_node_span(id);
-                debug!("Dirty node type: {:?}, range: {:?}", node.type_, range);
-
-                // Count children to understand node size
-                let child_count = self
-                    .get_outgoing_edges(id)
-                    .iter()
-                    .filter(|e| e.type_ == EdgeType::SyntaxChild)
-                    .count();
-                debug!("Dirty node has {} children", child_count);
-            } else {
-                warn!("Could not find dirty node {:?} in CPG", id);
-            }
-
-            let new_node = self.rehydrate(id, pos, new_tree);
-            match new_node {
-                Ok(new_id) => {
-                    debug!(
-                        "Successfully rehydrated node {:?} to new id {:?}",
-                        id, new_id
+        // To avoid borrow checker issues, collect update info first
+        let mut update_plan = Vec::new();
+        for (id, _pos) in &dirty_nodes {
+            let node_span = self.spatial_index.get_node_span(*id);
+            if let Some((start, end)) = node_span {
+                if let Some(cst_node) = new_tree.root_node().descendant_for_byte_range(start, end) {
+                    update_plan.push((*id, cst_node));
+                } else {
+                    warn!(
+                        "[INCREMENTAL UPDATE] No CST node found for CPG node {:?} in new tree",
+                        id
                     );
-                    rehydrated_nodes.push(new_id);
                 }
-                Err(e) => {
-                    warn!("Failed to rehydrate node {:?}: {}", id, e);
+            } else {
+                warn!("[INCREMENTAL UPDATE] No span found for CPG node {:?}", id);
+            }
+        }
+
+        let mut updated_structures = Vec::new();
+        let mut updated_functions = Vec::new();
+        for (id, cst_node) in &update_plan {
+            self.update_in_place_pairwise(*id, cst_node);
+            let structure = crate::languages::get_container_parent(self, *id);
+            if !updated_structures.contains(&structure) {
+                updated_structures.push(structure);
+            }
+            if let Some(function) = crate::languages::get_containing_function(self, *id) {
+                if !updated_functions.contains(&function) {
+                    updated_functions.push(function);
                 }
             }
         }
 
         debug!(
-            "Computing control flow for {} rehydrated nodes",
-            rehydrated_nodes.len()
+            "[INCREMENTAL UPDATE] Recomputing control flow for updated structures: {:?}",
+            updated_structures
         );
-        for node_id in rehydrated_nodes.clone() {
-            match cf_pass(self, node_id) {
-                Ok(()) => debug!("Successfully computed control flow for node {:?}", node_id),
-                Err(e) => warn!(
-                    "Failed to recompute control flow for node {:?}: {}",
-                    node_id, e
-                ),
+        for structure in &updated_structures {
+            if let Err(e) = cf_pass(self, *structure) {
+                warn!(
+                    "[INCREMENTAL UPDATE] Failed to recompute control flow for node {:?}: {}",
+                    structure, e
+                );
             }
         }
-
         debug!(
-            "Computing program dependence for {} rehydrated nodes",
-            rehydrated_nodes.len()
+            "[INCREMENTAL UPDATE] Recomputing data dependence for updated functions: {:?}",
+            updated_functions
         );
-        for node_id in rehydrated_nodes {
-            match data_dep_pass(self, node_id) {
-                Ok(()) => debug!(
-                    "Successfully computed data dependence for node {:?}",
-                    node_id
-                ),
-                Err(e) => warn!(
-                    "Failed to recompute data dependence for node {:?}: {}",
-                    node_id, e
-                ),
+        for function in &updated_functions {
+            if let Err(e) = data_dep_pass(self, *function) {
+                warn!(
+                    "[INCREMENTAL UPDATE] Failed to recompute data dependence for node {:?}: {}",
+                    function, e
+                );
             }
         }
-
-        debug!("Incremental update complete");
+        debug!("[INCREMENTAL UPDATE] Update complete");
     }
 
-    fn rehydrate(
-        &mut self,
-        id: NodeId,
-        pos: (usize, usize, usize, usize),
-        new_tree: &tree_sitter::Tree,
-    ) -> Result<NodeId, CpgError> {
-        debug!("Starting rehydration of node {:?}", id);
+    /// Pairwise walk of CPG and CST, updating only changed nodes in place.
+    /// This assumes the CPG and CST are structurally similar except for edits.
+    pub fn update_in_place_pairwise(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) {
+        let lang = self.get_language().clone();
 
-        // Check if the node exists or if it has been removed in a previous update
-        if !self.nodes.contains_key(id) {
-            warn!("Node {:?} does not exist in CPG, cannot rehydrate", id);
-            return Err(CpgError::MissingField(format!(
-                "Node {:?} does not exist in CPG",
-                id
-            )));
+        // Update the node type and span if the CST kind or span has changed
+        let cpg_node_type = self.get_node_by_id(&cpg_node).map(|n| n.type_.clone());
+        let cst_kind = cst_node.kind();
+        let new_type = lang.map_node_kind(cst_kind);
+        let cst_start = cst_node.start_byte();
+        let cst_end = cst_node.end_byte();
+        if let Some(old_type) = cpg_node_type {
+            if old_type != new_type {
+                if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
+                    node.type_ = new_type;
+                }
+            }
         }
 
-        let is_current_root = self.root == Some(id);
-        debug!("Node is root: {}", is_current_root);
-
-        // Capture edge information before removal
-        let old_left_sibling = self
-            .get_incoming_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxSibling)
-            .map(|e| {
-                debug!("Found left sibling edge: {:?} -> {:?}", e.from, e.to);
-                (e.from, e.properties.clone())
-            });
-
-        let old_right_sibling = self
-            .get_outgoing_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxSibling)
-            .map(|e| {
-                debug!("Found right sibling edge: {:?} -> {:?}", e.from, e.to);
-                (e.to, e.properties.clone())
-            });
-
-        let old_parent = self
-            .get_incoming_edges(id)
-            .into_iter()
-            .find(|e| e.type_ == EdgeType::SyntaxChild)
-            .map(|e| {
-                debug!("Found parent edge: {:?} -> {:?}", e.from, e.to);
-                (e.from, e.properties.clone())
-            });
-
-        debug!(
-            "Captured edges - parent: {:?}, left sibling: {:?}, right sibling: {:?}",
-            old_parent.is_some(),
-            old_left_sibling.is_some(),
-            old_right_sibling.is_some()
-        );
-
-        // Remove the old subtree
-        debug!("Removing subtree rooted at {:?}", id);
-        self.remove_subtree(id).map_err(|e| {
-            CpgError::ConversionError(format!("Failed to remove old subtree: {}", e))
-        })?;
-
-        // Find the corresponding subtree in the new tree
-        debug!(
-            "Looking for subtree in new tree at range ({}, {})",
-            pos.2, pos.3
-        );
-        let new_subtree_node = new_tree
-            .root_node()
-            .descendant_for_byte_range(pos.2, pos.3)
-            .ok_or_else(|| {
-                CpgError::MissingField(format!(
-                    "No subtree found for range {:?} in new tree",
-                    (pos.2, pos.3)
-                ))
-            })?;
-
-        debug!(
-            "Found new subtree node: kind={}, range=({}, {})",
-            new_subtree_node.kind(),
-            new_subtree_node.start_byte(),
-            new_subtree_node.end_byte()
-        );
-
-        let mut cursor = new_subtree_node.walk();
-
-        // Translate the new subtree
-        debug!("Translating new subtree");
-        let new_subtree_root = crate::languages::translate(self, &mut cursor).map_err(|e| {
-            CpgError::ConversionError(format!("Failed to translate new subtree: {}", e))
-        })?;
-
-        debug!(
-            "Translation complete, new subtree root: {:?}",
-            new_subtree_root
-        );
-
-        // Reconstruct edges
-        if let Some((left_sibling_from, properties)) = old_left_sibling {
-            debug!(
-                "Reconnecting left sibling: {:?} -> {:?}",
-                left_sibling_from, new_subtree_root
-            );
-            self.add_edge(Edge {
-                from: left_sibling_from,
-                to: new_subtree_root,
-                type_: EdgeType::SyntaxSibling,
-                properties,
-            });
+        self.spatial_index.edit(cpg_node, cst_start, cst_end);
+        // Update node properties (e.g., raw_kind)
+        if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
+            node.properties
+                .insert("raw_kind".to_string(), cst_kind.to_string());
         }
 
-        if let Some((right_sibling_to, properties)) = old_right_sibling {
-            debug!(
-                "Reconnecting right sibling: {:?} -> {:?}",
-                new_subtree_root, right_sibling_to
-            );
-            self.add_edge(Edge {
-                from: new_subtree_root,
-                to: right_sibling_to,
-                type_: EdgeType::SyntaxSibling,
-                properties,
-            });
+        // Update children with smarter matching (by kind and span)
+        let cpg_children = self.ordered_syntax_children(cpg_node);
+        let mut cst_cursor = cst_node.walk();
+        let mut cst_children = Vec::new();
+        if cst_cursor.goto_first_child() {
+            loop {
+                cst_children.push(cst_cursor.node());
+                if !cst_cursor.goto_next_sibling() {
+                    break;
+                }
+            }
         }
 
-        if let Some((parent_from, properties)) = old_parent {
-            debug!(
-                "Reconnecting parent: {:?} -> {:?}",
-                parent_from, new_subtree_root
-            );
-            self.add_edge(Edge {
-                from: parent_from,
-                to: new_subtree_root,
-                type_: EdgeType::SyntaxChild,
-                properties,
-            });
-        } else if is_current_root {
-            debug!(
-                "Rehydrating root node {:?}, setting new root to {:?}",
-                id, new_subtree_root
-            );
-            self.set_root(new_subtree_root);
-        } else {
-            warn!(
-                "No parent edge found for node {:?}, but it's not the root node - this may indicate a problem",
-                id
-            );
+        // Build a list of (index, kind, span) for both CPG and CST children
+        #[derive(Debug, Clone)]
+        struct ChildInfo {
+            kind: String,
+            start: usize,
+            end: usize,
+        }
+        let cpg_child_info: Vec<_> = cpg_children
+            .iter()
+            .map(|&id| {
+                let node = self.get_node_by_id(&id).unwrap();
+                let (start, end) = self.spatial_index.get_node_span(id).unwrap_or((0, 0));
+                ChildInfo {
+                    kind: node
+                        .properties
+                        .get("raw_kind")
+                        .cloned()
+                        .unwrap_or_else(|| node.type_.to_string()),
+                    start,
+                    end,
+                }
+            })
+            .collect();
+        let cst_child_info: Vec<_> = cst_children
+            .iter()
+            .map(|n| ChildInfo {
+                kind: n.kind().to_string(),
+                start: n.start_byte(),
+                end: n.end_byte(),
+            })
+            .collect();
+
+        // Greedy matching: for each CST child, try to find a CPG child with the same kind and overlapping span
+        let mut matched_cpg = vec![false; cpg_children.len()];
+        let mut matched_cst = vec![false; cst_children.len()];
+        let mut pairs = Vec::new();
+        for (cst_idx, cst) in cst_child_info.iter().enumerate() {
+            let mut best: Option<(usize, usize)> = None;
+            for (cpg_idx, cpg) in cpg_child_info.iter().enumerate() {
+                if matched_cpg[cpg_idx] {
+                    continue;
+                }
+                if cpg.kind == cst.kind {
+                    // Prefer exact span match, otherwise any overlap
+                    let overlap = cpg.start < cst.end && cst.start < cpg.end;
+                    let exact = cpg.start == cst.start && cpg.end == cst.end;
+                    if exact {
+                        best = Some((cpg_idx, 2));
+                        break;
+                    } else if overlap {
+                        best = Some((cpg_idx, 1));
+                    } else if best.is_none() {
+                        best = Some((cpg_idx, 0));
+                    }
+                }
+            }
+            if let Some((cpg_idx, _score)) = best {
+                matched_cpg[cpg_idx] = true;
+                matched_cst[cst_idx] = true;
+                pairs.push((cpg_idx, cst_idx));
+            }
         }
 
-        debug!(
-            "Rehydration complete for {:?} -> {:?}",
-            id, new_subtree_root
-        );
-        Ok(new_subtree_root)
+        // For each matched pair, decide recursively if we need to rehydrate or update in place
+        for (cpg_idx, cst_idx) in pairs.iter().cloned() {
+            let cpg_id = cpg_children[cpg_idx];
+            let cst_child = &cst_children[cst_idx];
+            self.update_in_place_pairwise(cpg_id, cst_child);
+        }
+        // Add new CST children that weren't matched
+        for (cst_idx, was_matched) in matched_cst.iter().enumerate() {
+            if !was_matched {
+                let child = &cst_children[cst_idx];
+                let type_ = lang.map_node_kind(child.kind());
+                let mut node = crate::cpg::Node {
+                    type_,
+                    properties: std::collections::HashMap::new(),
+                };
+                node.properties
+                    .insert("raw_kind".to_string(), child.kind().to_string());
+                let id = self.add_node(node, child.start_byte(), child.end_byte());
+                self.add_edge(crate::cpg::Edge {
+                    from: cpg_node,
+                    to: id,
+                    type_: crate::cpg::EdgeType::SyntaxChild,
+                    properties: std::collections::HashMap::new(),
+                });
+                self.update_in_place_pairwise(id, child);
+            }
+        }
+        // Remove CPG children that weren't matched
+        for (cpg_idx, was_matched) in matched_cpg.iter().enumerate() {
+            if !was_matched {
+                self.remove_subtree(cpg_children[cpg_idx]).ok();
+            }
+        }
     }
 
     /// Recursively removes a subtree from the CPG by its root node ID
     /// This function now properly cleans up edges associated with the removed nodes.
     pub fn remove_subtree(&mut self, root: NodeId) -> Result<(), CpgError> {
-        // 1. Recursively remove child subtrees first
-        // Collect edges to avoid borrowing issues
         let child_edges: Vec<_> = self
             .get_outgoing_edges(root)
             .into_iter()
             .filter(|e| e.type_ == EdgeType::SyntaxChild)
-            .cloned() // Clone edges to avoid holding references
+            .cloned()
             .collect();
 
         for edge in child_edges {
             self.remove_subtree(edge.to)?;
         }
 
-        // 2. Now remove the root node itself and its associated edges
-        // Remove the node data and spatial index entry
         self.nodes.remove(root);
         self.spatial_index.delete(root);
 
-        // 3. Crucially: Remove all edges connected to this node
-        // First collect ALL edge IDs that reference this node from the main edges SlotMap
         let mut edges_to_remove = Vec::new();
         for (edge_id, edge) in self.edges.iter() {
             if edge.from == root || edge.to == root {
@@ -486,7 +452,6 @@ impl Cpg {
             }
         }
 
-        // 4. Finally, remove any empty adjacency lists for the removed node
         self.incoming.remove(&root);
         self.outgoing.remove(&root);
 

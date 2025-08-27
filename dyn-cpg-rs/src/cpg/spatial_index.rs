@@ -177,6 +177,53 @@ impl Cpg {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_spatial_index_incremental_update_simulation() {
+        // Simulate a pipeline: add nodes, "edit" (remove and add), and check index consistency
+        let mut cpg = create_test_cpg();
+        // Add initial nodes
+        let n1 = cpg.add_node(
+            create_test_node(NodeType::Function {
+                name_traversal: desc_trav![],
+                name: Some("main".to_string()),
+            }),
+            0,
+            100,
+        );
+        let n2 = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
+        let n3 = cpg.add_node(create_test_node(NodeType::Identifier), 20, 30);
+
+        // Simulate an edit: remove n2, add a new node in its place
+        cpg.spatial_index.delete(n2);
+        let n2b = cpg.add_node(create_test_node(NodeType::Block), 12, 48);
+
+        // Simulate another edit: remove n3, add a new node
+        cpg.spatial_index.delete(n3);
+        let n3b = cpg.add_node(create_test_node(NodeType::Identifier), 22, 28);
+
+        // Now check that get_smallest_node_id_containing_range returns the correct node
+        let result = cpg.get_smallest_node_id_containing_range(25, 26);
+        assert_eq!(result, Some(n3b));
+        let result2 = cpg.get_smallest_node_id_containing_range(15, 45);
+        assert_eq!(result2, Some(n2b));
+        let result3 = cpg.get_smallest_node_id_containing_range(5, 95);
+        assert_eq!(result3, Some(n1));
+
+        // Check that deleted nodes are not returned
+        let deleted_result = cpg.get_smallest_node_id_containing_range(11, 49);
+        assert_ne!(deleted_result, Some(n2));
+        let deleted_result2 = cpg.get_smallest_node_id_containing_range(23, 27);
+        assert_ne!(deleted_result2, Some(n3));
+
+        // Check that all node IDs returned by the spatial index exist in the CPG
+        for id in cpg.spatial_index.get_nodes_covering_range(0, 100) {
+            assert!(
+                cpg.get_node_by_id(&id).is_some(),
+                "NodeId {:?} in spatial index but not in CPG",
+                id
+            );
+        }
+    }
 
     use crate::cpg::DescendantTraversal;
     use crate::cpg::spatial_index::SpatialIndex;

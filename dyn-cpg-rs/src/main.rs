@@ -72,11 +72,7 @@ fn parse_glob(pattern: &str) -> Result<Vec<String>, String> {
 // --- Main Entry Point --- //
 
 fn run_application(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    // Only initialize logging if not already initialized (for tests)
-    static LOGGING_INIT: std::sync::Once = std::sync::Once::new();
-    LOGGING_INIT.call_once(|| {
-        logging::init();
-    });
+    logging::init();
 
     // DB
     // TODO

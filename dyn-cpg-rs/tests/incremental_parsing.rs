@@ -1,7 +1,7 @@
 use dyn_cpg_rs::{
     cpg::{
-        serialization::{DotSerializer, SexpSerializer},
         DetailedComparisonResult,
+        serialization::{DotSerializer, SexpSerializer},
     },
     diff::incremental_parse,
     languages::RegisteredLanguage,
@@ -14,7 +14,7 @@ use tracing::debug;
 /// This test verifies that incremental updates produce semantically equivalent CPGs
 #[test]
 fn test_incremental_reparse() {
-    dyn_cpg_rs::logging::init();
+    // dyn_cpg_rs::logging::init();
     debug!("Starting incremental reparse test");
 
     // Init the lang and parser
@@ -82,11 +82,6 @@ fn test_incremental_reparse() {
     );
 
     // Compare the incrementally updated CPG with the reference CPG
-    cpg.serialize_to_file(&mut DotSerializer::new(), "incr.dot")
-        .expect("Failed to write incr.dot");
-    new_cpg
-        .serialize_to_file(&mut DotSerializer::new(), "ref.dot")
-        .expect("Failed to write ref.dot");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     match diff {
         DetailedComparisonResult::Equivalent => {}
@@ -215,6 +210,9 @@ fn test_incremental_reparse_perf() {
 /// Test multiple sequential incremental updates
 #[test]
 fn test_multiple_incremental_updates() {
+    dyn_cpg_rs::logging::init();
+    debug!("Testing multiple incremental updates");
+
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
 
@@ -252,10 +250,16 @@ fn test_multiple_incremental_updates() {
         .cst_to_cpg(new_tree2, source3.to_vec())
         .expect("Failed to create reference CPG");
 
-    cpg.serialize_to_file(&mut SexpSerializer::new(), "incr.sexp")
+    cpg.serialize_to_file(&mut DotSerializer::new(), "incr.dot", None)
+        .expect("Failed to write incr.dot");
+    reference_cpg
+        .serialize_to_file(&mut DotSerializer::new(), "ref.dot", None)
+        .expect("Failed to write ref.dot");
+
+    cpg.serialize_to_file(&mut SexpSerializer::new(), "incr.sexp", None)
         .expect("Failed to write incr.sexp");
     reference_cpg
-        .serialize_to_file(&mut SexpSerializer::new(), "ref.sexp")
+        .serialize_to_file(&mut SexpSerializer::new(), "ref.sexp", None)
         .expect("Failed to write ref.sexp");
 
     let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");

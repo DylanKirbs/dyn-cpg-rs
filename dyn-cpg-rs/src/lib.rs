@@ -6,14 +6,17 @@ pub mod logging {
     use tracing_subscriber::EnvFilter;
 
     pub fn init() {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .init();
+        static LOGGING_INIT: std::sync::Once = std::sync::Once::new();
+        LOGGING_INIT.call_once(|| {
+            tracing_subscriber::fmt()
+                .with_env_filter(EnvFilter::from_default_env())
+                .init();
+        });
     }
 }
 
 pub mod diff {
-    use similar::{capture_diff_slices, Algorithm, DiffOp};
+    use similar::{Algorithm, DiffOp, capture_diff_slices};
     use tracing::debug;
     use tree_sitter::{Parser, Point, Tree};
 

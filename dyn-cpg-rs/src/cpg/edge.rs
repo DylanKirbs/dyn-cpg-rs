@@ -11,6 +11,7 @@ pub enum EdgeType {
     SyntaxSibling,
 
     // Control Flow
+    ControlFlowFunctionReturn,
     ControlFlowEpsilon,
     ControlFlowTrue,
     ControlFlowFalse,
@@ -94,8 +95,8 @@ mod tests {
 
     use crate::{
         cpg::{
-            tests::{create_test_cpg, create_test_node},
             DescendantTraversal, Edge, EdgeQuery, EdgeType, NodeType,
+            tests::{create_test_cpg, create_test_node},
         },
         desc_trav,
     };
