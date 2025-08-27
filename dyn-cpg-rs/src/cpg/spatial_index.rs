@@ -191,7 +191,14 @@ mod tests {
             100,
         );
         let n2 = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
-        let n3 = cpg.add_node(create_test_node(NodeType::Identifier), 20, 30);
+        let n3 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            20,
+            30,
+        );
 
         // Simulate an edit: remove n2, add a new node in its place
         cpg.spatial_index.delete(n2);
@@ -199,7 +206,14 @@ mod tests {
 
         // Simulate another edit: remove n3, add a new node
         cpg.spatial_index.delete(n3);
-        let n3b = cpg.add_node(create_test_node(NodeType::Identifier), 22, 28);
+        let n3b = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            22,
+            28,
+        );
 
         // Now check that get_smallest_node_id_containing_range returns the correct node
         let result = cpg.get_smallest_node_id_containing_range(25, 26);
@@ -225,9 +239,9 @@ mod tests {
         }
     }
 
-    use crate::cpg::DescendantTraversal;
     use crate::cpg::spatial_index::SpatialIndex;
     use crate::cpg::tests::{create_test_cpg, create_test_node};
+    use crate::cpg::{DescendantTraversal, IdenType};
     use crate::{cpg::NodeType, desc_trav};
 
     #[test]
@@ -241,8 +255,22 @@ mod tests {
             0,
             10,
         );
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Identifier), 12, 20);
+        let node_id2 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            5,
+            15,
+        );
+        let _node_id3 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            12,
+            20,
+        );
 
         let overlapping = cpg.spatial_index.get_nodes_covering_range(8, 12);
         assert_eq!(overlapping.len(), 2);
@@ -263,7 +291,14 @@ mod tests {
         let mut cpg = create_test_cpg();
 
         // Test zero-width ranges
-        let _node_id = cpg.add_node(create_test_node(NodeType::Identifier), 5, 5);
+        let _node_id = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            5,
+            5,
+        );
         let overlapping = cpg.spatial_index.get_nodes_covering_range(5, 5);
         assert!(overlapping.is_empty()); // Zero-width ranges don't overlap
 
@@ -299,7 +334,14 @@ mod tests {
             100,
         );
         let medium_node = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
-        let small_node = cpg.add_node(create_test_node(NodeType::Identifier), 20, 30);
+        let small_node = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            20,
+            30,
+        );
 
         let result = cpg.get_smallest_node_id_containing_range(25, 26);
         assert_eq!(result, Some(small_node));
@@ -325,7 +367,14 @@ mod tests {
             0,
             10,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 5, 15);
+        let node2 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            5,
+            15,
+        );
 
         let nodes = cpg.get_node_by_offsets(8, 12);
         assert_eq!(nodes.len(), 2);

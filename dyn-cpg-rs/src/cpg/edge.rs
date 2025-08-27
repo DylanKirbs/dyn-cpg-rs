@@ -95,7 +95,7 @@ mod tests {
 
     use crate::{
         cpg::{
-            DescendantTraversal, Edge, EdgeQuery, EdgeType, NodeType,
+            DescendantTraversal, Edge, EdgeQuery, EdgeType, IdenType, NodeType,
             tests::{create_test_cpg, create_test_node},
         },
         desc_trav,
@@ -113,8 +113,22 @@ mod tests {
             0,
             1,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
+        let node2 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            1,
+            2,
+        );
+        let node3 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            2,
+            3,
+        );
 
         let edge1 = Edge {
             from: node1,
@@ -150,8 +164,22 @@ mod tests {
             0,
             1,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 2, 3);
+        let node2 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            1,
+            2,
+        );
+        let node3 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            2,
+            3,
+        );
 
         let edge1 = Edge {
             from: node1,
@@ -186,7 +214,14 @@ mod tests {
             0,
             1,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node2 = cpg.add_node(
+            create_test_node(NodeType::Identifier {
+                type_: IdenType::UNKNOWN,
+                name: None,
+            }),
+            1,
+            2,
+        );
         let node3 = cpg.add_node(create_test_node(NodeType::Statement), 2, 3);
 
         // Add edges with properties

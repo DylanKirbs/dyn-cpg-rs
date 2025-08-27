@@ -181,7 +181,7 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         ));
     }
 
-    let type_ = cpg.get_language().map_node_kind(node.kind());
+    let type_ = cpg.get_language().clone().map_node_kind(node.kind());
 
     let mut cpg_node = Node {
         type_: type_.clone(),
@@ -192,6 +192,14 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         .insert("raw_kind".to_string(), node.kind().to_string());
 
     let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
+
+    if let NodeType::Identifier { .. } = type_.clone() {
+        let name = cpg.get_node_source(&id).clone();
+        cpg.get_node_by_id_mut(&id).and_then(|n| {
+            n.properties.insert("name".to_string(), name);
+            Some(())
+        });
+    }
 
     if cursor.goto_first_child() {
         let mut left_child_id: Option<NodeId> = None;

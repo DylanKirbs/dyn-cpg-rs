@@ -3,6 +3,14 @@ use std::collections::HashMap;
 use strum_macros::Display;
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
+pub enum IdenType {
+    READ,
+    WRITE,
+    /// Unknown (treated as both)
+    UNKNOWN,
+}
+
+#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum NodeType {
     /// Language-implementation specific nodes
     LanguageImplementation(String),
@@ -23,7 +31,10 @@ pub enum NodeType {
     FunctionReturn,
 
     /// An identifier (variable, etc.)
-    Identifier,
+    Identifier {
+        type_: IdenType,
+        name: Option<String>,
+    },
 
     /// A statement that can be executed
     Statement,
@@ -49,6 +60,10 @@ pub enum NodeType {
         condition: DescendantTraversal,
         body: DescendantTraversal,
     },
+
+    /// Control Flow
+    CFBreak,
+    CFContinue,
 
     /// Compound statement, e.g., a block of code enclosed in braces
     Block,

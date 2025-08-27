@@ -1,7 +1,7 @@
 use super::super::define_language;
 use super::Language;
 use crate::{
-    cpg::{DescendantTraversal, NodeType},
+    cpg::{DescendantTraversal, IdenType, NodeType},
     desc_trav,
 };
 
@@ -18,7 +18,18 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
             name: None,
         },
 
-        "identifier" => NodeType::Identifier,
+        "identifier" => NodeType::Identifier {
+            type_: IdenType::UNKNOWN,
+            name: None,
+        },
+        "field_identifier" => NodeType::Identifier {
+            type_: IdenType::READ,
+            name: None,
+        },
+        "field_declarator" => NodeType::Identifier {
+            type_: IdenType::WRITE,
+            name: None,
+        },
 
         "if_statement" => NodeType::Branch {
             condition: desc_trav![1],
@@ -35,7 +46,8 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
             body: desc_trav![2],
         },
 
-        "break" | "continue" => NodeType::Statement, // TODO: Possible add more specific node type to handle this
+        "break" => NodeType::CFBreak,
+        "continue" => NodeType::CFContinue,
 
         "expression_statement" | "declaration" => NodeType::Statement,
 
@@ -46,8 +58,6 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         "return_statement" => NodeType::Return,
 
         "primitive_type" | "type_identifier" => NodeType::Type,
-
-        "field_identifier" | "field_declarator" => NodeType::Identifier,
 
         "subscript_expression"
         | "parenthesized_expression"

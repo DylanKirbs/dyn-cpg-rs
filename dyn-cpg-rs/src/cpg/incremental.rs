@@ -173,7 +173,7 @@ impl Cpg {
                             NodeType::Return => 100,
 
                             // Low priority: Leaf nodes and language-specific constructs
-                            NodeType::Identifier => 1000,
+                            NodeType::Identifier { .. } => 1000,
                             NodeType::Comment => 1000,
                             NodeType::Type => 500,
                             NodeType::LanguageImplementation(_) => 800,

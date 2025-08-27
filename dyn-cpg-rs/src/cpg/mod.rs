@@ -301,7 +301,7 @@ mod tests {
             0,
             1,
         );
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier), 1, 2);
+        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}), 1, 2);
 
         let edge = Edge {
             from: node_id1,
@@ -356,7 +356,7 @@ mod tests {
             10,
         );
         let child1 = cpg.add_node(create_test_node(NodeType::Statement), 1, 5);
-        let child2 = cpg.add_node(create_test_node(NodeType::Identifier), 6, 9);
+        let child2 = cpg.add_node(create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}), 6, 9);
 
         cpg.add_edge(Edge {
             from: root,
@@ -400,7 +400,11 @@ mod tests {
         );
         let child1 = cpg.add_node(create_test_node(NodeType::Block), 1, 10);
         let grandchild = cpg.add_node(create_test_node(NodeType::Statement), 2, 8);
-        let child2 = cpg.add_node(create_test_node(NodeType::Identifier), 11, 19);
+        let child2 = cpg.add_node(
+            create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}),
+            11,
+            19,
+        );
 
         cpg.add_edge(Edge {
             from: root,
@@ -449,7 +453,11 @@ mod tests {
             5,
         );
         let node2 = cpg.add_node(create_test_node(NodeType::Statement), 6, 10);
-        let node3 = cpg.add_node(create_test_node(NodeType::Identifier), 11, 15);
+        let node3 = cpg.add_node(
+            create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}),
+            11,
+            15,
+        );
 
         // Create a complex edge structure
         let edge1 = cpg.add_edge(Edge {
