@@ -372,7 +372,6 @@ impl Cpg {
             }
         }
 
-        // For each matched pair, decide recursively if we need to rehydrate or update in place
         for (cpg_idx, cst_idx) in pairs.iter().cloned() {
             let cpg_id = cpg_children[cpg_idx];
             let cst_child = &cst_children[cst_idx];

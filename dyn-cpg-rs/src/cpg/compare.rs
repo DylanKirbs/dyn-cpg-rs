@@ -1,4 +1,4 @@
-use super::{edge::EdgeType, node::NodeType, Cpg, CpgError, NodeId};
+use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType, serialization::SexpSerializer};
 use similar::TextDiff;
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -30,120 +30,16 @@ pub enum FunctionComparisonResult {
     Mismatch {
         /// The name of the function
         function_name: String,
-        /// Details about the mismatch
+        /// Details
         details: String,
+        /// Source diff
+        source_diff: String,
+        /// Sexp diff
+        sexp_diff: String,
     },
 }
 
 // --- Helper Functions --- //
-
-fn unescape_string(input: &str) -> String {
-    let mut result = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(&next_ch) = chars.peek() {
-                match next_ch {
-                    'n' => {
-                        chars.next();
-                        result.push('\n');
-                    }
-                    't' => {
-                        chars.next();
-                        result.push('\t');
-                    }
-                    'r' => {
-                        chars.next();
-                        result.push('\r');
-                    }
-                    '\\' => {
-                        chars.next();
-                        result.push('\\');
-                    }
-                    '\'' => {
-                        chars.next();
-                        result.push('\'');
-                    }
-                    '\"' => {
-                        chars.next();
-                        result.push('\"');
-                    }
-                    '0' => {
-                        chars.next();
-                        result.push('\0');
-                    }
-                    'x' => {
-                        chars.next();
-                        let mut hex_chars = String::new();
-                        for _ in 0..2 {
-                            if let Some(&hex_ch) = chars.peek() {
-                                if hex_ch.is_ascii_hexdigit() {
-                                    hex_chars.push(chars.next().unwrap());
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                        if let Ok(hex_val) = u8::from_str_radix(&hex_chars, 16) {
-                            if hex_val.is_ascii() {
-                                result.push(hex_val as char);
-                            } else {
-                                result.push('\\');
-                                result.push('x');
-                                result.push_str(&hex_chars);
-                            }
-                        } else {
-                            result.push('\\');
-                            result.push('x');
-                            result.push_str(&hex_chars);
-                        }
-                    }
-                    'u' => {
-                        chars.next();
-                        if chars.peek() == Some(&'{') {
-                            chars.next();
-                            let mut unicode_chars = String::new();
-                            while let Some(&unicode_ch) = chars.peek() {
-                                if unicode_ch == '}' {
-                                    chars.next();
-                                    break;
-                                } else if unicode_ch.is_ascii_hexdigit() {
-                                    unicode_chars.push(chars.next().unwrap());
-                                } else {
-                                    break;
-                                }
-                            }
-                            if let Ok(unicode_val) = u32::from_str_radix(&unicode_chars, 16) {
-                                if let Some(unicode_char) = char::from_u32(unicode_val) {
-                                    result.push(unicode_char);
-                                } else {
-                                    result.push_str(&format!("\\u{{{}}}", unicode_chars));
-                                }
-                            } else {
-                                result.push_str(&format!("\\u{{{}}}", unicode_chars));
-                            }
-                        } else {
-                            result.push('\\');
-                            result.push('u');
-                        }
-                    }
-                    _ => {
-                        result.push(ch);
-                        result.push(next_ch);
-                        chars.next();
-                    }
-                }
-            } else {
-                result.push(ch);
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
-}
 
 fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> {
     let mut vec: Vec<_> = properties
@@ -211,15 +107,13 @@ impl Cpg {
                             only_in_right: vec![],
                             function_mismatches: vec![FunctionComparisonResult::Mismatch {
                                 function_name: "root".to_string(),
-                                details: self.format_mismatch_details_with_diff(
-                                    other,
-                                    &format!(
-                                        "Root nodes differ [Root not TranslationUnit (left={},right={})]",
-                                        l_node.type_ != NodeType::TranslationUnit,
-                                        r_node.type_ != NodeType::TranslationUnit,
-                                    ),
-                                    &mismatches,
-                                )
+                                details: format!(
+                                    "Root nodes differ [Root not TranslationUnit (left={},right={})]",
+                                    l_node.type_ != NodeType::TranslationUnit,
+                                    r_node.type_ != NodeType::TranslationUnit,
+                                ),
+                                source_diff: self.source_diff(other, &mismatches),
+                                sexp_diff: self.sexp_diff(other, l_root, r_root),
                             }],
                         });
                     }
@@ -263,11 +157,9 @@ impl Cpg {
                         if !mismatches.is_empty() {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
-                                details: self.format_mismatch_details_with_diff(
-                                    other,
-                                    &format!("Function {} has structural differences", name),
-                                    &mismatches,
-                                ),
+                                details: format!("Function {} has structural differences", name),
+                                source_diff: self.source_diff(other, &mismatches),
+                                sexp_diff: self.sexp_diff(other, *left_func_id, *right_func_id),
                             });
                         }
                     }
@@ -426,13 +318,12 @@ impl Cpg {
     }
 
     /// Format mismatch details with text diffs showing the actual source code differences
-    fn format_mismatch_details_with_diff(
+    fn source_diff(
         &self,
         other: &Cpg,
-        base_message: &str,
         mismatches: &Vec<(Option<NodeId>, Option<NodeId>)>,
     ) -> String {
-        let mut details = vec![base_message.to_string()];
+        let mut details = vec![];
 
         for (left_node_opt, right_node_opt) in mismatches {
             let left_source = left_node_opt
@@ -443,10 +334,7 @@ impl Cpg {
                 .map(|node_id| other.get_node_source(&node_id))
                 .unwrap_or_else(|| "".to_string());
 
-            let left_unescaped = unescape_string(&left_source);
-            let right_unescaped = unescape_string(&right_source);
-
-            let diff = TextDiff::from_lines(&left_unescaped, &right_unescaped);
+            let diff = TextDiff::from_lines(&left_source, &right_source);
 
             // let mut diff_output = Vec::new();
             // for change in diff.iter_all_changes() {
@@ -458,14 +346,23 @@ impl Cpg {
             //     diff_output.push(format!("{}{}", sign, change.value().trim_end()));
             // }
 
-            details.push(format!(
-                "\nMismatch:\n{}",
-                // diff_output.join("\n")
-                diff.unified_diff()
-            ));
+            details.push(format!("Mismatch:\n{}", diff.unified_diff()));
         }
 
         details.join("\n")
+    }
+
+    /// Sexp Diff
+    fn sexp_diff(&self, other: &Cpg, left_root: NodeId, right_root: NodeId) -> String {
+        let left_sexp = self
+            .serialize(&mut SexpSerializer::new(), Some(left_root))
+            .unwrap_or("~BAD LEFT ROOT~".to_string());
+        let right_sexp = other
+            .serialize(&mut SexpSerializer::new(), Some(right_root))
+            .unwrap_or("~BAD RIGHT ROOT~".to_string());
+
+        let diff = TextDiff::from_lines(&left_sexp, &right_sexp);
+        format!("{}", diff.unified_diff())
     }
 }
 
@@ -474,8 +371,8 @@ mod tests {
 
     use crate::{
         cpg::{
-            tests::{create_test_cpg, create_test_node},
             DescendantTraversal, DetailedComparisonResult, Edge, EdgeType, NodeType,
+            tests::{create_test_cpg, create_test_node},
         },
         desc_trav,
     };
