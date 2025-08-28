@@ -385,12 +385,14 @@ mod tests {
 
         // Create identical structures
         for cpg in [&mut cpg1, &mut cpg2] {
-            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
             let func = cpg.add_node(
-                create_test_node(NodeType::Function {
-                    name_traversal: desc_trav![],
-                    name: Some("main".to_string()),
-                }),
+                create_test_node(
+                    NodeType::Function {
+                        name_traversal: desc_trav![],
+                    },
+                    Some("main".to_string()),
+                ),
                 1,
                 19,
             );
@@ -413,12 +415,14 @@ mod tests {
         let mut cpg2 = create_test_cpg();
 
         // CPG1 has function "main"
-        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let root1 = cpg1.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
         let func1 = cpg1.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             1,
             19,
         );
@@ -430,12 +434,14 @@ mod tests {
         });
 
         // CPG2 has function "test"
-        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 20);
+        let root2 = cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 20);
         let func2 = cpg2.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("test".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("test".to_string()),
+            ),
             1,
             19,
         );
@@ -473,7 +479,7 @@ mod tests {
     fn test_compare_one_empty() {
         let cpg1 = create_test_cpg();
         let mut cpg2 = create_test_cpg();
-        cpg2.add_node(create_test_node(NodeType::TranslationUnit), 0, 10);
+        cpg2.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 10);
 
         let result = cpg1.compare(&cpg2).expect("Comparison failed");
         match result {

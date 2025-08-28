@@ -50,20 +50,21 @@ pub enum CpgError {
 /// Represents a traversal path through the descendants of a node in the syntax tree.
 /// Used to navigate from a subtree root, to a specific descendant node.
 /// *This aids in the "language agnosticism" of the control flow pass.*
-pub struct DescendantTraversal {
-    traversal: Vec<usize>,
+pub enum DescendantTraversal {
+    Traversal(Vec<usize>),
+    None,
 }
 
 impl DescendantTraversal {
-    pub fn new(traversal: Vec<usize>) -> Self {
-        DescendantTraversal { traversal }
-    }
-
     pub fn get_descendent(self, cpg: &Cpg, node: &NodeId) -> Option<NodeId> {
         let mut curr_node = *node;
-        for step in &self.traversal {
-            let children = cpg.ordered_syntax_children(curr_node);
-            curr_node = *children.get(*step)?;
+        if let DescendantTraversal::Traversal(steps) = self {
+            for step in steps {
+                let children = cpg.ordered_syntax_children(curr_node);
+                curr_node = *children.get(step)?;
+            }
+        } else {
+            return None;
         }
         Some(curr_node)
     }
@@ -71,8 +72,11 @@ impl DescendantTraversal {
 
 #[macro_export]
 macro_rules! desc_trav {
+    (None) => {
+        DescendantTraversal::None
+    };
     ($($step:expr),*) => {
-        DescendantTraversal::new(vec![$($step),*])
+        DescendantTraversal::Traversal(vec![$($step),*])
     };
 }
 
@@ -256,12 +260,12 @@ mod tests {
         Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
     }
 
-    pub fn create_test_node(node_type: NodeType) -> Node {
+    pub fn create_test_node(node_type: NodeType, name: Option<String>) -> Node {
         Node {
             type_: node_type.clone(),
             properties: {
                 let mut prop = HashMap::new();
-                if let NodeType::Function { name: Some(n), .. } = &node_type {
+                if let Some(n) = name {
                     prop.insert("name".to_string(), n.clone());
                 }
                 prop
@@ -282,7 +286,7 @@ mod tests {
     #[test]
     fn test_add_node() {
         let mut cpg = create_test_cpg();
-        let node = create_test_node(NodeType::TranslationUnit);
+        let node = create_test_node(NodeType::TranslationUnit, None);
         let node_id = cpg.add_node(node.clone(), 0, 10);
 
         assert_eq!(cpg.get_node_by_id(&node_id), Some(&node));
@@ -294,14 +298,25 @@ mod tests {
     fn test_add_edge() {
         let mut cpg = create_test_cpg();
         let node_id1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("text_func".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("Test_func".to_string()),
+            ),
             0,
             1,
         );
-        let node_id2 = cpg.add_node(create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}), 1, 2);
+        let node_id2 = cpg.add_node(
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                Some("x".to_string()),
+            ),
+            1,
+            2,
+        );
 
         let edge = Edge {
             from: node_id1,
@@ -327,14 +342,16 @@ mod tests {
     fn test_set_root_override() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("test".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("test".to_string()),
+            ),
             0,
             1,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::TranslationUnit), 1, 2);
+        let node2 = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 1, 2);
 
         assert_eq!(cpg.get_root(), Some(node1)); // First node becomes root
 
@@ -348,15 +365,26 @@ mod tests {
     fn test_remove_subtree_simple() {
         let mut cpg = create_test_cpg();
         let root = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
-        let child1 = cpg.add_node(create_test_node(NodeType::Statement), 1, 5);
-        let child2 = cpg.add_node(create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}), 6, 9);
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 5);
+        let child2 = cpg.add_node(
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                Some("x".to_string()),
+            ),
+            6,
+            9,
+        );
 
         cpg.add_edge(Edge {
             from: root,
@@ -391,17 +419,24 @@ mod tests {
     fn test_remove_subtree_recursive() {
         let mut cpg = create_test_cpg();
         let root = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             20,
         );
-        let child1 = cpg.add_node(create_test_node(NodeType::Block), 1, 10);
-        let grandchild = cpg.add_node(create_test_node(NodeType::Statement), 2, 8);
+        let child1 = cpg.add_node(create_test_node(NodeType::Block, None), 1, 10);
+        let grandchild = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 8);
         let child2 = cpg.add_node(
-            create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             11,
             19,
         );
@@ -445,16 +480,23 @@ mod tests {
     fn test_remove_subtree_edge_cleanup() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             5,
         );
-        let node2 = cpg.add_node(create_test_node(NodeType::Statement), 6, 10);
+        let node2 = cpg.add_node(create_test_node(NodeType::Statement, None), 6, 10);
         let node3 = cpg.add_node(
-            create_test_node(NodeType::Identifier{type_: IdenType::UNKNOWN, name: None}),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             11,
             15,
         );
@@ -503,16 +545,18 @@ mod tests {
     fn test_ordered_syntax_children() {
         let mut cpg = create_test_cpg();
         let parent = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             30,
         );
-        let child1 = cpg.add_node(create_test_node(NodeType::Statement), 1, 10);
-        let child2 = cpg.add_node(create_test_node(NodeType::Statement), 11, 20);
-        let child3 = cpg.add_node(create_test_node(NodeType::Statement), 21, 29);
+        let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 1, 10);
+        let child2 = cpg.add_node(create_test_node(NodeType::Statement, None), 11, 20);
+        let child3 = cpg.add_node(create_test_node(NodeType::Statement, None), 21, 29);
 
         // Add syntax child edges
         cpg.add_edge(Edge {
@@ -556,10 +600,12 @@ mod tests {
     fn test_ordered_syntax_children_empty() {
         let mut cpg = create_test_cpg();
         let parent = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
@@ -574,10 +620,12 @@ mod tests {
     fn test_remove_nonexistent_subtree() {
         let mut cpg = create_test_cpg();
         let node = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav!(None),
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
@@ -602,7 +650,7 @@ mod tests {
         // Insert nodes with generated ranges
         for (start, end) in ranges.iter() {
             let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
-            let node_id = cpg.add_node(create_test_node(NodeType::Statement), start, end);
+            let node_id = cpg.add_node(create_test_node(NodeType::Statement, None), start, end);
             node_ids.push(node_id);
         }
 
@@ -634,7 +682,7 @@ mod tests {
         // Insert nodes
         for (start, end) in ranges.iter() {
             let (start, end) = if start <= end { (*start, *end) } else { (*end, *start) };
-            let node_id = cpg.add_node(create_test_node(NodeType::Statement), start, end);
+            let node_id = cpg.add_node(create_test_node(NodeType::Statement, None), start, end);
             node_ids.push(node_id);
         }
 
@@ -662,7 +710,7 @@ mod tests {
         // Create nodes
         for i in 0..node_count {
             let node_id = cpg.add_node(
-                create_test_node(NodeType::Statement),
+                create_test_node(NodeType::Statement, None),
                 i * 10,
                 (i + 1) * 10 - 1
             );
@@ -709,7 +757,7 @@ mod tests {
         // Build a CPG with the generated node types
         for (i, node_type) in node_types.iter().enumerate() {
             cpg.add_node(
-                create_test_node(node_type.clone()),
+                create_test_node(node_type.clone(), None),
                 i * 10,
                 (i + 1) * 10 - 1
             );
@@ -732,7 +780,7 @@ mod tests {
         // Create initial nodes
         for i in 0..initial_nodes {
             let node_id = cpg.add_node(
-                create_test_node(NodeType::Statement),
+                create_test_node(NodeType::Statement, None),
                 i * 100,
                 (i + 1) * 100 - 1
             );
@@ -782,9 +830,10 @@ mod tests {
         let mut cpg = create_test_cpg();
         let parent = cpg.add_node(
             create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("test_func".to_string()),
-            }),
+                name_traversal: desc_trav!(None),
+            },
+            Some("test_func".to_string()),
+        ),
             0,
             child_count * 100
         );
@@ -792,7 +841,7 @@ mod tests {
         let mut children = Vec::new();
         for i in 0..child_count {
             let child = cpg.add_node(
-                create_test_node(NodeType::Statement),
+                create_test_node(NodeType::Statement, None),
                 i * 10,
                 (i + 1) * 10 - 1
             );

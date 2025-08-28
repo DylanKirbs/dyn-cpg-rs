@@ -183,34 +183,40 @@ mod tests {
         let mut cpg = create_test_cpg();
         // Add initial nodes
         let n1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             100,
         );
-        let n2 = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
+        let n2 = cpg.add_node(create_test_node(NodeType::Block, None), 10, 50);
         let n3 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             20,
             30,
         );
 
         // Simulate an edit: remove n2, add a new node in its place
         cpg.spatial_index.delete(n2);
-        let n2b = cpg.add_node(create_test_node(NodeType::Block), 12, 48);
+        let n2b = cpg.add_node(create_test_node(NodeType::Block, None), 12, 48);
 
         // Simulate another edit: remove n3, add a new node
         cpg.spatial_index.delete(n3);
         let n3b = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             22,
             28,
         );
@@ -248,26 +254,32 @@ mod tests {
     fn test_spatial_index_basic() {
         let mut cpg = create_test_cpg();
         let node_id1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
         let node_id2 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             5,
             15,
         );
         let _node_id3 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             12,
             20,
         );
@@ -292,10 +304,12 @@ mod tests {
 
         // Test zero-width ranges
         let _node_id = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             5,
             5,
         );
@@ -304,10 +318,12 @@ mod tests {
 
         // Test exact boundaries
         let node_id2 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
@@ -317,7 +333,7 @@ mod tests {
         assert!(exact_match.contains(&&node_id2));
 
         // Test adjacent ranges
-        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement), 10, 20);
+        let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement, None), 10, 20);
         let adjacent = cpg.spatial_index.get_nodes_covering_range(10, 10);
         assert!(!adjacent.is_empty());
     }
@@ -326,19 +342,23 @@ mod tests {
     fn test_get_smallest_node_containing_range() {
         let mut cpg = create_test_cpg();
         let large_node = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             100,
         );
-        let medium_node = cpg.add_node(create_test_node(NodeType::Block), 10, 50);
+        let medium_node = cpg.add_node(create_test_node(NodeType::Block, None), 10, 50);
         let small_node = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             20,
             30,
         );
@@ -360,18 +380,22 @@ mod tests {
     fn test_get_node_by_offsets() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             10,
         );
         let node2 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             5,
             15,
         );

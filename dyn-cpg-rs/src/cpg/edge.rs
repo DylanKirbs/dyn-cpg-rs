@@ -106,26 +106,32 @@ mod tests {
     fn test_complex_edge_query() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             1,
         );
         let node2 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             1,
             2,
         );
         let node3 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             2,
             3,
         );
@@ -157,26 +163,32 @@ mod tests {
     fn test_all_incoming_edges() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             1,
         );
         let node2 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             1,
             2,
         );
         let node3 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             2,
             3,
         );
@@ -207,22 +219,26 @@ mod tests {
     fn test_edge_query_combinations() {
         let mut cpg = create_test_cpg();
         let node1 = cpg.add_node(
-            create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
-                name: Some("main".to_string()),
-            }),
+            create_test_node(
+                NodeType::Function {
+                    name_traversal: desc_trav![],
+                },
+                Some("main".to_string()),
+            ),
             0,
             1,
         );
         let node2 = cpg.add_node(
-            create_test_node(NodeType::Identifier {
-                type_: IdenType::UNKNOWN,
-                name: None,
-            }),
+            create_test_node(
+                NodeType::Identifier {
+                    type_: IdenType::UNKNOWN,
+                },
+                None,
+            ),
             1,
             2,
         );
-        let node3 = cpg.add_node(create_test_node(NodeType::Statement), 2, 3);
+        let node3 = cpg.add_node(create_test_node(NodeType::Statement, None), 2, 3);
 
         // Add edges with properties
         let mut edge_props = HashMap::new();

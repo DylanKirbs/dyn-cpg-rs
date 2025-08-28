@@ -15,20 +15,16 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
 
         "function_definition" => NodeType::Function {
             name_traversal: desc_trav![1, 0],
-            name: None,
         },
 
         "identifier" => NodeType::Identifier {
             type_: IdenType::UNKNOWN,
-            name: None,
         },
         "field_identifier" => NodeType::Identifier {
             type_: IdenType::READ,
-            name: None,
         },
         "field_declarator" => NodeType::Identifier {
             type_: IdenType::WRITE,
-            name: None,
         },
 
         "if_statement" => NodeType::Branch {

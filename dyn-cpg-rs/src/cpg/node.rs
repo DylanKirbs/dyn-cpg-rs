@@ -24,16 +24,14 @@ pub enum NodeType {
     /// A function definition or declaration
     Function {
         name_traversal: DescendantTraversal,
-        /// Optional name, can be derived from the traversal
-        name: Option<String>,
     },
+
     /// An internal node used to connect all return statements within a function.
     FunctionReturn,
 
     /// An identifier (variable, etc.)
     Identifier {
         type_: IdenType,
-        name: Option<String>,
     },
 
     /// A statement that can be executed

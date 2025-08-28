@@ -1,6 +1,6 @@
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
-use crate::cpg::{Cpg, Edge, EdgeType, Node, NodeId, NodeType};
+use crate::cpg::{Cpg, Edge, EdgeType, IdenType, Node, NodeId, NodeType};
 use std::collections::HashMap;
 use tracing::{debug, warn};
 mod c;
@@ -191,15 +191,7 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         .properties
         .insert("raw_kind".to_string(), node.kind().to_string());
 
-    let id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
-
-    if let NodeType::Identifier { .. } = type_.clone() {
-        let name = cpg.get_node_source(&id).clone();
-        cpg.get_node_by_id_mut(&id).and_then(|n| {
-            n.properties.insert("name".to_string(), name);
-            Some(())
-        });
-    }
+    let cpg_node_id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
 
     if cursor.goto_first_child() {
         let mut left_child_id: Option<NodeId> = None;
@@ -209,7 +201,7 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
 
             // Edge from parent to child
             cpg.add_edge(Edge {
-                from: id,
+                from: cpg_node_id,
                 to: child_id,
                 type_: EdgeType::SyntaxChild,
                 properties: HashMap::new(),
@@ -235,51 +227,125 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         cursor.goto_parent();
     }
 
-    // Node post processing now that we have the children as well
-    if let NodeType::Function {
-        name_traversal,
-        name: None,
-    } = type_.clone()
-    {
-        // Track the name of the function
-        let id_node = name_traversal.get_descendent(cpg, &id);
-        if let Some(id_node) = id_node {
-            let name = cpg.get_node_source(&id_node);
+    // Node post processing
+    match type_.clone() {
+        // Functions get their names from their name_traversal & a special return node
+        NodeType::Function { name_traversal } => {
+            let id_node = name_traversal.get_descendent(cpg, &cpg_node_id);
+            if let Some(id_node) = id_node {
+                let name = cpg.get_node_source(&id_node);
 
-            let n = cpg
-                .get_node_by_id_mut(&id)
-                .and_then(|f| f.properties.insert("name".to_string(), name));
-            debug!("[TRANSLATE] Node found: {:?} {:?}", node.kind(), n);
+                let n = cpg
+                    .get_node_by_id_mut(&cpg_node_id)
+                    .and_then(|f| f.properties.insert("name".to_string(), name));
 
-            cpg.get_node_by_id_mut(&id)
-                .and_then(|n| n.update_type(type_.clone()));
+                debug!(
+                    "[TRANSLATE] Function node name found: {:?} {:?}",
+                    node.kind(),
+                    n
+                );
+            }
+
+            // Add a CF Function Return to the function
+            if let Some((s, e)) = cpg.get_node_offsets_by_id(&cpg_node_id) {
+                let fn_end = cpg.add_node(
+                    Node {
+                        type_: NodeType::FunctionReturn,
+                        properties: HashMap::new(),
+                    },
+                    s,
+                    e,
+                );
+
+                cpg.add_edge(Edge {
+                    from: cpg_node_id,
+                    to: fn_end,
+                    type_: EdgeType::ControlFlowFunctionReturn,
+                    properties: HashMap::new(),
+                });
+            }
         }
 
-        // Add a CF Function Return to the function
-        if let Some((s, e)) = cpg.get_node_offsets_by_id(&id) {
-            let fn_end = cpg.add_node(
-                Node {
-                    type_: NodeType::FunctionReturn,
-                    properties: HashMap::new(),
-                },
-                s,
-                e,
-            );
+        // Statements and Expressions get their reads and writes tracked
+        NodeType::Statement | NodeType::Expression => {
+            let mut assigned = vec![];
+            let mut read = vec![];
 
-            cpg.add_edge(Edge {
-                from: id,
-                to: fn_end,
-                type_: EdgeType::ControlFlowFunctionReturn,
-                properties: HashMap::new(),
+            let children = cpg.ordered_syntax_children(cpg_node_id);
+            for child in children {
+                if let Some(child_node) = cpg.get_node_by_id(&child) {
+                    if let NodeType::Identifier { type_: iden_type } = child_node.type_.clone() {
+                        match iden_type {
+                            IdenType::WRITE => {
+                                assigned.push(
+                                    child_node
+                                        .properties
+                                        .get("name")
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                );
+                            }
+                            IdenType::READ => {
+                                read.push(
+                                    child_node
+                                        .properties
+                                        .get("name")
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                );
+                            }
+                            IdenType::UNKNOWN => {
+                                assigned.push(
+                                    child_node
+                                        .properties
+                                        .get("name")
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                );
+                                read.push(
+                                    child_node
+                                        .properties
+                                        .get("name")
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Clean up
+            assigned = assigned.into_iter().filter(|s| !s.is_empty()).collect();
+            read = read.into_iter().filter(|s| !s.is_empty()).collect();
+
+            cpg.get_node_by_id_mut(&cpg_node_id).and_then(|n| {
+                n.properties
+                    .insert("assigned_vars".to_string(), assigned.join(","));
+                n.properties.insert("read_vars".to_string(), read.join(","));
+                Some(())
             });
         }
-    };
-    if matches!(type_.clone(), NodeType::Statement | NodeType::Expression) {
-        // Check if it is a read or write and set the read_var and assigned_var properties respectively by finding the appropriate identifier descendant
-        // TODO
+
+        // Identifiers get their name
+        NodeType::Identifier { .. } => {
+            if cpg
+                .get_node_by_id(&cpg_node_id)
+                .and_then(|n| n.properties.get("name"))
+                .is_none()
+            {
+                let iden_name = cpg.get_node_source(&cpg_node_id).clone();
+                cpg.get_node_by_id_mut(&cpg_node_id).and_then(|n| {
+                    n.properties.insert("name".to_string(), iden_name);
+                    Some(())
+                });
+            }
+        }
+
+        _ => {}
     }
 
-    Ok(id)
+    Ok(cpg_node_id)
 }
 
 // -- Helpers -- //
@@ -666,6 +732,8 @@ fn process_sequential_statements(
 /// Idempotent computation of the data dependence for a subtree in the CPG.
 /// This pass assumes that the control flow has already been computed.
 pub fn data_dep_pass(_cpg: &mut Cpg, _subtree_root: NodeId) -> Result<(), String> {
+    debug!("[DATA DEPENDENCE] Starting data dependence pass");
+
     let cpg = _cpg;
     let root = _subtree_root;
 
@@ -691,11 +759,11 @@ pub fn data_dep_pass(_cpg: &mut Cpg, _subtree_root: NodeId) -> Result<(), String
             None => continue,
         };
         // Check for variable write (assignment)
-        if let Some(var) = node.properties.get("assigned_var") {
+        if let Some(var) = node.properties.get("assigned_vars") {
             last_write.insert(var.clone(), nid);
         }
         // Check for variable read
-        if let Some(var) = node.properties.get("read_var") {
+        if let Some(var) = node.properties.get("read_vars") {
             if let Some(&def_id) = last_write.get(var) {
                 cpg.add_edge(crate::cpg::Edge {
                     from: def_id,
@@ -706,6 +774,9 @@ pub fn data_dep_pass(_cpg: &mut Cpg, _subtree_root: NodeId) -> Result<(), String
             }
         }
     }
+
+    debug!("[DATA DEPENDENCE] Data dependence pass completed");
+
     Ok(())
 }
 
