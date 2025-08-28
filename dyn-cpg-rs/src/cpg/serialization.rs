@@ -28,6 +28,12 @@ pub struct DotSerializer {
     visited: HashSet<NodeId>,
 }
 
+impl Default for DotSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DotSerializer {
     pub fn new() -> Self {
         Self {
@@ -49,7 +55,7 @@ impl DotSerializer {
         }
         let node = cpg
             .get_node_by_id(&id)
-            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
+            .ok_or(SerializationError::NodeNotFound(id))?;
         let id_str = id.as_str();
         let pos = cpg
             .spatial_index
@@ -147,6 +153,12 @@ pub struct SexpSerializer {
     include_common_props: bool,
 }
 
+impl Default for SexpSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SexpSerializer {
     pub fn new() -> Self {
         Self {
@@ -158,7 +170,7 @@ impl SexpSerializer {
     fn on_node_enter(&mut self, cpg: &Cpg, id: NodeId) -> Result<(), SerializationError> {
         let node = cpg
             .get_node_by_id(&id)
-            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
+            .ok_or(SerializationError::NodeNotFound(id))?;
         write!(self.buf, "({} :id \"{}\"", node.type_.label(), id.as_str())?;
 
         if self.include_common_props {
@@ -183,7 +195,7 @@ impl SexpSerializer {
     fn on_loop_enter(&mut self, cpg: &Cpg, id: NodeId) -> Result<(), SerializationError> {
         let node = cpg
             .get_node_by_id(&id)
-            .ok_or_else(|| SerializationError::NodeNotFound(id))?;
+            .ok_or(SerializationError::NodeNotFound(id))?;
         write!(
             self.buf,
             "{} [visited \"{}\"]",

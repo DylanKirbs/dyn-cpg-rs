@@ -662,11 +662,11 @@ mod tests {
 
             if start == end {
                 // Zero-width ranges should NOT be found (they don't overlap with anything)
-                prop_assert!(!overlapping.contains(&&node_ids[i]),
+                prop_assert!(!overlapping.contains(&node_ids[i]),
                     "Zero-width range ({}, {}) should NOT be found in spatial index", start, end);
             } else {
                 // Non-zero-width ranges should be found
-                prop_assert!(overlapping.contains(&&node_ids[i]),
+                prop_assert!(overlapping.contains(&node_ids[i]),
                     "Node {} with range ({}, {}) should be found in spatial index", i, start, end);
             }
         }
@@ -694,7 +694,7 @@ mod tests {
             let (start, end) = ranges[i];
             let (start, end) = if start <= end { (start, end) } else { (end, start) };
             let overlapping = cpg.spatial_index.get_nodes_covering_range(start, end);
-            prop_assert!(!overlapping.contains(&&node_id),
+            prop_assert!(!overlapping.contains(&node_id),
                 "Removed node {} should not be found in spatial index", i);
         }
     }

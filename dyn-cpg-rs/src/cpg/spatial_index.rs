@@ -286,8 +286,8 @@ mod tests {
 
         let overlapping = cpg.spatial_index.get_nodes_covering_range(8, 12);
         assert_eq!(overlapping.len(), 2);
-        assert!(overlapping.contains(&&node_id1));
-        assert!(overlapping.contains(&&node_id2));
+        assert!(overlapping.contains(&node_id1));
+        assert!(overlapping.contains(&node_id2));
 
         let non_overlapping = cpg.spatial_index.get_nodes_covering_range(21, 25);
         assert!(non_overlapping.is_empty());
@@ -295,7 +295,7 @@ mod tests {
         cpg.spatial_index.delete(node_id2);
         let after_removal = cpg.spatial_index.get_nodes_covering_range(8, 12);
         assert_eq!(after_removal.len(), 1);
-        assert!(after_removal.contains(&&node_id1));
+        assert!(after_removal.contains(&node_id1));
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
         let exact_match = cpg.spatial_index.get_nodes_covering_range(0, 10);
         // Note: The spatial index includes the first node added (root), so count should be 2
         assert_eq!(exact_match.len(), 2);
-        assert!(exact_match.contains(&&node_id2));
+        assert!(exact_match.contains(&node_id2));
 
         // Test adjacent ranges
         let _node_id3 = cpg.add_node(create_test_node(NodeType::Statement, None), 10, 20);

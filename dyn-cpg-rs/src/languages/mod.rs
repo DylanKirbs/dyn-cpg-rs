@@ -316,29 +316,28 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
             }
 
             // Clean up
-            assigned = assigned.into_iter().filter(|s| !s.is_empty()).collect();
-            read = read.into_iter().filter(|s| !s.is_empty()).collect();
+            assigned.retain(|s| !s.is_empty());
+            read.retain(|s| !s.is_empty());
 
-            cpg.get_node_by_id_mut(&cpg_node_id).and_then(|n| {
+            if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
                 n.properties
                     .insert("assigned_vars".to_string(), assigned.join(","));
                 n.properties.insert("read_vars".to_string(), read.join(","));
-                Some(())
-            });
+            }
         }
 
         // Identifiers get their name
         NodeType::Identifier { .. } => {
             if cpg
                 .get_node_by_id(&cpg_node_id)
-                .and_then(|n| n.properties.get("name"))
+                .map(|n| n.properties.get("name"))
+                .flatten()
                 .is_none()
             {
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
-                cpg.get_node_by_id_mut(&cpg_node_id).and_then(|n| {
+                if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
                     n.properties.insert("name".to_string(), iden_name);
-                    Some(())
-                });
+                }
             }
         }
 
