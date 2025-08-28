@@ -31,5 +31,4 @@
 
 ## Known Issues
 
-- Control flow pass is not perfect, sometimes the incremental updates do not reflect the same control flow as the full reparses
-- Data flow pass is not implemented yet
+- Control flow pass is not perfect, I can't handle switch statements and break/continue

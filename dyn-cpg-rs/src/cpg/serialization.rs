@@ -171,7 +171,7 @@ impl SexpSerializer {
         let node = cpg
             .get_node_by_id(&id)
             .ok_or(SerializationError::NodeNotFound(id))?;
-        write!(self.buf, "({} :id \"{}\"", node.type_.label(), id.as_str())?;
+        write!(self.buf, "({} :id {}", node.type_.label(), id.as_str())?;
 
         if self.include_common_props {
             let name = node.properties.get("name").map(String::as_str);
@@ -196,12 +196,7 @@ impl SexpSerializer {
         let node = cpg
             .get_node_by_id(&id)
             .ok_or(SerializationError::NodeNotFound(id))?;
-        write!(
-            self.buf,
-            "{} [visited \"{}\"]",
-            node.type_.label(),
-            id.as_str()
-        )?;
+        write!(self.buf, "{} [visited {}]", node.type_.label(), id.as_str())?;
         Ok(())
     }
 
@@ -348,6 +343,7 @@ impl EdgeType {
         format!("{:?}", self)
             .replace("EdgeType::", "")
             .replace('_', " ")
+            .replace('"', "'")
     }
 }
 

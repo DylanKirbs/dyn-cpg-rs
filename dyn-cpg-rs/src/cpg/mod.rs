@@ -245,6 +245,27 @@ impl Cpg {
 
         ordered
     }
+
+    /// Get all of the Syntax Children, Grandchildren, etc. of a node, ordered by their SyntaxSibling edges (DFS)
+    /// (i.e. in the order they appear in the source code)
+    pub fn post_dfs_ordered_syntax_descendants(&self, root: NodeId) -> Vec<NodeId> {
+        let mut result = Vec::new();
+        let mut stack = vec![(root, false)];
+
+        while let Some((node, visited)) = stack.pop() {
+            if visited {
+                result.push(node);
+            } else {
+                stack.push((node, true));
+                let children = self.ordered_syntax_children(node);
+                for &child in children.iter().rev() {
+                    stack.push((child, false));
+                }
+            }
+        }
+
+        result
+    }
 }
 
 // --- Tests --- //
