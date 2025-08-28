@@ -670,10 +670,10 @@ fn compute_control_flow_postorder(
                     .map(|e| e.to)
                     .collect();
                 for target in targets {
-                    add_control_flow_edge(cpg, node_id, target, EdgeType::ControlFlowEpsilon).ok();
+                    add_control_flow_edge(cpg, node_id, target, EdgeType::ControlFlowEpsilon)?;
                 }
             }
-            // Return statements don't have exit points (they terminate)
+            // Return statements don't have exit points (they terminate) [OR DO THEY? VSauce]
             Ok(vec![])
         }
 
@@ -682,12 +682,9 @@ fn compute_control_flow_postorder(
             let mut exits = Vec::new();
 
             if !statement_children.is_empty() {
-                add_control_flow_edge(
-                    cpg,
-                    node_id,
-                    statement_children[0],
-                    EdgeType::ControlFlowEpsilon,
-                )?;
+                // Find where execution actually starts (leftmost descendant of first child)
+                let execution_start = find_execution_entry_point(cpg, statement_children[0]);
+                add_control_flow_edge(cpg, node_id, execution_start, EdgeType::ControlFlowEpsilon)?;
                 exits = process_sequential_statements(cpg, &statement_children, Some(node_id))?;
             } else {
                 exits.push(node_id);
@@ -713,22 +710,17 @@ fn compute_control_flow_postorder(
         _ if should_descend(&node.type_) => {
             let statement_children = get_descent_children(cpg, node_id);
             if !statement_children.is_empty() {
-                // NEW: connect parent node to first child
-                add_control_flow_edge(
-                    cpg,
-                    node_id,
-                    statement_children[0],
-                    EdgeType::ControlFlowEpsilon,
-                )?;
-
-                // Chain children in sequence
                 let exits =
                     process_sequential_statements(cpg, &statement_children, parent_function)?;
-                return Ok(exits);
-            }
 
-            // No children, node itself is an exit
-            Ok(vec![node_id])
+                for &exit in &exits {
+                    add_control_flow_edge(cpg, exit, node_id, EdgeType::ControlFlowEpsilon)?;
+                }
+
+                Ok(vec![node_id])
+            } else {
+                Ok(vec![node_id])
+            }
         }
 
         _ => {
@@ -754,31 +746,32 @@ fn process_sequential_statements(
         return Ok(vec![]);
     }
 
-    let mut current_exits = vec![];
+    let mut prev_exits = compute_control_flow_postorder(cpg, statements[0], parent_function)?;
 
-    for &stmt in statements.iter() {
-        // Connect previous exits to this statement
-        for &prev_exit in &current_exits {
-            add_control_flow_edge(cpg, prev_exit, stmt, EdgeType::ControlFlowEpsilon)?;
+    for window in statements.windows(2) {
+        let next_sibling = window[1];
+
+        // Find where execution actually starts in the next sibling
+        let next_entry = find_execution_entry_point(cpg, next_sibling);
+
+        for &exit in &prev_exits {
+            add_control_flow_edge(cpg, exit, next_entry, EdgeType::ControlFlowEpsilon)?;
         }
-
-        // Process this statement
-        let stmt_exits = compute_control_flow_postorder(cpg, stmt, parent_function)?;
-
-        // If this statement has no exits (e.g., return), stop processing
-        if stmt_exits.is_empty() {
-            debug!(
-                "[CONTROL FLOW] Statement {:?} has no exits (unreachable code follows)",
-                stmt
-            );
-            return Ok(vec![]);
-        }
-        // TODO: Potentially patch up links to the function return here?
-
-        current_exits = stmt_exits;
+        prev_exits = compute_control_flow_postorder(cpg, next_sibling, parent_function)?;
     }
 
-    Ok(current_exits)
+    Ok(prev_exits)
+}
+
+fn find_execution_entry_point(cpg: &Cpg, node_id: NodeId) -> NodeId {
+    let children = get_descent_children(cpg, node_id);
+    if !children.is_empty() {
+        // Execution starts at the first child
+        find_execution_entry_point(cpg, children[0])
+    } else {
+        // No processable children, execution starts at this node
+        node_id
+    }
 }
 
 /// Idempotent computation of the data dependence for a subtree in the CPG.
