@@ -17,12 +17,15 @@ impl Cpg {
         edits: Vec<SourceEdit>,
         changed_ranges: impl ExactSizeIterator<Item = tree_sitter::Range>,
         new_tree: &tree_sitter::Tree,
+        new_source: Vec<u8>,
     ) {
         debug!(
             "[INCREMENTAL UPDATE] Update with {} edits and {} changed ranges",
             edits.len(),
             changed_ranges.len()
         );
+
+        self.set_source(new_source);
 
         let mut dirty_nodes = HashMap::new();
         for range in changed_ranges {
