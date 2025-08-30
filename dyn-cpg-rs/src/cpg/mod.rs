@@ -137,6 +137,11 @@ impl Cpg {
         &self.source
     }
 
+    /// Update the source code for the CPG
+    pub fn set_source(&mut self, source: Vec<u8>) {
+        self.source = source;
+    }
+
     /// Get the number of nodes in the CPG
     pub fn node_count(&self) -> usize {
         self.nodes.len()
@@ -165,6 +170,20 @@ impl Cpg {
         self.incoming.entry(edge.to).or_default().push(id);
         self.outgoing.entry(edge.from).or_default().push(id);
         id
+    }
+
+    pub fn remove_edge(&mut self, edge: EdgeId) -> Option<Edge> {
+        if let Some(e) = self.edges.remove(edge) {
+            if let Some(in_edges) = self.incoming.get_mut(&e.to) {
+                in_edges.retain(|&e| e != edge);
+            }
+            if let Some(out_edges) = self.outgoing.get_mut(&e.from) {
+                out_edges.retain(|&e| e != edge);
+            }
+            Some(e)
+        } else {
+            None
+        }
     }
 
     pub fn get_node_by_id(&self, id: &NodeId) -> Option<&Node> {

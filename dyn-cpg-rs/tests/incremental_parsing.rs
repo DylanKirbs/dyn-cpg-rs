@@ -65,7 +65,7 @@ fn test_incremental_reparse() {
 
     // Perform the incremental update
     let start = std::time::Instant::now();
-    cpg.incremental_update(edits, changed_ranges, &new_tree);
+    cpg.incremental_update(edits, changed_ranges, &new_tree, new_src.clone());
     debug!(
         "Incremental CPG update took {} ms",
         start.elapsed().as_millis()
@@ -86,7 +86,7 @@ fn test_incremental_reparse() {
     match diff {
         DetailedComparisonResult::Equivalent => {}
         _ => panic!(
-            "CPGs should be semantically equivalent, but found differences: {:?}",
+            "CPGs should be semantically equivalent, but found differences: {}",
             diff
         ),
     }
@@ -139,7 +139,7 @@ fn test_incremental_reparse_perf() {
     let start = std::time::Instant::now();
     let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
         .expect("Failed to incrementally parse new file");
-    println!(
+    debug!(
         "Incremental file parse took {} ms",
         start.elapsed().as_millis()
     );
@@ -153,7 +153,7 @@ fn test_incremental_reparse_perf() {
     let mut cpg = lang
         .cst_to_cpg(old_tree, new_src.clone())
         .expect("Failed to convert old tree to CPG");
-    println!(
+    debug!(
         "Initial CPG creation took {} ms",
         start.elapsed().as_millis()
     );
@@ -164,8 +164,8 @@ fn test_incremental_reparse_perf() {
 
     // Perform the incremental update
     let start = std::time::Instant::now();
-    cpg.incremental_update(edits, changed_ranges, &new_tree);
-    println!(
+    cpg.incremental_update(edits, changed_ranges, &new_tree, new_src.clone());
+    debug!(
         "Incremental CPG update took {} ms",
         start.elapsed().as_millis()
     );
@@ -175,7 +175,7 @@ fn test_incremental_reparse_perf() {
     let new_cpg = lang
         .cst_to_cpg(new_tree, new_src)
         .expect("Failed to convert new tree to CPG");
-    println!(
+    debug!(
         "Reference CPG creation took {} ms",
         start.elapsed().as_millis()
     );
@@ -185,7 +185,7 @@ fn test_incremental_reparse_perf() {
     match diff {
         DetailedComparisonResult::Equivalent => {}
         _ => panic!(
-            "CPGs should be semantically equivalent, but found differences: {:?}",
+            "CPGs should be semantically equivalent, but found differences: {}",
             diff
         ),
     }
@@ -235,7 +235,7 @@ fn test_multiple_incremental_updates() {
         .expect("Failed to parse second source");
 
     let changed_ranges1 = tree.changed_ranges(&new_tree1);
-    cpg.incremental_update(edits1, changed_ranges1, &new_tree1);
+    cpg.incremental_update(edits1, changed_ranges1, &new_tree1, source2.to_vec());
     tree = new_tree1;
 
     // Second incremental update
@@ -243,7 +243,7 @@ fn test_multiple_incremental_updates() {
         .expect("Failed to parse third source");
 
     let changed_ranges2 = tree.changed_ranges(&new_tree2);
-    cpg.incremental_update(edits2, changed_ranges2, &new_tree2);
+    cpg.incremental_update(edits2, changed_ranges2, &new_tree2, source3.to_vec());
 
     // Verify final result
     let reference_cpg = lang
@@ -265,7 +265,7 @@ fn test_multiple_incremental_updates() {
     let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
     assert!(
         matches!(diff, DetailedComparisonResult::Equivalent),
-        "Final CPG should match reference after multiple updates: {:?}",
+        "Final CPG should match reference after multiple updates: {}",
         diff
     );
 }
@@ -290,7 +290,7 @@ fn test_incremental_edge_cases() {
                 .expect("Failed to parse simple source");
 
         let changed_ranges = tree.changed_ranges(&new_tree);
-        cpg.incremental_update(edits, changed_ranges, &new_tree);
+        cpg.incremental_update(edits, changed_ranges, &new_tree, simple_source.to_vec());
 
         let reference_cpg = lang
             .cst_to_cpg(new_tree, simple_source.to_vec())
@@ -299,7 +299,7 @@ fn test_incremental_edge_cases() {
         let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
         assert!(
             matches!(diff, DetailedComparisonResult::Equivalent),
-            "Empty to non-empty should work: {:?}",
+            "Empty to non-empty should work: {}",
             diff
         );
     }
@@ -344,7 +344,7 @@ proptest! {
 
         // Apply incremental update
         let changed_ranges = old_tree.changed_ranges(&new_tree);
-        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_bytes.to_vec());
 
         // Property: Incremental update should produce equivalent result
         let comparison = incremental_cpg.compare(&reference_cpg);
@@ -401,7 +401,7 @@ proptest! {
         let reference_cpg = new_cpg_result.unwrap();
 
         let changed_ranges = old_tree.changed_ranges(&new_tree);
-        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_bytes.to_vec());
 
         // Property: Whitespace-only changes should still produce equivalent CPGs
         let comparison = incremental_cpg.compare(&reference_cpg);
@@ -455,7 +455,7 @@ proptest! {
         let reference_cpg = new_cpg_result.unwrap();
 
         let changed_ranges = old_tree.changed_ranges(&new_tree);
-        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_bytes.to_vec());
 
         // Property: Statement insertion should be handled correctly
         let comparison = incremental_cpg.compare(&reference_cpg);
@@ -532,7 +532,7 @@ proptest! {
             "Should have changed ranges when there are edits"
         );
 
-        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree);
+        incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_bytes.to_vec());
 
         let comparison = incremental_cpg.compare(&reference_cpg);
         prop_assert!(comparison.is_ok(), "CPG comparison should not fail");
