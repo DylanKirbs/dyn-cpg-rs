@@ -100,7 +100,7 @@ fn test_incr_reparse() {
         .expect("Failed to convert old tree to CPG");
 
     // Perform the incremental update
-    cpg.incremental_update(edits, changed_ranges, &new_tree, new_src.clone());
+    cpg.incremental_update(edits, changed_ranges, &new_tree);
 
     // Compute the reference CPG
     let new_cpg = lang
@@ -111,7 +111,7 @@ fn test_incr_reparse() {
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     assert!(
         matches!(diff, DetailedComparisonResult::Equivalent),
-        "CPGs should be semantically equivalent, but found differences: {}",
+        "CPGs should be semantically equivalent, but found differences: {:?}",
         diff
     );
 

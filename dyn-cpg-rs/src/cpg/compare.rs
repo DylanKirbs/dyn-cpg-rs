@@ -21,31 +21,6 @@ pub enum DetailedComparisonResult {
     },
 }
 
-impl std::fmt::Display for DetailedComparisonResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DetailedComparisonResult::Equivalent => write!(f, "CPGs are equivalent"),
-            DetailedComparisonResult::StructuralMismatch {
-                only_in_left,
-                only_in_right,
-                function_mismatches,
-            } => {
-                writeln!(f, "CPGs have structural differences:")?;
-                if !only_in_left.is_empty() {
-                    writeln!(f, "  Functions only in left: {:?}", only_in_left)?;
-                }
-                if !only_in_right.is_empty() {
-                    writeln!(f, "  Functions only in right: {:?}", only_in_right)?;
-                }
-                for mismatch in function_mismatches {
-                    writeln!(f, "  Function mismatch: {}", mismatch)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
 /// Result of comparing a single function between two CPGs
 #[derive(Debug, Clone, PartialEq)]
 pub enum FunctionComparisonResult {
@@ -62,49 +37,6 @@ pub enum FunctionComparisonResult {
         /// Sexp diff
         sexp_diff: String,
     },
-}
-
-impl std::fmt::Display for FunctionComparisonResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FunctionComparisonResult::Equivalent => write!(f, "Function is equivalent"),
-            FunctionComparisonResult::Mismatch {
-                function_name,
-                details,
-                source_diff,
-                sexp_diff,
-            } => {
-                let max_diff_size = 512;
-
-                let mut source = source_diff.clone();
-                let mut sexp = sexp_diff.clone();
-
-                source.truncate(max_diff_size);
-                sexp.truncate(max_diff_size);
-
-                if source_diff.len() > max_diff_size {
-                    source.push_str("\n... (truncated)");
-                }
-                if sexp_diff.len() > max_diff_size {
-                    sexp.push_str("\n... (truncated)");
-                }
-
-                writeln!(f, "Function '{}' has differences:", function_name)?;
-                writeln!(f, "  Details: {}", details)?;
-                writeln!(
-                    f,
-                    "  Source Diff:\n    {}",
-                    source.replace("\n", "\n    ").trim()
-                )?;
-                writeln!(
-                    f,
-                    "  Sexp Diff:\n    {}",
-                    sexp.replace("\n", "\n    ").trim()
-                )?;
-                Ok(())
-            }
-        }
-    }
 }
 
 // --- Helper Functions --- //

@@ -265,5 +265,5 @@ fn debug_tree_sitter_parsing() {
     }
 
     let result = cpg1.compare(&cpg2).expect("Failed to compare CPGs");
-    println!("Comparison result: {}", result);
+    println!("Comparison result: {:?}", result);
 }

@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use dyn_cpg_rs::{
     cpg::{Cpg, DetailedComparisonResult},
-    diff::{SourceEdit, incremental_parse},
+    diff::{incremental_parse, SourceEdit},
     languages::RegisteredLanguage,
     resource::Resource,
 };
@@ -245,7 +245,7 @@ fn perform_incremental_parse(
     // Step 3: Update CPG incrementally
     let cpg_update_start = Instant::now();
     let changed_ranges = prev_tree.changed_ranges(&new_tree);
-    prev_cpg.incremental_update(edits.clone(), changed_ranges, &new_tree, new_src.to_vec());
+    prev_cpg.incremental_update(edits.clone(), changed_ranges, &new_tree);
     timings.cpg_incremental_update_time_ms = Some(cpg_update_start.elapsed().as_millis());
 
     Ok((prev_cpg, timings, edits))
@@ -462,7 +462,8 @@ fn walk_git_history_and_benchmark(
                                     json!(incremental_cpg.node_count());
                                 file_result["incremental_edges"] =
                                     json!(incremental_cpg.edge_count());
-                                file_result["comparison_result"] = json!(format!("{}", comparison));
+                                file_result["comparison_result"] =
+                                    json!(format!("{:?}", comparison));
 
                                 // Legacy fields
                                 file_result["incremental_parse_time_ms"] =
@@ -490,7 +491,7 @@ fn walk_git_history_and_benchmark(
                                 file_result["file_metrics"] = file_metrics.to_json();
 
                                 if !matches!(comparison, DetailedComparisonResult::Equivalent) {
-                                    warn!("CPG mismatch in {}: {}", file_path, comparison);
+                                    warn!("CPG mismatch in {}: {:?}", file_path, comparison);
                                 }
                             }
                             Err(e) => {
