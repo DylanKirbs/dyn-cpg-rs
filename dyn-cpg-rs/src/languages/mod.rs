@@ -168,30 +168,8 @@ pub fn cst_to_cpg(
 }
 
 pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<NodeId, String> {
-    let node = cursor.node();
-    let source_len = cpg.get_source().len();
-
-    // Validate node range is within source bounds
-    if node.start_byte() > source_len || node.end_byte() > source_len {
-        return Err(format!(
-            "Node range ({}, {}) exceeds source length {}",
-            node.start_byte(),
-            node.end_byte(),
-            source_len
-        ));
-    }
-
-    let type_ = cpg.get_language().clone().map_node_kind(node.kind());
-
-    let mut cpg_node = Node {
-        type_: type_.clone(),
-        properties: HashMap::new(),
-    };
-    cpg_node
-        .properties
-        .insert("raw_kind".to_string(), node.kind().to_string());
-
-    let cpg_node_id = cpg.add_node(cpg_node, node.start_byte(), node.end_byte());
+    let cst_node = cursor.node();
+    let (cpg_node_id, cpg_node_type) = pre_translate_node(cpg, &cst_node)?;
 
     if cursor.goto_first_child() {
         let mut left_child_id: Option<NodeId> = None;
@@ -227,8 +205,49 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         cursor.goto_parent();
     }
 
-    // Node post processing
-    match type_.clone() {
+    post_translate_node(cpg, cpg_node_type, cpg_node_id, &cst_node);
+
+    Ok(cpg_node_id)
+}
+
+pub fn pre_translate_node(
+    cpg: &mut Cpg,
+    cst_node: &tree_sitter::Node,
+) -> Result<(NodeId, NodeType), String> {
+    let source_len = cpg.get_source().len();
+
+    // Validate node range is within source bounds
+    if cst_node.start_byte() > source_len || cst_node.end_byte() > source_len {
+        return Err(format!(
+            "Node range ({}, {}) exceeds source length {}",
+            cst_node.start_byte(),
+            cst_node.end_byte(),
+            source_len
+        ));
+    }
+
+    let type_ = cpg.get_language().clone().map_node_kind(cst_node.kind());
+
+    let mut cpg_node = Node {
+        type_: type_.clone(),
+        properties: HashMap::new(),
+    };
+    cpg_node
+        .properties
+        .insert("raw_kind".to_string(), cst_node.kind().to_string());
+
+    let cpg_node_id = cpg.add_node(cpg_node, cst_node.start_byte(), cst_node.end_byte());
+
+    Ok((cpg_node_id, type_))
+}
+
+pub fn post_translate_node(
+    cpg: &mut Cpg,
+    type_: NodeType,
+    cpg_node_id: NodeId,
+    cst_node: &tree_sitter::Node,
+) {
+    match type_ {
         // Functions get their names from their name_traversal & a special return node
         NodeType::Function { name_traversal } => {
             let id_node = name_traversal.get_descendent(cpg, &cpg_node_id);
@@ -240,8 +259,8 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
                     .and_then(|f| f.properties.insert("name".to_string(), name));
 
                 debug!(
-                    "[TRANSLATE] Function node name found: {:?} {:?}",
-                    node.kind(),
+                    "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
+                    cst_node.kind(),
                     n
                 );
             }
@@ -269,8 +288,8 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
         // Statements and Expressions get their reads and writes tracked
         NodeType::Statement | NodeType::Expression | NodeType::Return => {
             debug!(
-                "[TRANSLATE] Tracking reads and writes for: {:?} {:?}",
-                node.kind(),
+                "[POST TRANSLATE NODE] Tracking reads and writes for: {:?} {:?}",
+                cst_node.kind(),
                 cpg_node_id
             );
             let mut assigned = vec![];
@@ -348,8 +367,8 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
 
                 debug!(
-                    "[TRANSLATE] Identifier node name found: {:?} {:?}",
-                    node.kind(),
+                    "[POST TRANSLATE NODE] Identifier node name found: {:?} {:?}",
+                    cst_node.kind(),
                     iden_name
                 );
 
@@ -361,8 +380,6 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
 
         _ => {}
     }
-
-    Ok(cpg_node_id)
 }
 
 // -- Helpers -- //
