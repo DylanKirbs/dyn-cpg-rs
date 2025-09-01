@@ -949,9 +949,23 @@ impl Cpg {
             if let Some((start, end)) = node_span {
                 // Special case: if this is the root node, use the root of the new tree
                 let cst_node = if self.root.map_or(false, |root| root == *id) {
-                    debug!("[INCREMENTAL UPDATE] Using new tree root for CPG root node {:?}", id);
+                    debug!(
+                        "[INCREMENTAL UPDATE] Using new tree root for CPG root node {:?}",
+                        id
+                    );
                     new_tree.root_node()
-                } else if let Some(cst_node) = new_tree.root_node().descendant_for_byte_range(start, end) {
+                } else if let Some(cst_node) =
+                    new_tree.root_node().descendant_for_byte_range(start, end)
+                {
+                    debug!(
+                        "[INCREMENTAL UPDATE] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
+                        id,
+                        start,
+                        end,
+                        cst_node.kind(),
+                        cst_node.start_byte(),
+                        cst_node.end_byte()
+                    );
                     cst_node
                 } else {
                     warn!(
@@ -960,7 +974,7 @@ impl Cpg {
                     );
                     continue;
                 };
-                
+
                 update_plan.push((*id, cst_node));
             } else {
                 warn!("[INCREMENTAL UPDATE] No span found for CPG node {:?}", id);
@@ -1143,7 +1157,26 @@ impl Cpg {
                         let cst_kind = cst_child.kind().to_string();
 
                         if cpg_kind == cst_kind {
+                            debug!(
+                                "[SURGICAL UPDATE] Recursing into child {:?} of type {}",
+                                child_id, cpg_kind
+                            );
                             self.update_in_place_pairwise(child_id, cst_child);
+
+                            // Re-run post-translation for the child node to update its semantic properties
+                            let child_type = self.get_node_by_id(&child_id).unwrap().type_.clone();
+                            debug!(
+                                "[SURGICAL UPDATE] Calling post-translation for child {:?}",
+                                child_id
+                            );
+                            crate::languages::post_translate_node(
+                                self, child_type, child_id, cst_child,
+                            );
+                        } else {
+                            debug!(
+                                "[SURGICAL UPDATE] Skipping child {:?} - kind mismatch: cpg={}, cst={}",
+                                child_id, cpg_kind, cst_kind
+                            );
                         }
                     }
                     cst_child_index += 1;

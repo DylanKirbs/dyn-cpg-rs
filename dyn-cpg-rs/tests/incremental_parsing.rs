@@ -407,7 +407,12 @@ fn test_incremental_edge_cases() {
             println!("{:?}", range);
         }
 
-        cpg.incremental_update(edits, changed_ranges.into_iter(), &new_tree, simple_source.to_vec());
+        cpg.incremental_update(
+            edits,
+            changed_ranges.into_iter(),
+            &new_tree,
+            simple_source.to_vec(),
+        );
 
         println!("=== INCREMENTAL CPG ===");
         println!("Nodes: {}", cpg.node_count());
@@ -430,7 +435,7 @@ fn test_incremental_edge_cases() {
         }
 
         let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
-        
+
         // For now, let's see what the structural difference is and fix it
         // This test helps us understand the problem better
         match diff {
@@ -438,10 +443,12 @@ fn test_incremental_edge_cases() {
             _ => {
                 println!("=== STRUCTURAL DIFFERENCES ===");
                 println!("{}", diff);
-                
+
                 // This test is currently expected to fail until we fix the empty-to-non-empty case
                 // The issue is that we end up with a standalone Type node instead of a proper TranslationUnit
-                println!("Expected failure: incremental update from empty doesn't create proper root structure");
+                println!(
+                    "Expected failure: incremental update from empty doesn't create proper root structure"
+                );
             }
         }
     }
@@ -468,34 +475,43 @@ fn test_empty_to_non_empty_root_structure() {
                 .expect("Failed to parse simple source");
 
         let changed_ranges: Vec<_> = tree.changed_ranges(&new_tree).collect();
-        
+
         // The core issue: when we have an empty CPG and try to incrementally update it,
         // we need to handle the case where we're essentially creating the entire structure from scratch
-        
+
         // Check what type of CST node we're dealing with
         let new_cst_root = new_tree.root_node();
-        println!("New CST root: kind={}, text={:?}", 
-                new_cst_root.kind(), 
-                &simple_source[new_cst_root.start_byte()..new_cst_root.end_byte()]);
-        
+        println!(
+            "New CST root: kind={}, text={:?}",
+            new_cst_root.kind(),
+            &simple_source[new_cst_root.start_byte()..new_cst_root.end_byte()]
+        );
+
         // The new tree should be a translation_unit containing a declaration
         assert_eq!(new_cst_root.kind(), "translation_unit");
-        
-        cpg.incremental_update(edits, changed_ranges.into_iter(), &new_tree, simple_source.to_vec());
+
+        cpg.incremental_update(
+            edits,
+            changed_ranges.into_iter(),
+            &new_tree,
+            simple_source.to_vec(),
+        );
 
         // After incremental update, we should have a proper TranslationUnit root
         if let Some(root_id) = cpg.get_root() {
-            let root_node = cpg.get_node_by_id(&root_id).expect("Root node should exist");
-            
+            let root_node = cpg
+                .get_node_by_id(&root_id)
+                .expect("Root node should exist");
+
             // The root should be a TranslationUnit, not a Type
             println!("Incremental CPG root: {:?}", root_node);
-            
+
             // This is the assertion that will fail until we fix the issue
             // The problem is we're creating a Type node as root instead of TranslationUnit
             match &root_node.type_ {
                 dyn_cpg_rs::cpg::node::NodeType::TranslationUnit => {
                     println!("SUCCESS: Root is correctly a TranslationUnit");
-                },
+                }
                 other => {
                     println!("PROBLEM: Root is {:?}, should be TranslationUnit", other);
                     // For debugging, let's see what we actually got
@@ -509,7 +525,7 @@ fn test_empty_to_non_empty_root_structure() {
 }
 
 /// Test case derived from failing proptest
-#[test]  
+#[test]
 fn test_function_name_change_simple() {
     dyn_cpg_rs::logging::init();
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
@@ -520,8 +536,15 @@ fn test_function_name_change_simple() {
     let new_function_name = "d";
     let return_value = 0;
 
-    let old_source = format!("int {}() {{ return {}; }}", base_function_name, return_value);
-    let new_source = format!("int {}() {{ return {}; }}", new_function_name, return_value + 1);
+    let old_source = format!(
+        "int {}() {{ return {}; }}",
+        base_function_name, return_value
+    );
+    let new_source = format!(
+        "int {}() {{ return {}; }}",
+        new_function_name,
+        return_value + 1
+    );
 
     let old_bytes = old_source.as_bytes();
     let new_bytes = new_source.as_bytes();
@@ -535,7 +558,10 @@ fn test_function_name_change_simple() {
 
     // Perform incremental parsing
     let incremental_result = incremental_parse(&mut parser, old_bytes, new_bytes, &mut old_tree);
-    assert!(incremental_result.is_ok(), "Incremental parse should succeed");
+    assert!(
+        incremental_result.is_ok(),
+        "Incremental parse should succeed"
+    );
     let (edits, new_tree) = incremental_result.unwrap();
 
     println!("=== EDITS ===");
@@ -547,7 +573,10 @@ fn test_function_name_change_simple() {
     let old_cpg_result = lang.cst_to_cpg(old_tree.clone(), old_bytes.to_vec());
     let new_cpg_result = lang.cst_to_cpg(new_tree.clone(), new_bytes.to_vec());
 
-    assert!(old_cpg_result.is_ok() && new_cpg_result.is_ok(), "CPG creation should succeed");
+    assert!(
+        old_cpg_result.is_ok() && new_cpg_result.is_ok(),
+        "CPG creation should succeed"
+    );
 
     let mut incremental_cpg = old_cpg_result.unwrap();
     let reference_cpg = new_cpg_result.unwrap();
@@ -566,7 +595,10 @@ fn test_function_name_change_simple() {
     println!("Incremental CPG nodes: {}", incremental_cpg.node_count());
     println!("Reference CPG nodes: {}", reference_cpg.node_count());
     if let Some(root) = incremental_cpg.get_root() {
-        println!("Incremental root: {:?}", incremental_cpg.get_node_by_id(&root));
+        println!(
+            "Incremental root: {:?}",
+            incremental_cpg.get_node_by_id(&root)
+        );
     }
     if let Some(root) = reference_cpg.get_root() {
         println!("Reference root: {:?}", reference_cpg.get_node_by_id(&root));
@@ -580,11 +612,13 @@ fn test_function_name_change_simple() {
     match diff {
         DetailedComparisonResult::Equivalent => {
             println!("SUCCESS: CPGs are equivalent");
-        },
+        }
         _ => {
             println!("=== COMPARISON FAILED ===");
             println!("{}", diff);
-            panic!("Incremental CPG should be equivalent to reference CPG for simple function changes");
+            panic!(
+                "Incremental CPG should be equivalent to reference CPG for simple function changes"
+            );
         }
     }
 }

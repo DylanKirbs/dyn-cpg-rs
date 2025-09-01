@@ -374,6 +374,26 @@ pub fn post_translate_node(
                 if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
                     n.properties.insert("name".to_string(), iden_name);
                 }
+            } else {
+                // Force update the name during incremental updates
+                let iden_name = cpg.get_node_source(&cpg_node_id).clone();
+                let current_name = cpg.get_node_by_id(&cpg_node_id)
+                    .and_then(|n| n.properties.get("name"))
+                    .cloned()
+                    .unwrap_or_default();
+                
+                debug!(
+                    "[POST TRANSLATE NODE] Identifier node name update: {:?} current={:?} new={:?}",
+                    cst_node.kind(),
+                    current_name,
+                    iden_name
+                );
+
+                if current_name != iden_name {
+                    if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
+                        n.properties.insert("name".to_string(), iden_name);
+                    }
+                }
             }
         }
 
