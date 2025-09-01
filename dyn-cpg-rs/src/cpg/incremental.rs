@@ -947,14 +947,21 @@ impl Cpg {
         for (id, _pos) in &dirty_nodes {
             let node_span = self.spatial_index.get_node_span(*id);
             if let Some((start, end)) = node_span {
-                if let Some(cst_node) = new_tree.root_node().descendant_for_byte_range(start, end) {
-                    update_plan.push((*id, cst_node));
+                // Special case: if this is the root node, use the root of the new tree
+                let cst_node = if self.root.map_or(false, |root| root == *id) {
+                    debug!("[INCREMENTAL UPDATE] Using new tree root for CPG root node {:?}", id);
+                    new_tree.root_node()
+                } else if let Some(cst_node) = new_tree.root_node().descendant_for_byte_range(start, end) {
+                    cst_node
                 } else {
                     warn!(
                         "[INCREMENTAL UPDATE] No CST node found for CPG node {:?} in new tree",
                         id
                     );
-                }
+                    continue;
+                };
+                
+                update_plan.push((*id, cst_node));
             } else {
                 warn!("[INCREMENTAL UPDATE] No span found for CPG node {:?}", id);
             }
@@ -1090,6 +1097,11 @@ impl Cpg {
                 }
             }
         }
+
+        // Re-run post-translation analysis to update semantic properties (like function names)
+        // This is crucial for nodes like functions whose properties depend on their children
+        let updated_type = self.get_node_by_id(&cpg_node).unwrap().type_.clone();
+        crate::languages::post_translate_node(self, updated_type, cpg_node, cst_node);
 
         // Update children with smarter matching (by kind and span)
         let cpg_children = self.ordered_syntax_children(cpg_node);
