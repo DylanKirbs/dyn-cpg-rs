@@ -2,7 +2,7 @@ use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
 use crate::{
     cpg::spatial_index::SpatialIndex,
     diff::SourceEdit,
-    languages::{cf_pass, data_dep_pass},
+    languages::{cf_pass, data_dep_pass, post_translate_node, pre_translate_node},
 };
 use std::{
     cmp::{max, min},
@@ -254,6 +254,77 @@ impl Cpg {
         (should_rebuild, metrics)
     }
 
+    /// Find a parent node that could contain a range that doesn't map to any existing node
+    /// This is useful when tree-sitter reports changed ranges for newly added structure
+    fn find_parent_node_for_range(&self, start_byte: usize, end_byte: usize) -> Option<NodeId> {
+        // Find all nodes that could potentially contain this range
+        // Look for nodes whose span starts before start_byte and could be extended to include end_byte
+        let mut candidates = Vec::new();
+
+        for (node_id, node) in &self.nodes {
+            if let Some((node_start, node_end)) = self.spatial_index.get_node_span(node_id) {
+                // Consider nodes that start before our range and could be parents
+                if node_start <= start_byte {
+                    // Calculate how much the node would need to be extended to contain the range
+                    let extension_needed = if end_byte > node_end {
+                        end_byte - node_end
+                    } else {
+                        0
+                    };
+
+                    candidates.push((node_id, node_start, node_end, extension_needed, &node.type_));
+                }
+            }
+        }
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Sort candidates by:
+        // 1. Prefer structural nodes (blocks, functions, statements)
+        // 2. Prefer nodes that need less extension
+        // 3. Prefer nodes that start closer to the range
+        candidates.sort_by(|a, b| {
+            let (_, start_a, _, ext_a, type_a) = a;
+            let (_, start_b, _, ext_b, type_b) = b;
+
+            // Assign priority weights for node types
+            let priority_a = match type_a {
+                NodeType::Block => 1,
+                NodeType::Branch { .. } => 2,
+                NodeType::Function { .. } => 3,
+                NodeType::Statement => 4,
+                _ => 10,
+            };
+
+            let priority_b = match type_b {
+                NodeType::Block => 1,
+                NodeType::Branch { .. } => 2,
+                NodeType::Function { .. } => 3,
+                NodeType::Statement => 4,
+                _ => 10,
+            };
+
+            // Compare by priority first
+            match priority_a.cmp(&priority_b) {
+                std::cmp::Ordering::Equal => {
+                    // If same priority, prefer less extension needed
+                    match ext_a.cmp(ext_b) {
+                        std::cmp::Ordering::Equal => {
+                            // If same extension, prefer closer start
+                            (start_byte - start_a).cmp(&(start_byte - start_b))
+                        }
+                        other => other,
+                    }
+                }
+                other => other,
+            }
+        });
+
+        candidates.first().map(|(node_id, _, _, _, _)| *node_id)
+    }
+
     /// Calculate the depth of a subtree
     fn calculate_subtree_depth(&self, root: NodeId) -> usize {
         let children = self.ordered_syntax_children(root);
@@ -315,7 +386,7 @@ impl Cpg {
     }
 
     /// Phase 3B: Full Rebuild - Replace subtree completely
-    fn rebuild_subtree(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) {
+    fn rebuild_subtree(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) -> NodeId {
         debug!("[REBUILD] Rebuilding subtree for node {:?}", cpg_node);
 
         // 1. Preserve parent connections by finding the parent edge
@@ -328,35 +399,33 @@ impl Cpg {
         // 2. Remove the old subtree completely
         self.remove_subtree(cpg_node).ok();
 
-        // 3. Reconstruct using the existing language mapping logic
-        let lang = self.get_language().clone();
-        let new_type = lang.map_node_kind(cst_node.kind());
-        let mut new_node = crate::cpg::Node {
-            type_: new_type,
-            properties: std::collections::HashMap::new(),
+        // 3. Reconstruct using the pre/post translate logic
+        let (new_node_id, node_type) = match pre_translate_node(self, cst_node) {
+            Ok((id, typ)) => (id, typ),
+            Err(e) => {
+                warn!("[REBUILD] Failed to pre-translate node: {}", e);
+                return cpg_node;
+            }
         };
-        new_node
-            .properties
-            .insert("raw_kind".to_string(), cst_node.kind().to_string());
 
-        let new_node_id = self.add_node(new_node, cst_node.start_byte(), cst_node.end_byte());
-
-        // 4. Recursively build children using simple approach
+        // 4. Recursively build children using the proper translate approach
         let mut cst_cursor = cst_node.walk();
         if cst_cursor.goto_first_child() {
             let mut children = Vec::new();
             loop {
-                let child_node = cst_cursor.node();
-                let child_type = lang.map_node_kind(child_node.kind());
-                let mut child = crate::cpg::Node {
-                    type_: child_type,
-                    properties: std::collections::HashMap::new(),
-                };
-                child
-                    .properties
-                    .insert("raw_kind".to_string(), child_node.kind().to_string());
+                let child_cst_node = cst_cursor.node();
 
-                let child_id = self.add_node(child, child_node.start_byte(), child_node.end_byte());
+                // Use pre_translate for each child
+                let (child_id, child_type) = match pre_translate_node(self, &child_cst_node) {
+                    Ok((id, typ)) => (id, typ),
+                    Err(e) => {
+                        warn!("[REBUILD] Failed to pre-translate child node: {}", e);
+                        if !cst_cursor.goto_next_sibling() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
 
                 self.add_edge(crate::cpg::Edge {
                     from: new_node_id,
@@ -367,9 +436,52 @@ impl Cpg {
 
                 children.push(child_id);
 
-                if child_node.child_count() > 0 {
-                    self.build_children_from_cst(child_id, &child_node);
+                // Recursively handle grandchildren if they exist
+                if child_cst_node.child_count() > 0 {
+                    // Update child_id to the new ID returned by recursive rebuild
+                    let new_child_id = self.rebuild_subtree(child_id, &child_cst_node);
+                    // Update our children list and edge if needed
+                    if new_child_id != child_id {
+                        // Find and remove the old edge
+                        let edge_ids_to_remove: Vec<_> = self
+                            .outgoing
+                            .get(&new_node_id)
+                            .map(|edge_ids| {
+                                edge_ids
+                                    .iter()
+                                    .filter(|&&edge_id| {
+                                        if let Some(edge) = self.edges.get(edge_id) {
+                                            edge.to == child_id
+                                                && edge.type_ == EdgeType::SyntaxChild
+                                        } else {
+                                            false
+                                        }
+                                    })
+                                    .copied()
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        for edge_id in edge_ids_to_remove {
+                            self.remove_edge(edge_id);
+                        }
+
+                        self.add_edge(crate::cpg::Edge {
+                            from: new_node_id,
+                            to: new_child_id,
+                            type_: EdgeType::SyntaxChild,
+                            properties: std::collections::HashMap::new(),
+                        });
+
+                        // Update the child in our children list
+                        if let Some(last_idx) = children.len().checked_sub(1) {
+                            children[last_idx] = new_child_id;
+                        }
+                    }
                 }
+
+                // Apply post-translation logic for the child
+                post_translate_node(self, child_type, child_id, &child_cst_node);
 
                 if !cst_cursor.goto_next_sibling() {
                     break;
@@ -387,7 +499,10 @@ impl Cpg {
             }
         }
 
-        // 5. Reattach to parent if it exists
+        // 5. Apply post-translation logic for the root node
+        post_translate_node(self, node_type, new_node_id, cst_node);
+
+        // 6. Reattach to parent if it exists
         if let Some(parent) = parent_edge {
             self.add_edge(crate::cpg::Edge {
                 from: parent,
@@ -399,6 +514,8 @@ impl Cpg {
             // This was the root node
             self.set_root(new_node_id);
         }
+
+        new_node_id
     }
 
     /// Calculate sequence alignment operations (simplified LCS-based approach)
@@ -484,28 +601,33 @@ impl Cpg {
         cst_children: &[tree_sitter::Node],
         operations: Vec<EditOperation>,
     ) {
-        let lang = self.get_language().clone();
-
         // Apply operations
         for operation in operations {
             match operation {
                 EditOperation::Insert { cst_index } => {
                     let cst_child = &cst_children[cst_index];
-                    let type_ = lang.map_node_kind(cst_child.kind());
-                    let mut node = crate::cpg::Node {
-                        type_,
-                        properties: std::collections::HashMap::new(),
-                    };
-                    node.properties
-                        .insert("raw_kind".to_string(), cst_child.kind().to_string());
 
-                    let id = self.add_node(node, cst_child.start_byte(), cst_child.end_byte());
+                    // Use pre_translate to create the node properly
+                    let (id, node_type) = match pre_translate_node(self, cst_child) {
+                        Ok((id, typ)) => (id, typ),
+                        Err(e) => {
+                            warn!(
+                                "[SURGICAL UPDATE] Failed to pre-translate inserted node: {}",
+                                e
+                            );
+                            continue;
+                        }
+                    };
+
                     self.add_edge(crate::cpg::Edge {
                         from: parent,
                         to: id,
                         type_: EdgeType::SyntaxChild,
                         properties: std::collections::HashMap::new(),
                     });
+
+                    // Apply post-translation logic
+                    post_translate_node(self, node_type, id, cst_child);
                 }
                 EditOperation::Delete { cpg_index } => {
                     if cpg_index < cpg_children.len() {
@@ -520,18 +642,21 @@ impl Cpg {
                         let cpg_id = cpg_children[cpg_index];
                         let cst_child = &cst_children[cst_index];
 
-                        // Update the node properties and span
+                        // Update the node properties, span, and apply post-translation logic
+                        let new_type = self.get_language().map_node_kind(cst_child.kind());
                         if let Some(node) = self.get_node_by_id_mut(&cpg_id) {
                             node.properties
                                 .insert("raw_kind".to_string(), cst_child.kind().to_string());
-                            let new_type = lang.map_node_kind(cst_child.kind());
-                            node.type_ = new_type;
+                            node.type_ = new_type.clone();
                         }
                         self.spatial_index.edit(
                             cpg_id,
                             cst_child.start_byte(),
                             cst_child.end_byte(),
                         );
+
+                        // Apply post-translation logic for updated node
+                        post_translate_node(self, new_type, cpg_id, cst_child);
                     }
                 }
             }
@@ -560,6 +685,13 @@ impl Cpg {
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
             {
+                debug!(
+                    "[INCREMENTAL UPDATE] Found node {:?} for range {:?}",
+                    node_id, range
+                );
+                if let Some(node) = self.get_node_by_id(&node_id) {
+                    debug!("[INCREMENTAL UPDATE] Node details: {:?}", node);
+                }
                 dirty_nodes.insert(
                     node_id,
                     (
@@ -574,6 +706,31 @@ impl Cpg {
                     "[INCREMENTAL UPDATE] No node found for changed range: {:?}",
                     (range.start_byte, range.end_byte)
                 );
+
+                // When a changed range doesn't map to an existing node, this usually means
+                // new structure was added. Find the closest parent node that can contain this range.
+                if let Some(parent_node_id) =
+                    self.find_parent_node_for_range(range.start_byte, range.end_byte)
+                {
+                    debug!(
+                        "[INCREMENTAL UPDATE] Found parent node {:?} for orphaned range {:?}",
+                        parent_node_id, range
+                    );
+                    dirty_nodes.insert(
+                        parent_node_id,
+                        (
+                            range.start_byte,
+                            range.end_byte,
+                            range.start_byte,
+                            range.end_byte,
+                        ),
+                    );
+                } else {
+                    debug!(
+                        "[INCREMENTAL UPDATE] No parent node found for orphaned range: {:?}",
+                        (range.start_byte, range.end_byte)
+                    );
+                }
             }
         }
 
@@ -779,6 +936,7 @@ impl Cpg {
                 id, should_rebuild, metrics
             );
 
+            let new_id;
             if should_rebuild {
                 // Phase 3B: Full Rebuild
                 debug!(
@@ -788,7 +946,7 @@ impl Cpg {
                     metrics.operations_count,
                     metrics.subtree_depth
                 );
-                self.rebuild_subtree(*id, cst_node);
+                new_id = self.rebuild_subtree(*id, cst_node);
             } else {
                 // Phase 3A: Surgical Update
                 debug!(
@@ -799,9 +957,10 @@ impl Cpg {
                     metrics.subtree_depth
                 );
                 self.update_in_place_pairwise(*id, cst_node);
+                new_id = *id;
             }
 
-            let structure = crate::languages::get_container_parent(self, *id);
+            let structure = crate::languages::get_container_parent(self, new_id);
             if !updated_structures.contains(&structure) {
                 updated_structures.push(structure);
             }

@@ -270,6 +270,105 @@ fn test_multiple_incremental_updates() {
     );
 }
 
+/// Debug test to understand what's happening in incremental update
+#[test]
+fn test_debug_incremental_update() {
+    dyn_cpg_rs::logging::init();
+    debug!("Starting debug incremental update test");
+
+    // Init the lang and parser
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Load sample1.old.c and sample1.new.c from samples/
+    let s_orig = Resource::new("samples/sample1.old.c")
+        .expect("Failed to create resource for sample1.old.c");
+    let s_new = Resource::new("samples/sample1.new.c")
+        .expect("Failed to create resource for sample1.new.c");
+
+    // Read the contents of the files
+    let old_src = s_orig.read_bytes().expect("Failed to read sample1.old.c");
+    let new_src = s_new.read_bytes().expect("Failed to read sample1.new.c");
+
+    // Parse the original file
+    let mut old_tree = parser
+        .parse(old_src.clone(), None)
+        .expect("Failed to parse original file");
+
+    // Create CPG from original tree
+    let mut cpg = lang
+        .cst_to_cpg(old_tree.clone(), old_src.clone())
+        .expect("Failed to convert old tree to CPG");
+
+    println!("=== ORIGINAL CPG ===");
+    println!("Nodes: {}", cpg.node_count());
+    println!("Edges: {}", cpg.edge_count());
+    if let Some(root) = cpg.get_root() {
+        println!("Root node: {:?}", cpg.get_node_by_id(&root));
+    }
+
+    cpg.serialize_to_file(&mut SexpSerializer::new(), "debug_original.sexp", None)
+        .expect("Failed to write debug_original.sexp");
+
+    // Parse the new file incrementally
+    let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
+        .expect("Failed to incrementally parse new file");
+
+    println!("=== EDITS ===");
+    for edit in &edits {
+        println!("{:?}", edit);
+    }
+
+    // Get changed ranges
+    let changed_ranges: Vec<_> = old_tree.changed_ranges(&new_tree).collect();
+    println!("=== CHANGED RANGES ===");
+    for range in &changed_ranges {
+        println!("{:?}", range);
+    }
+
+    // Perform the incremental update
+    cpg.incremental_update(
+        edits,
+        changed_ranges.into_iter(),
+        &new_tree,
+        new_src.clone(),
+    );
+
+    println!("=== INCREMENTAL CPG ===");
+    println!("Nodes: {}", cpg.node_count());
+    println!("Edges: {}", cpg.edge_count());
+    if let Some(root) = cpg.get_root() {
+        println!("Root node: {:?}", cpg.get_node_by_id(&root));
+    }
+
+    cpg.serialize_to_file(&mut SexpSerializer::new(), "debug_incremental.sexp", None)
+        .expect("Failed to write debug_incremental.sexp");
+
+    // Compute the reference CPG from scratch
+    let new_cpg = lang
+        .cst_to_cpg(new_tree, new_src)
+        .expect("Failed to convert new tree to CPG");
+
+    println!("=== REFERENCE CPG ===");
+    println!("Nodes: {}", new_cpg.node_count());
+    println!("Edges: {}", new_cpg.edge_count());
+    if let Some(root) = new_cpg.get_root() {
+        println!("Root node: {:?}", new_cpg.get_node_by_id(&root));
+    }
+
+    new_cpg
+        .serialize_to_file(&mut SexpSerializer::new(), "debug_reference.sexp", None)
+        .expect("Failed to write debug_reference.sexp");
+
+    // Compare the incrementally updated CPG with the reference CPG
+    let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
+    println!("=== COMPARISON ===");
+    println!("{}", diff);
+
+    // This test is expected to fail for now - we're using it for debugging
+    // assert!(matches!(diff, DetailedComparisonResult::Equivalent));
+}
+
 /// Test that incremental updates handle edge cases correctly
 #[test]
 fn test_incremental_edge_cases() {

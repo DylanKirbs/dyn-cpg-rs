@@ -254,14 +254,13 @@ pub fn post_translate_node(
             if let Some(id_node) = id_node {
                 let name = cpg.get_node_source(&id_node);
 
-                let n = cpg
-                    .get_node_by_id_mut(&cpg_node_id)
-                    .and_then(|f| f.properties.insert("name".to_string(), name));
+                cpg.get_node_by_id_mut(&cpg_node_id)
+                    .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
 
                 debug!(
                     "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
                     cst_node.kind(),
-                    n
+                    name
                 );
             }
 
