@@ -362,6 +362,10 @@ impl Cpg {
                             | EdgeType::PDControlTrue
                             | EdgeType::PDControlFalse
                             | EdgeType::PDData(_) => {
+                                debug!(
+                                    "[CLEAN ANALYSIS EDGES] Marking edge {:?} for removal: {:?} -> {:?} type: {:?}",
+                                    edge_id, edge.from, edge.to, edge.type_
+                                );
                                 edges_to_remove.push(edge_id);
                             }
                             _ => {}
@@ -377,12 +381,22 @@ impl Cpg {
             }
         }
 
+        debug!(
+            "[CLEAN ANALYSIS EDGES] Starting to clean analysis edges from subtree rooted at {:?}",
+            root
+        );
         collect_analysis_edges_recursive(self, root, &mut to_remove);
 
+        debug!(
+            "[CLEAN ANALYSIS EDGES] Removing {} analysis edges",
+            to_remove.len()
+        );
         // Remove collected edges
         for edge_id in to_remove {
+            debug!("[CLEAN ANALYSIS EDGES] Removing edge {:?}", edge_id);
             self.remove_edge(edge_id);
         }
+        debug!("[CLEAN ANALYSIS EDGES] Completed cleaning analysis edges");
     }
 
     /// Phase 3B: Full Rebuild - Replace subtree completely
@@ -1030,7 +1044,7 @@ impl Cpg {
             if !updated_structures.contains(&structure) {
                 updated_structures.push(structure);
             }
-            if let Some(function) = crate::languages::get_containing_function(self, *id) {
+            if let Some(function) = crate::languages::get_containing_function(self, new_id) {
                 if !updated_functions.contains(&function) {
                     updated_functions.push(function);
                 }
@@ -1054,6 +1068,10 @@ impl Cpg {
             updated_functions
         );
         for function in &updated_functions {
+            debug!(
+                "[INCREMENTAL UPDATE] Running data_dep_pass on function {:?}",
+                function
+            );
             if let Err(e) = data_dep_pass(self, *function) {
                 warn!(
                     "[INCREMENTAL UPDATE] Failed to recompute data dependence for node {:?}: {}",

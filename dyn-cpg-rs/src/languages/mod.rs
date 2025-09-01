@@ -377,11 +377,12 @@ pub fn post_translate_node(
             } else {
                 // Force update the name during incremental updates
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
-                let current_name = cpg.get_node_by_id(&cpg_node_id)
+                let current_name = cpg
+                    .get_node_by_id(&cpg_node_id)
                     .and_then(|n| n.properties.get("name"))
                     .cloned()
                     .unwrap_or_default();
-                
+
                 debug!(
                     "[POST TRANSLATE NODE] Identifier node name update: {:?} current={:?} new={:?}",
                     cst_node.kind(),
@@ -460,17 +461,30 @@ fn add_data_dep_edge(
         from, to, edge_type
     );
 
+    // Don't create self-loops for data dependence
+    if from == to {
+        debug!(
+            "[DATA DEPENDENCE] Skipping self-loop data dependency edge: {:?} -> {:?}",
+            from, to
+        );
+        return Ok(());
+    }
+
     let existing_edges = cpg.get_outgoing_edges(from);
     for edge in existing_edges {
         if edge.to == to && edge.type_ == edge_type {
             debug!(
-                "[DATA DEPENDENCE] Data dependency edge already exists: {:?} -> {:?}",
-                from, to
+                "[DATA DEPENDENCE] Data dependency edge already exists: {:?} -> {:?} of type: {:?}",
+                from, to, edge_type
             );
             return Ok(());
         }
     }
 
+    debug!(
+        "[DATA DEPENDENCE] Creating new data dependency edge: {:?} -> {:?} of type: {:?}",
+        from, to, edge_type
+    );
     cpg.add_edge(Edge {
         from,
         to,

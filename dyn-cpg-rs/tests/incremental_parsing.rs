@@ -14,7 +14,7 @@ use tracing::debug;
 /// This test verifies that incremental updates produce semantically equivalent CPGs
 #[test]
 fn test_incremental_reparse() {
-    // dyn_cpg_rs::logging::init();
+    dyn_cpg_rs::logging::init();
     debug!("Starting incremental reparse test");
 
     // Init the lang and parser
@@ -209,7 +209,7 @@ fn test_incremental_reparse_perf() {
 
 /// Test multiple sequential incremental updates
 #[test]
-fn test_multiple_incremental_updates() {
+fn test_mre_multiple_incremental_updates() {
     dyn_cpg_rs::logging::init();
     debug!("Testing multiple incremental updates");
 
@@ -250,17 +250,33 @@ fn test_multiple_incremental_updates() {
         .cst_to_cpg(new_tree2, source3.to_vec())
         .expect("Failed to create reference CPG");
 
-    cpg.serialize_to_file(&mut DotSerializer::new(), "incr.dot", None)
-        .expect("Failed to write incr.dot");
+    cpg.serialize_to_file(
+        &mut DotSerializer::new(),
+        format!("{}/{}-{}.dot", "debug", "mre_mul_inc", "incr"),
+        None,
+    )
+    .expect("Failed to write incr dot file");
     reference_cpg
-        .serialize_to_file(&mut DotSerializer::new(), "ref.dot", None)
-        .expect("Failed to write ref.dot");
+        .serialize_to_file(
+            &mut DotSerializer::new(),
+            format!("{}/{}-{}.dot", "debug", "mre_mul_inc", "ref"),
+            None,
+        )
+        .expect("Failed to write reference dot file");
 
-    cpg.serialize_to_file(&mut SexpSerializer::new(), "incr.sexp", None)
-        .expect("Failed to write incr.sexp");
+    cpg.serialize_to_file(
+        &mut SexpSerializer::new(),
+        format!("{}/{}-{}.sexp", "debug", "mre_mul_inc", "incr"),
+        None,
+    )
+    .expect("Failed to write incr sexp");
     reference_cpg
-        .serialize_to_file(&mut SexpSerializer::new(), "ref.sexp", None)
-        .expect("Failed to write ref.sexp");
+        .serialize_to_file(
+            &mut SexpSerializer::new(),
+            format!("{}/{}-{}.sexp", "debug", "mre_mul_inc", "ref"),
+            None,
+        )
+        .expect("Failed to write reference sexp");
 
     let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
     assert!(
@@ -272,7 +288,7 @@ fn test_multiple_incremental_updates() {
 
 /// Debug test to understand what's happening in incremental update
 #[test]
-fn test_debug_incremental_update() {
+fn test_incremental_update_samples() {
     dyn_cpg_rs::logging::init();
     debug!("Starting debug incremental update test");
 
@@ -307,9 +323,6 @@ fn test_debug_incremental_update() {
         println!("Root node: {:?}", cpg.get_node_by_id(&root));
     }
 
-    cpg.serialize_to_file(&mut SexpSerializer::new(), "debug_original.sexp", None)
-        .expect("Failed to write debug_original.sexp");
-
     // Parse the new file incrementally
     let (edits, new_tree) = incremental_parse(&mut parser, &old_src, &new_src, &mut old_tree)
         .expect("Failed to incrementally parse new file");
@@ -341,8 +354,12 @@ fn test_debug_incremental_update() {
         println!("Root node: {:?}", cpg.get_node_by_id(&root));
     }
 
-    cpg.serialize_to_file(&mut SexpSerializer::new(), "debug_incremental.sexp", None)
-        .expect("Failed to write debug_incremental.sexp");
+    cpg.serialize_to_file(
+        &mut SexpSerializer::new(),
+        format!("{}/{}-{}.sexp", "debug", "mre_inc_samples", "incr"),
+        None,
+    )
+    .expect("Failed to write incremental CPG");
 
     // Compute the reference CPG from scratch
     let new_cpg = lang
@@ -357,21 +374,24 @@ fn test_debug_incremental_update() {
     }
 
     new_cpg
-        .serialize_to_file(&mut SexpSerializer::new(), "debug_reference.sexp", None)
-        .expect("Failed to write debug_reference.sexp");
+        .serialize_to_file(
+            &mut SexpSerializer::new(),
+            format!("{}/{}-{}.sexp", "debug", "mre_inc_samples", "ref"),
+            None,
+        )
+        .expect("Failed to write reference CPG");
 
     // Compare the incrementally updated CPG with the reference CPG
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     println!("=== COMPARISON ===");
     println!("{}", diff);
 
-    // This test is expected to fail for now - we're using it for debugging
-    // assert!(matches!(diff, DetailedComparisonResult::Equivalent));
+    assert!(matches!(diff, DetailedComparisonResult::Equivalent));
 }
 
 /// Test that incremental updates handle edge cases correctly
 #[test]
-fn test_incremental_edge_cases() {
+fn test_mre_incremental_edge_cases() {
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
 
@@ -456,7 +476,7 @@ fn test_incremental_edge_cases() {
 
 /// Test specifically for the empty-to-non-empty root structure issue
 #[test]
-fn test_empty_to_non_empty_root_structure() {
+fn test_mre_empty_to_non_empty_root_structure() {
     dyn_cpg_rs::logging::init();
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
@@ -524,9 +544,88 @@ fn test_empty_to_non_empty_root_structure() {
     }
 }
 
+/// MRE test for incremental parsing variable name change bug
+/// This reproduces the issue from the failing test where incremental updates
+/// don't properly handle structural changes in blocks
+#[test]
+fn test_mre_variable_name_change_bug() {
+    dyn_cpg_rs::logging::init();
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Minimal reproduction: variable name change that triggers the bug
+    // Based on sample1.old.c -> sample1.new.c diff
+    let old_source = b"int main() { int y = 2; }";
+    let new_source = b"int main() { int z = 2; }";
+
+    let mut old_tree = parser
+        .parse(old_source, None)
+        .expect("Failed to parse old source");
+
+    // Perform incremental parsing
+    let (edits, new_tree) = incremental_parse(&mut parser, old_source, new_source, &mut old_tree)
+        .expect("Failed to incrementally parse");
+
+    println!("=== EDITS ===");
+    for edit in &edits {
+        println!("{:?}", edit);
+    }
+
+    // Create CPGs
+    let mut incremental_cpg = lang
+        .cst_to_cpg(old_tree.clone(), old_source.to_vec())
+        .expect("Failed to create initial CPG");
+    let reference_cpg = lang
+        .cst_to_cpg(new_tree.clone(), new_source.to_vec())
+        .expect("Failed to create reference CPG");
+
+    println!("=== BEFORE INCREMENTAL UPDATE ===");
+    println!("Incremental CPG nodes: {}", incremental_cpg.node_count());
+    println!("Reference CPG nodes: {}", reference_cpg.node_count());
+
+    // Apply incremental update
+    let changed_ranges = old_tree.changed_ranges(&new_tree);
+    incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_source.to_vec());
+
+    println!("=== AFTER INCREMENTAL UPDATE ===");
+    println!("Incremental CPG nodes: {}", incremental_cpg.node_count());
+    println!("Reference CPG nodes: {}", reference_cpg.node_count());
+
+    // Write debug files for analysis
+    incremental_cpg
+        .serialize_to_file(
+            &mut SexpSerializer::new(),
+            format!("{}/{}-{}.sexp", "debug", "mre_var_name_change", "incr"),
+            None,
+        )
+        .expect("Failed to write incremental sexp");
+    reference_cpg
+        .serialize_to_file(
+            &mut SexpSerializer::new(),
+            format!("{}/{}-{}.sexp", "debug", "mre_var_name_change", "ref"),
+            None,
+        )
+        .expect("Failed to write reference sexp");
+
+    // Property: Incremental update should produce equivalent result
+    let diff = incremental_cpg
+        .compare(&reference_cpg)
+        .expect("Failed to compare CPGs");
+    match diff {
+        DetailedComparisonResult::Equivalent => {
+            println!("SUCCESS: CPGs are equivalent");
+        }
+        _ => {
+            println!("=== BUG REPRODUCED ===");
+            println!("{}", diff);
+            panic!("BUG: Incremental CPG should be equivalent to reference CPG");
+        }
+    }
+}
+
 /// Test case derived from failing proptest
 #[test]
-fn test_function_name_change_simple() {
+fn test_mre_function_name_change_simple() {
     dyn_cpg_rs::logging::init();
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
