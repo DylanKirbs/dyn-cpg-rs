@@ -389,12 +389,14 @@ impl Cpg {
     fn rebuild_subtree(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) -> NodeId {
         debug!("[REBUILD] Rebuilding subtree for node {:?}", cpg_node);
 
-        // 1. Preserve parent connections by finding the parent edge
+        // 1. Preserve parent connections by finding the parent edge and check if this is the root
         let parent_edge = self
             .get_incoming_edges(cpg_node)
             .iter()
             .find(|e| e.type_ == EdgeType::SyntaxChild)
             .map(|e| e.from);
+
+        let is_root_node = self.root.map_or(false, |root| root == cpg_node);
 
         // 2. Remove the old subtree completely
         self.remove_subtree(cpg_node).ok();
@@ -502,7 +504,7 @@ impl Cpg {
         // 5. Apply post-translation logic for the root node
         post_translate_node(self, node_type, new_node_id, cst_node);
 
-        // 6. Reattach to parent if it exists
+        // 6. Reattach to parent if it exists, or set as root only if it was originally the root
         if let Some(parent) = parent_edge {
             self.add_edge(crate::cpg::Edge {
                 from: parent,
@@ -510,10 +512,12 @@ impl Cpg {
                 type_: EdgeType::SyntaxChild,
                 properties: std::collections::HashMap::new(),
             });
-        } else {
-            // This was the root node
+        } else if is_root_node {
+            // Only set as root if this node was originally the root
             self.set_root(new_node_id);
         }
+        // If no parent and not originally root, this node will be orphaned,
+        // which is expected for some incremental update scenarios
 
         new_node_id
     }
@@ -812,8 +816,11 @@ impl Cpg {
             merged_ranges.len()
         );
 
+        // Track orphaned parent nodes separately to ensure they get processed
+        let mut orphaned_parent_nodes = std::collections::HashSet::new();
+
         // For each merged range, find the appropriate node that contains it
-        let dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
+        let mut dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
             .into_iter()
             .filter_map(|range| {
                 // Get all nodes that contain the merged range
@@ -886,10 +893,48 @@ impl Cpg {
                         "[INCREMENTAL UPDATE] No containing node found for merged range {:?}",
                         range
                     );
-                    None
+                    // For orphaned ranges, try to find a parent node that can be rebuilt
+                    if let Some(parent_node_id) = self.find_parent_node_for_range(range.0, range.1)
+                    {
+                        debug!(
+                            "[INCREMENTAL UPDATE] Found orphaned parent node {:?} for range {:?}",
+                            parent_node_id, range
+                        );
+                        orphaned_parent_nodes.insert(parent_node_id);
+
+                        // Expand the range to cover the parent node's span
+                        if let Some((parent_start, parent_end)) =
+                            self.spatial_index.get_node_span(parent_node_id)
+                        {
+                            let expanded_range = (
+                                std::cmp::min(range.0, parent_start),
+                                std::cmp::max(range.1, parent_end),
+                                std::cmp::min(range.2, parent_start),
+                                std::cmp::max(range.3, parent_end),
+                            );
+                            Some((parent_node_id, expanded_range))
+                        } else {
+                            Some((parent_node_id, range))
+                        }
+                    } else {
+                        None
+                    }
                 }
             })
             .collect();
+
+        // Add any orphaned parent nodes that weren't already included
+        for node_id in orphaned_parent_nodes {
+            if !dirty_nodes.iter().any(|(id, _)| *id == node_id) {
+                if let Some((start, end)) = self.spatial_index.get_node_span(node_id) {
+                    dirty_nodes.push((node_id, (start, end, start, end)));
+                    debug!(
+                        "[INCREMENTAL UPDATE] Added orphaned parent node {:?} to dirty nodes",
+                        node_id
+                    );
+                }
+            }
+        }
 
         debug!(
             "[INCREMENTAL UPDATE] Updating {} dirty nodes: {:?}",
