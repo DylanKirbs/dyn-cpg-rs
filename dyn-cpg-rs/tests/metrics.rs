@@ -555,6 +555,7 @@ fn run_benchmark(
     depth: usize,
     lang: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let start = std::time::Instant::now();
     let guard = pprof::ProfilerGuard::new(100).expect("Failed to start profiler");
 
     let repo_root: PathBuf = format!("./repos/{}", repository).into();
@@ -587,22 +588,25 @@ fn run_benchmark(
 
     println!("Flamegraph written to {}-flamegraph.svg", repository);
 
+    let elapsed = start.elapsed();
+    println!("Benchmark on {} repos completed in {:?}", depth, elapsed);
+
     Ok(())
 }
 
-#[ignore = "Temporarily diabled for debugging"]
+#[ignore = "Temporarily disabled for debugging"]
 #[test]
 fn test_incr_perf_gv() {
-    run_benchmark("graphvis", 500, "c").expect("Failed to run benchmark");
+    run_benchmark("graphviz", 500, "c").expect("Failed to run benchmark");
 }
 
-#[ignore = "Temporarily diabled for debugging"]
+#[ignore = "Temporarily disabled for debugging"]
 #[test]
 fn test_incr_perf_ts() {
     run_benchmark("tree-sitter", 500, "c").expect("Failed to run benchmark");
 }
 
-#[ignore = "ffmpeg repos crashes at the moment"]
+#[ignore = "Temporarily disabled due to crashes"]
 #[test]
 fn test_incr_perf_ff() {
     run_benchmark("ffmpeg", 500, "c").expect("Failed to run benchmark");

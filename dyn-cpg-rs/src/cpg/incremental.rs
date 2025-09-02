@@ -24,14 +24,15 @@ pub struct UpdateThresholds {
 impl Default for UpdateThresholds {
     fn default() -> Self {
         Self {
-            max_children_change_percentage: 0.3, // Commit-level batch processing
-            max_surgical_depth: 6,               // Reduced depth limit for batches
-            max_operations_count: 8,             // Reduced operation limit for commit optimization
+            max_children_change_percentage: 0.3,
+            max_surgical_depth: 6,
+            max_operations_count: 8,
         }
     }
 }
 /// Metrics for deciding between surgical update vs full rebuild
 #[derive(Debug)]
+#[allow(dead_code)] // Allow unused fields for debugging
 struct UpdateMetrics {
     children_change_percentage: f32,
     subtree_depth: usize,
