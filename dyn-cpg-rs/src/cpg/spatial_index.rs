@@ -170,7 +170,24 @@ impl Cpg {
                     .spatial_index
                     .get_node_span(*id)
                     .expect("NodeId should have a range");
-                range.1 - range.0
+                let span_size = range.1 - range.0;
+
+                // Prefer structural containers over content nodes for incremental updates
+                // Translation units and blocks should be preferred over functions and statements
+                let node_type_priority = if let Some(node) = self.get_node_by_id(id) {
+                    match &node.type_ {
+                        crate::cpg::NodeType::TranslationUnit => 0, // Highest priority
+                        crate::cpg::NodeType::Block => 1,
+                        crate::cpg::NodeType::Function { .. } => 2,
+                        crate::cpg::NodeType::Statement => 3,
+                        _ => 4, // Lowest priority
+                    }
+                } else {
+                    4 // Default to lowest priority if node not found
+                };
+
+                // Primary sort by span size, secondary sort by type priority
+                (span_size, node_type_priority)
             })
     }
 }

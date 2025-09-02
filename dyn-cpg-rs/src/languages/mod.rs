@@ -264,23 +264,31 @@ pub fn post_translate_node(
                 );
             }
 
-            // Add a CF Function Return to the function
-            if let Some((s, e)) = cpg.get_node_offsets_by_id(&cpg_node_id) {
-                let fn_end = cpg.add_node(
-                    Node {
-                        type_: NodeType::FunctionReturn,
-                        properties: HashMap::new(),
-                    },
-                    s,
-                    e,
-                );
+            // Add a CF Function Return to the function (only if one doesn't already exist)
+            let existing_function_return = cpg
+                .get_outgoing_edges(cpg_node_id)
+                .iter()
+                .find(|e| e.type_ == EdgeType::ControlFlowFunctionReturn)
+                .map(|e| e.to);
 
-                cpg.add_edge(Edge {
-                    from: cpg_node_id,
-                    to: fn_end,
-                    type_: EdgeType::ControlFlowFunctionReturn,
-                    properties: HashMap::new(),
-                });
+            if existing_function_return.is_none() {
+                if let Some((s, e)) = cpg.get_node_offsets_by_id(&cpg_node_id) {
+                    let fn_end = cpg.add_node(
+                        Node {
+                            type_: NodeType::FunctionReturn,
+                            properties: HashMap::new(),
+                        },
+                        s,
+                        e,
+                    );
+
+                    cpg.add_edge(Edge {
+                        from: cpg_node_id,
+                        to: fn_end,
+                        type_: EdgeType::ControlFlowFunctionReturn,
+                        properties: HashMap::new(),
+                    });
+                }
             }
         }
 

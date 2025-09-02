@@ -865,22 +865,26 @@ impl Cpg {
                         let range_size = node_range.1 - node_range.0;
 
                         // Assign priority weights - lower values = higher priority
+                        // This must match the priority system in spatial_index.rs
                         let priority_weight = match &node.type_ {
-                            // Highest priority: Control flow structures that can change significantly
+                            // Highest priority: Structural containers (translation units)
+                            NodeType::TranslationUnit => 0,
+
+                            // High priority: Control flow structures that can change significantly
                             NodeType::Branch { .. } => 1,
                             NodeType::Loop { .. } => 1,
 
-                            // High priority: Major structural elements
-                            NodeType::Function { .. } => 10,
+                            // Medium priority: Functions and major structural elements
+                            NodeType::Function { .. } => 2,
                             NodeType::Statement => 20,
                             NodeType::Block => 30,
 
-                            // Medium priority: Expression-level constructs
+                            // Lower priority: Expression-level constructs
                             NodeType::Expression => 100,
                             NodeType::Call => 100,
                             NodeType::Return => 100,
 
-                            // Low priority: Leaf nodes and language-specific constructs
+                            // Lowest priority: Leaf nodes and language-specific constructs
                             NodeType::Identifier { .. } => 1000,
                             NodeType::Comment => 1000,
                             NodeType::Type => 500,
