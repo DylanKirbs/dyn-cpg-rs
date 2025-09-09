@@ -2,10 +2,10 @@ use dyn_cpg_rs::diff::incremental_parse;
 use dyn_cpg_rs::languages::RegisteredLanguage;
 
 /// Minimal test to isolate the identifier name update issue
-/// 
+///
 /// Problem: When doing incremental updates, identifier nodes inside functions
 /// don't get their "name" property updated properly during surgical updates.
-/// 
+///
 /// Expected: Incremental CPG should have identifier with name "d"
 /// Actual: Incremental CPG has identifier with name "_" (truncated from original)
 #[test]
@@ -23,7 +23,9 @@ fn test_identifier_name_update_isolated() {
     println!("New: {}", std::str::from_utf8(new_source).unwrap());
 
     // Parse old source and create initial CPG
-    let old_tree = parser.parse(old_source, None).expect("Old source should parse");
+    let old_tree = parser
+        .parse(old_source, None)
+        .expect("Old source should parse");
     let mut incremental_cpg = lang
         .cst_to_cpg(old_tree.clone(), old_source.to_vec())
         .expect("Failed to create CPG from old source");
@@ -42,7 +44,9 @@ fn test_identifier_name_update_isolated() {
     }
 
     // Parse new source for reference
-    let new_tree = parser.parse(new_source, None).expect("New source should parse");
+    let new_tree = parser
+        .parse(new_source, None)
+        .expect("New source should parse");
     let reference_cpg = lang
         .cst_to_cpg(new_tree.clone(), new_source.to_vec())
         .expect("Failed to create reference CPG");
@@ -62,8 +66,9 @@ fn test_identifier_name_update_isolated() {
 
     // Do incremental parsing
     let mut old_tree_copy = old_tree.clone();
-    let (edits, new_tree) = incremental_parse(&mut parser, old_source, new_source, &mut old_tree_copy)
-        .expect("Incremental parse should succeed");
+    let (edits, new_tree) =
+        incremental_parse(&mut parser, old_source, new_source, &mut old_tree_copy)
+            .expect("Incremental parse should succeed");
 
     println!("\n=== INCREMENTAL UPDATE ===");
     println!("Edits: {:?}", edits);
@@ -72,7 +77,12 @@ fn test_identifier_name_update_isolated() {
     println!("Changed ranges: {:?}", changed_ranges);
 
     // Apply incremental update
-    incremental_cpg.incremental_update(edits, changed_ranges.into_iter(), &new_tree, new_source.to_vec());
+    incremental_cpg.incremental_update(
+        edits,
+        changed_ranges.into_iter(),
+        &new_tree,
+        new_source.to_vec(),
+    );
 
     println!("\n=== POST-UPDATE CPG ANALYSIS ===");
     if let Some(root_id) = incremental_cpg.get_root() {
@@ -82,8 +92,10 @@ fn test_identifier_name_update_isolated() {
             if let Some(node) = incremental_cpg.get_node_by_id(node_id) {
                 if let Some(name) = node.properties.get("name") {
                     let source_text = incremental_cpg.get_node_source(node_id);
-                    println!("Node {:?}: type={:?}, name={:?}, source_text={:?}", 
-                            node_id, node.type_, name, source_text);
+                    println!(
+                        "Node {:?}: type={:?}, name={:?}, source_text={:?}",
+                        node_id, node.type_, name, source_text
+                    );
                 }
             }
         }
@@ -96,10 +108,14 @@ fn test_identifier_name_update_isolated() {
             all_nodes.push(root_id);
             for node_id in &all_nodes {
                 if let Some(node) = cpg.get_node_by_id(node_id) {
-                    if matches!(node.type_, dyn_cpg_rs::cpg::node::NodeType::Identifier { .. }) {
+                    if matches!(
+                        node.type_,
+                        dyn_cpg_rs::cpg::node::NodeType::Identifier { .. }
+                    ) {
                         if let Some(name) = node.properties.get("name") {
                             // Look for the identifier that's likely the function name
-                            if name != "return" {  // Filter out non-function identifiers
+                            if name != "return" {
+                                // Filter out non-function identifiers
                                 return Some(name.clone());
                             }
                         }
@@ -114,13 +130,18 @@ fn test_identifier_name_update_isolated() {
     let reference_function_name = find_function_identifier(&reference_cpg);
 
     println!("\n=== COMPARISON ===");
-    println!("Incremental function identifier: {:?}", incremental_function_name);
-    println!("Reference function identifier: {:?}", reference_function_name);
+    println!(
+        "Incremental function identifier: {:?}",
+        incremental_function_name
+    );
+    println!(
+        "Reference function identifier: {:?}",
+        reference_function_name
+    );
 
     // This is the core assertion that should pass but currently fails
     assert_eq!(
-        incremental_function_name, 
-        reference_function_name,
+        incremental_function_name, reference_function_name,
         "Function identifier names should match after incremental update"
     );
 }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -440,7 +441,7 @@ fn walk_git_history_and_benchmark(
 
                                 // Compare incremental result with full result
                                 let comparison_start = Instant::now();
-                                let comparison = match incremental_cpg.compare(&full_cpg) {
+                                let _comparison = match incremental_cpg.compare(&full_cpg) {
                                     Ok(result) => result,
                                     Err(e) => {
                                         warn!(
@@ -606,4 +607,218 @@ fn test_incr_perf_ts() {
 #[test]
 fn test_incr_perf_ff() {
     run_benchmark("ffmpeg", 500, "c").expect("Failed to run benchmark");
+}
+
+// ---
+
+#[test]
+fn test_seq_patch_parse_sample() {
+    dyn_cpg_rs::logging::init();
+    seq_patch_parse("seq_patches/sample/");
+}
+
+#[test]
+fn test_seq_patch_parse_large_sample_9() {
+    dyn_cpg_rs::logging::init();
+    seq_patch_parse("seq_patches/large_sample_9/");
+}
+
+#[test]
+fn test_seq_patch_parse_large_sample_99() {
+    dyn_cpg_rs::logging::init();
+    seq_patch_parse("seq_patches/large_sample_99/");
+}
+
+/// Get metrics for more "developer-like" changes. Given an existing source:
+/// 1. Insert a new statement
+/// 2. Modifying an existing statement
+/// 3. Deleting an existing statement
+///
+/// This is achieved using a "patch" style approach, where we have an original file and a set of patch files.
+fn seq_patch_parse(path: &str) {
+    info!("Starting incremental reparse test for patches in {}", path);
+
+    // Create/wipe the metrics CSV file and add headers
+    let csv_path = format!("{}metrics.csv", path);
+    std::fs::write(
+        &csv_path,
+        "patch_name,edits_count,full_timings_ms,incremental_timings_ms\n",
+    )
+    .expect("Failed to create metrics CSV file");
+
+    // Init the lang and parser
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Load the base
+    let base_resource =
+        Resource::new(format!("{}base.c", path)).expect("Failed to create resource for base file");
+
+    let mut base_source = base_resource
+        .read_bytes()
+        .expect("Failed to read base resource");
+
+    let base_tree = parser
+        .parse(base_source.clone(), None)
+        .expect("Failed to parse base source file");
+
+    // Create CPG from original tree before incremental parsing
+    let start = std::time::Instant::now();
+    let mut cpg = lang
+        .cst_to_cpg(base_tree.clone(), base_source.clone())
+        .expect("Failed to convert old tree to CPG");
+    info!(
+        "Initial CPG creation took {} ms",
+        start.elapsed().as_millis()
+    );
+
+    let mut patches = glob(&format!("{}/*.patch", path))
+        .expect("Failed to read glob pattern for patches")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("Failed to collect patch paths");
+
+    // Patches MUST be named {number}_..., so we sort on the value before the first underscore
+    patches.sort_by(|a, b| {
+        let tmp = a
+            .file_name()
+            .expect("Failed to get file name")
+            .to_str()
+            .expect("Failed to convert file name to str")
+            .split('_')
+            .next()
+            .cmp(
+                &b.file_name()
+                    .expect("Failed to get file name")
+                    .to_str()
+                    .expect("Failed to convert file name to str")
+                    .split('_')
+                    .next(),
+            );
+
+        // If equal, panic - we expect unique prefixes
+        if tmp == std::cmp::Ordering::Equal {
+            panic!("Patch files must have unique numeric prefixes before the first underscore");
+        }
+
+        tmp
+    });
+
+    for patch in patches {
+        info!("Applying patch {}", patch.display());
+        let patch_resource =
+            Resource::new(patch.clone()).expect("Failed to create resource for patch");
+        let patch_source = patch_resource
+            .read_bytes()
+            .expect("Failed to read patch resource");
+
+        let new_src =
+            apply_patch(&base_source, &patch_source).expect("Failed to apply patch to base source");
+
+        // Verify the new source can be parsed
+        let validation_tree = parser
+            .parse(new_src.clone(), None)
+            .expect("Patched source failed to parse");
+        if validation_tree.root_node().has_error() {
+            panic!("Patch {} resulted in invalid C syntax", patch.display());
+        }
+
+        // Perform full parse for comparison
+        let start = std::time::Instant::now();
+        let (full_cpg, full_timings) =
+            perform_full_parse(&mut parser, &lang, &new_src).expect("Failed to perform full parse");
+        info!("Full parse took {} ms", start.elapsed().as_millis());
+
+        // Perform incremental parse and CPG update
+        let start = std::time::Instant::now();
+        let (incremental_cpg, incr_timings, edits) =
+            perform_incremental_parse(&mut parser, &base_source, &new_src, cpg)
+                .expect("Failed to perform incremental parse");
+        info!(
+            "Incremental parse and CPG update took {} ms",
+            start.elapsed().as_millis()
+        );
+
+        // Compare the two results to ensure correctness
+        let comparison_start = std::time::Instant::now();
+        let comparison = incremental_cpg
+            .compare(&full_cpg)
+            .expect("Failed to compare CPGs");
+        info!(
+            "CPG comparison took {} ms",
+            comparison_start.elapsed().as_millis()
+        );
+
+        // Assert that the CPGs are equivalent
+        if !matches!(comparison, DetailedComparisonResult::Equivalent) {
+            info!(
+                "Patch {} resulted in mismatched CPGs!\nComparison: {}\nFull CPG: {} nodes, {} edges\nIncremental CPG: {} nodes, {} edges\nEdits applied: {} edits, {} lines changed, Performance: full={}ms, incremental={}ms",
+                patch.display(),
+                comparison.non_diff_string(),
+                full_cpg.node_count(),
+                full_cpg.edge_count(),
+                incremental_cpg.node_count(),
+                incremental_cpg.edge_count(),
+                edits.len(),
+                count_lines_in_byte_ranges(
+                    &new_src,
+                    edits.iter().map(|e| (e.new_start, e.new_end))
+                ),
+                full_timings.full_parse_total_ms().unwrap_or(0),
+                incr_timings.incremental_parse_total_ms().unwrap_or(0)
+            );
+        } else {
+            info!(
+                "Patch {} applied successfully - CPGs match! Full: {}/{} nodes/edges, Incremental: {}/{} nodes/edges, Performance: full={}ms, incremental={}ms",
+                patch.display(),
+                full_cpg.node_count(),
+                full_cpg.edge_count(),
+                incremental_cpg.node_count(),
+                incremental_cpg.edge_count(),
+                full_timings.full_parse_total_ms().unwrap_or(0),
+                incr_timings.incremental_parse_total_ms().unwrap_or(0)
+            );
+        }
+
+        // Write metrics to CSV
+        let patch_name = patch
+            .file_name()
+            .expect("Failed to get patch file name")
+            .to_str()
+            .expect("Failed to convert patch file name to string");
+
+        let csv_line = format!(
+            "{},{},{},{}\n",
+            patch_name,
+            edits.len(),
+            full_timings.full_parse_total_ms().unwrap_or(0),
+            incr_timings.incremental_parse_total_ms().unwrap_or(0)
+        );
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&csv_path)
+            .expect("Failed to open CSV file for appending")
+            .write_all(csv_line.as_bytes())
+            .expect("Failed to write to CSV file");
+
+        // Update base source and CPG for next iteration (use full result for sanity)
+        base_source = new_src;
+        cpg = full_cpg;
+    }
+}
+
+fn apply_patch(base: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
+    let base_str = std::str::from_utf8(base).map_err(|e| format!("Base not valid UTF-8: {}", e))?;
+    let patch_str =
+        std::str::from_utf8(patch).map_err(|e| format!("Patch not valid UTF-8: {}", e))?;
+
+    // Parse the unified diff
+    let patch_parsed =
+        diffy::Patch::from_str(patch_str).map_err(|e| format!("Failed to parse patch: {}", e))?;
+
+    // Apply the patch
+    let result = diffy::apply(base_str, &patch_parsed)
+        .map_err(|e| format!("Failed to apply patch: {:?}", e))?;
+
+    Ok(result.into_bytes())
 }

@@ -10,6 +10,7 @@ perf.*
 tarpaulin*
 benchmarks/
 samples/
+seq_patches/
 repos/
 *.dot*
 *.sexp

@@ -46,6 +46,37 @@ impl std::fmt::Display for DetailedComparisonResult {
     }
 }
 
+impl DetailedComparisonResult {
+    /// A non-diff string representation of the comparison result
+    pub fn non_diff_string(&self) -> String {
+        match self {
+            DetailedComparisonResult::Equivalent => "CPGs are equivalent".to_string(),
+            DetailedComparisonResult::StructuralMismatch {
+                only_in_left,
+                only_in_right,
+                function_mismatches,
+            } => {
+                let mut parts = vec![];
+                if !only_in_left.is_empty() {
+                    parts.push(format!("Functions only in left: {:?}", only_in_left));
+                }
+                if !only_in_right.is_empty() {
+                    parts.push(format!("Functions only in right: {:?}", only_in_right));
+                }
+                for mismatch in function_mismatches {
+                    match mismatch {
+                        FunctionComparisonResult::Mismatch { function_name, .. } => {
+                            parts.push(format!("Function mismatch: {}", function_name));
+                        }
+                        FunctionComparisonResult::Equivalent => {}
+                    }
+                }
+                format!("CPGs have structural differences: {}", parts.join("; "))
+            }
+        }
+    }
+}
+
 /// Result of comparing a single function between two CPGs
 #[derive(Debug, Clone)]
 pub enum FunctionComparisonResult {

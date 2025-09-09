@@ -36,7 +36,7 @@ fn test_incremental_reparse() {
         .parse(old_src.clone(), None)
         .expect("Failed to parse original file");
 
-    // FIXED: Create CPG from original tree BEFORE incremental parsing
+    // Create CPG from original tree BEFORE incremental parsing
     let start = std::time::Instant::now();
     let mut cpg = lang
         .cst_to_cpg(old_tree.clone(), old_src.clone())
@@ -46,7 +46,7 @@ fn test_incremental_reparse() {
         start.elapsed().as_millis()
     );
 
-    // FIXED: Parse the new file incrementally using a separate copy of the tree
+    // Parse the new file incrementally using a separate copy of the tree
     let mut old_tree_for_incremental = old_tree.clone();
     let start = std::time::Instant::now();
     let (edits, new_tree) = incremental_parse(
@@ -862,7 +862,7 @@ fn test_mre_whitespace_failing_case() {
     println!("Old source: {:?}", old_source);
     println!("New source: {:?}", new_source);
 
-    // === FIXED: Parse the old tree first, create the CPG from the original tree BEFORE incremental parsing ===
+    // Parse the old tree first, create the CPG from the original tree BEFORE incremental parsing ===
     let old_tree = parser.parse(old_bytes, None);
     if old_tree.is_none() {
         println!("ERROR: Old source failed to parse");

@@ -24,7 +24,7 @@ enum_dispatch = "0.3.13"
 blake3 = "1.8.2"
 once_cell = "1.21.3"
 thiserror = "2.0.12"
-similar = "2.7.0"
+similar = { version = "2.7.0", features = ["text"] }
 slotmap = "1.0.7"
 serde = "1.0.219"
 serde_json = "1.0.142"
@@ -32,6 +32,7 @@ indicatif = "0.18.0"
 pprof = { version = "0.15.0", features = ["flamegraph"] }
 
 [dev-dependencies]
+diffy = "0.4.0"
 assert_cmd = "2.0.14"
 assert_fs = "1.1.1"
 predicates = "3.1.0"
