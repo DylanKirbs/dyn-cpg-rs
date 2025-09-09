@@ -462,7 +462,7 @@ fn walk_git_history_and_benchmark(
                                     json!(incremental_cpg.node_count());
                                 file_result["incremental_edges"] =
                                     json!(incremental_cpg.edge_count());
-                                file_result["comparison_result"] = json!(format!("{}", comparison));
+                                // file_result["comparison_result"] = json!(format!("{}", comparison));
 
                                 // Legacy fields
                                 file_result["incremental_parse_time_ms"] =
@@ -488,10 +488,6 @@ fn walk_git_history_and_benchmark(
                                 }
                                 file_result["detailed_timings"] = combined_timings;
                                 file_result["file_metrics"] = file_metrics.to_json();
-
-                                if !matches!(comparison, DetailedComparisonResult::Equivalent) {
-                                    warn!("CPG mismatch in {}: {}", file_path, comparison);
-                                }
                             }
                             Err(e) => {
                                 warn!("Incremental parse failed for file {}: {}", file_path, e);

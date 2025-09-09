@@ -47,7 +47,7 @@ impl std::fmt::Display for DetailedComparisonResult {
 }
 
 /// Result of comparing a single function between two CPGs
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum FunctionComparisonResult {
     /// The functions are equivalent
     Equivalent,
@@ -57,11 +57,33 @@ pub enum FunctionComparisonResult {
         function_name: String,
         /// Details
         details: String,
-        /// Source diff
-        source_diff: String,
-        /// Sexp diff
-        sexp_diff: String,
+        left_cpg: Cpg,
+        right_cpg: Cpg,
+        mismatches: Vec<(Option<NodeId>, Option<NodeId>)>,
+        l_root: NodeId,
+        r_root: NodeId,
     },
+}
+
+impl PartialEq for FunctionComparisonResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FunctionComparisonResult::Equivalent, FunctionComparisonResult::Equivalent) => true,
+            (
+                FunctionComparisonResult::Mismatch {
+                    function_name: fn1,
+                    details: d1,
+                    ..
+                },
+                FunctionComparisonResult::Mismatch {
+                    function_name: fn2,
+                    details: d2,
+                    ..
+                },
+            ) => fn1 == fn2 && d1 == d2,
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for FunctionComparisonResult {
@@ -71,21 +93,23 @@ impl std::fmt::Display for FunctionComparisonResult {
             FunctionComparisonResult::Mismatch {
                 function_name,
                 details,
-                source_diff,
-                sexp_diff,
+                left_cpg,
+                right_cpg,
+                mismatches,
+                l_root,
+                r_root,
             } => {
                 let max_diff_size = 512;
 
-                let mut source = source_diff.clone();
-                let mut sexp = sexp_diff.clone();
+                let mut source = left_cpg.source_diff(right_cpg, mismatches);
+                let mut sexp = left_cpg.sexp_diff(right_cpg, *l_root, *r_root);
 
-                source.truncate(max_diff_size);
-                sexp.truncate(max_diff_size);
-
-                if source_diff.len() > max_diff_size {
+                if source.len() > max_diff_size {
+                    source.truncate(max_diff_size);
                     source.push_str("\n... (truncated)");
                 }
-                if sexp_diff.len() > max_diff_size {
+                if sexp.len() > max_diff_size {
+                    sexp.truncate(max_diff_size);
                     sexp.push_str("\n... (truncated)");
                 }
 
@@ -180,8 +204,11 @@ impl Cpg {
                                     l_node.type_ != NodeType::TranslationUnit,
                                     r_node.type_ != NodeType::TranslationUnit,
                                 ),
-                                source_diff: self.source_diff(other, &mismatches),
-                                sexp_diff: self.sexp_diff(other, l_root, r_root),
+                                left_cpg: self.clone(),
+                                right_cpg: other.clone(),
+                                mismatches,
+                                l_root,
+                                r_root,
                             }],
                         });
                     }
@@ -226,8 +253,11 @@ impl Cpg {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
                                 details: format!("Function {} has structural differences", name),
-                                source_diff: self.source_diff(other, &mismatches),
-                                sexp_diff: self.sexp_diff(other, *left_func_id, *right_func_id),
+                                mismatches,
+                                left_cpg: self.clone(),
+                                right_cpg: other.clone(),
+                                l_root: *left_func_id,
+                                r_root: *right_func_id,
                             });
                         }
                     }
