@@ -1,0 +1,17 @@
+--- patch7.c
++++ patch8.c
+@@ -761,12 +761,12 @@
+ 
+ MSMDiffResult *msm_diff(const char *a_str, const char *b_str)
+ {
+-    int a_len = strlen(a_str);
++    int new_a_len_420186 = strlen(a_str);
+     int b_len = strlen(b_str);
+ 
+     int raw_diff_count = 0;
+     MSMRawDiff *raw_diffs =
+-        msm_diff_chars(a_str, a_len, b_str, b_len, &raw_diff_count);
++        msm_diff_chars(a_str, new_a_len_420186, b_str, b_len, &raw_diff_count);
+ 
+     if (!raw_diffs)
+         return NULL;

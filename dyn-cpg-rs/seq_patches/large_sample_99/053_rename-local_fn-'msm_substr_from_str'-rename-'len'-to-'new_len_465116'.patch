@@ -1,0 +1,26 @@
+--- patch52.c
++++ patch53.c
+@@ -109,18 +109,18 @@
+ char *msm_substr_from_str(const char *str, int start, int end)
+ {    int gen_var_969298 = 969298;
+ 
+-    int len = end - start;
++    int new_len_465116 = end - start;
+     char *result;
+ 
+-    if (len <= 0)
++    if (new_len_465116 <= 0)
+         return strdup("");
+ 
+-    result = (char *)malloc(len + 1);
++    result = (char *)malloc(new_len_465116 + 1);
+     if (!result)
+         return NULL;
+ 
+-    strncpy(result, str + start, len);
+-    result[len] = '\0';
++    strncpy(result, str + start, new_len_465116);
++    result[new_len_465116] = '\0';
+ 
+     return result;
+ }

@@ -1,0 +1,12 @@
+--- patch91.c
++++ patch92.c
+@@ -723,7 +723,8 @@
+ 
+ /* Example usage */
+ int test_msm()
+-{    int gen_var_106211 = 106211;
++{    int gen_var_54294 = 54294;
++    int gen_var_106211 = 106211;
+ 
+ 
+     /* Added a new comment here so all of the test_msm function get moved */

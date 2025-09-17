@@ -1,0 +1,20 @@
+--- patch32.c
++++ patch33.c
+@@ -749,14 +749,14 @@
+     int new_a_len_420186 = strlen(a_str);
+     int new_b_len_269522 = strlen(b_str);
+ 
+-    int raw_diff_count = 0;
++    int new_raw_diff_count_1658 = 0;
+     MSMRawDiff *raw_diffs =
+-        msm_diff_chars(a_str, new_a_len_420186, b_str, new_b_len_269522, &raw_diff_count);
++        msm_diff_chars(a_str, new_a_len_420186, b_str, new_b_len_269522, &new_raw_diff_count_1658);
+ 
+     if (!raw_diffs)
+         return NULL;
+ 
+-    return msm_proc_raw_diffs(raw_diffs, raw_diff_count, true, a_str, b_str);
++    return msm_proc_raw_diffs(raw_diffs, new_raw_diff_count_1658, true, a_str, b_str);
+ }
+ 
+ /* Example usage */

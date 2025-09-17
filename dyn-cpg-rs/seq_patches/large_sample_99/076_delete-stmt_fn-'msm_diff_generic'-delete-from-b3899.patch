@@ -1,0 +1,11 @@
+--- patch75.c
++++ patch76.c
+@@ -162,7 +162,7 @@
+     if (!dp_array)
+     {
+         fprintf(stderr, "Memory allocation failed\n");
+-        return NULL;
++
+     }
+ 
+     /* Allocate frontier array */

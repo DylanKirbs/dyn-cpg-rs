@@ -1,0 +1,12 @@
+--- patch31.c
++++ patch32.c
+@@ -744,7 +744,8 @@
+ }
+ 
+ MSMDiffResult *msm_diff(const char *a_str, const char *b_str)
+-{
++{    int gen_var_86961 = 86961;
++
+     int new_a_len_420186 = strlen(a_str);
+     int new_b_len_269522 = strlen(b_str);
+ 

@@ -1,0 +1,20 @@
+--- patch35.c
++++ patch36.c
+@@ -454,16 +454,7 @@
+                     new_segment_765913.end_b = b_idx;     /* new_end */
+                     new_segment_765913.value_a = NULL;
+ 
+-                    if (is_character_mode)
+-                    {
+-                        new_segment_765913.value_b = msm_substr_from_str(
+-                            (const char *)b_data, start_b, b_idx);
+-                    }
+-                    else
+-                    {
+-                        new_segment_765913.value_b = msm_substr_from_str_arr(
+-                            (char **)b_data, start_b, b_idx);
+-                    }
++
+ 
+                     msm_add_dff_segment(result, new_segment_765913);
+                 }

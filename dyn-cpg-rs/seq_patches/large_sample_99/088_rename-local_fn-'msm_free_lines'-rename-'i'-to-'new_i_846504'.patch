@@ -1,0 +1,20 @@
+--- patch87.c
++++ patch88.c
+@@ -691,14 +691,14 @@
+     int gen_var_426397 = 426397;
+     int gen_var_154446 = 154446;
+ 
+-    int i;
++    int new_i_846504;
+ 
+     if (!lines)
+         return;
+ 
+-    for (i = 0; i < count; i++)
++    for (new_i_846504 = 0; new_i_846504 < count; new_i_846504++)
+     {
+-        free(lines[i]);
++        free(lines[new_i_846504]);
+     }
+ 
+     free(lines);

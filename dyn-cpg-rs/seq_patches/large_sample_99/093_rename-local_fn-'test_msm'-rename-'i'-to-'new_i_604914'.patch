@@ -1,0 +1,34 @@
+--- patch92.c
++++ patch93.c
+@@ -729,7 +729,7 @@
+ 
+     /* Added a new comment here so all of the test_msm function get moved */
+ 
+-    int i;
++    int new_i_604914;
+     const char *a_str = "int main() {\n"
+                         "    int x = 0, y = 1;\n"
+                         "    if (x < y) {\n"
+@@ -749,15 +749,15 @@
+     MSMDiffResult *result = msm_diff(a_str, b_str);
+     if (result)
+     {
+-        for (i = 0; i < result->count; i++)
++        for (new_i_604914 = 0; new_i_604914 < result->count; new_i_604914++)
+         {
+-            printf("Segment %d: Type %s\t| A[%d:%d], B[%d:%d]\n", i,
+-                   result->segments[i].type == EQUAL    ? "EQUAL"
+-                   : result->segments[i].type == INSERT ? "INSERT"
+-                   : result->segments[i].type == DELETE ? "DELETE"
++            printf("Segment %d: Type %s\t| A[%d:%d], B[%d:%d]\n", new_i_604914,
++                   result->segments[new_i_604914].type == EQUAL    ? "EQUAL"
++                   : result->segments[new_i_604914].type == INSERT ? "INSERT"
++                   : result->segments[new_i_604914].type == DELETE ? "DELETE"
+                                                         : "REPLACE",
+-                   result->segments[i].start_a, result->segments[i].end_a,
+-                   result->segments[i].start_b, result->segments[i].end_b);
++                   result->segments[new_i_604914].start_a, result->segments[new_i_604914].end_a,
++                   result->segments[new_i_604914].start_b, result->segments[new_i_604914].end_b);
+         }
+ 
+         msm_free_diff_result(result);

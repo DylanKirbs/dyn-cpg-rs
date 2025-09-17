@@ -1,0 +1,11 @@
+--- patch95.c
++++ patch96.c
+@@ -618,7 +618,7 @@
+                     msm_substr_from_str_arr((char **)a_data, new_start_a_845294, new_a_idx_607307);
+             }
+ 
+-            new_segment_765913.value_b = NULL;
++
+         }
+         else if (current_type == REPLACE)
+         {

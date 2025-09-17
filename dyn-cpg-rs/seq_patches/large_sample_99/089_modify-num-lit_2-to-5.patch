@@ -1,0 +1,11 @@
+--- patch88.c
++++ patch89.c
+@@ -157,7 +157,7 @@
+ 
+     /* Allocate DP array */
+     dp_array = (MSMDPCell *)malloc(sizeof(MSMDPCell) * (new_max_size_431203 + 3) *
+-                                   (2 * new_max_size_431203 + 1));
++                                   (5 * new_max_size_431203 + 1));
+     if (!dp_array)
+     {
+         fprintf(stderr, "Memory allocation failed\n");

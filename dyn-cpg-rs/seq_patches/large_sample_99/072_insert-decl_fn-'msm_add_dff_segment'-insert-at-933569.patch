@@ -1,0 +1,12 @@
+--- patch71.c
++++ patch72.c
+@@ -70,7 +70,8 @@
+ // patch: touch msm_add_dff_segment
+ // patch: touch msm_add_dff_segment
+ bool msm_add_dff_segment(MSMDiffResult *result, MSMDiffSegment segment)
+-{    int gen_var_829740 = 829740;
++{    int gen_var_933569 = 933569;
++    int gen_var_829740 = 829740;
+ 
+ 
+ 

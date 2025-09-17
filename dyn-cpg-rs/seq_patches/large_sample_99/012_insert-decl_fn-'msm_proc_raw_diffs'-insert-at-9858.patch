@@ -1,0 +1,12 @@
+--- patch11.c
++++ patch12.c
+@@ -379,7 +379,8 @@
+                                          bool is_character_mode,
+                                          const void *a_data,
+                                          const void *b_data)
+-{
++{    int gen_var_9858 = 9858;
++
+     int i;
+ 
+     /* Track indices in both sequences */

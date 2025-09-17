@@ -1,0 +1,10 @@
+--- patch49.c
++++ patch50.c
+@@ -294,6 +294,7 @@
+  */
+ // patch: touch compare_char_seq
+ // patch: touch compare_char_seq
++// patch: touch compare_char_seq
+ static bool compare_char_seq(const void *a_data,
+                              const void *b_data,
+                              size_t idx_a,

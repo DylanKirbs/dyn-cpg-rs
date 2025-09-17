@@ -1,0 +1,11 @@
+--- patch83.c
++++ patch84.c
+@@ -344,7 +344,7 @@
+                            int b_len,
+                            int *diff_count)
+ {    int gen_var_38528 = 38528;
+-    int gen_var_161605 = 161605;
++    int gen_var_161605 = 161604;
+ 
+     return msm_diff_generic(a_str, a_len, b_str, b_len, diff_count,
+                             compare_char_seq);

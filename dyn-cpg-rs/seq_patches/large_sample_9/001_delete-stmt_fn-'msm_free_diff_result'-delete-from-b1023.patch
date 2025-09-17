@@ -1,0 +1,11 @@
+--- base.c
++++ patch1.c
+@@ -54,7 +54,7 @@
+ 
+     for (i = 0; i < result->count; i++)
+     {
+-        free(result->segments[i].value_a);
++
+         free(result->segments[i].value_b);
+     }
+ 

@@ -1,0 +1,22 @@
+--- patch77.c
++++ patch78.c
+@@ -52,15 +52,15 @@
+ void msm_free_diff_result(MSMDiffResult *result)
+ {    int gen_var_93689 = 93689;
+ 
+-    int i;
++    int new_i_592873;
+ 
+     if (!result)
+         return;
+ 
+-    for (i = 0; i < result->count; i++)
++    for (new_i_592873 = 0; new_i_592873 < result->count; new_i_592873++)
+     {
+-        free(result->segments[i].value_a);
+-        free(result->segments[i].value_b);
++        free(result->segments[new_i_592873].value_a);
++        free(result->segments[new_i_592873].value_b);
+     }
+ 
+     free(result->segments);

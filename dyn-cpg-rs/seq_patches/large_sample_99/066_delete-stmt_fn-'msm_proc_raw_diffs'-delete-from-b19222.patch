@@ -1,0 +1,20 @@
+--- patch65.c
++++ patch66.c
+@@ -588,16 +588,7 @@
+ 
+             new_segment_765913.value_a = NULL;
+ 
+-            if (is_character_mode)
+-            {
+-                new_segment_765913.value_b =
+-                    msm_substr_from_str((const char *)b_data, new_start_b_329202, b_idx);
+-            }
+-            else
+-            {
+-                new_segment_765913.value_b =
+-                    msm_substr_from_str_arr((char **)b_data, new_start_b_329202, b_idx);
+-            }
++
+         }
+         else if (current_type == DELETE)
+         {

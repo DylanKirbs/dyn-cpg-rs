@@ -1,0 +1,15 @@
+--- patch22.c
++++ patch23.c
+@@ -353,10 +353,10 @@
+     }
+     if (idx_a < strlen(a_str) - 1 && idx_b < strlen(b_str) - 1)
+     {
+-        char next_a = a_str[idx_a + 1];
++        char new_next_a_151155 = a_str[idx_a + 1];
+         char next_b = b_str[idx_b + 1];
+ 
+-        if (next_a != next_b)
++        if (new_next_a_151155 != next_b)
+             return false;
+     }
+ 

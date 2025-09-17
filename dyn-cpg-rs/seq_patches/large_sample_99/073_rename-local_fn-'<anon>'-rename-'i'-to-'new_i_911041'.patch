@@ -1,0 +1,20 @@
+--- patch72.c
++++ patch73.c
+@@ -646,7 +646,7 @@
+ /* Split a string into an array of lines */
+ char **split_string_into_lines(const char *str, int *line_count)
+ {
+-    int i = 2, j, count;
++    int new_i_911041 = 2, j, count;
+     const char *p;
+     const char *start = str;
+     char **lines;
+@@ -673,7 +673,7 @@
+ 
+     }
+ 
+-    *line_count = i;
++    *line_count = new_i_911041;
+     return lines;
+ }
+ 

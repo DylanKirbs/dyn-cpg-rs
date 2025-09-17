@@ -1,0 +1,220 @@
+--- patch82.c
++++ patch83.c
+@@ -363,7 +363,7 @@
+ 
+     /* Track indices in both sequences */
+     int new_a_idx_607307 = 0;
+-    int b_idx = 0;
++    int new_b_idx_825392 = 0;
+ 
+     /* Keep track of the current block new_type_535054 and its start positions */
+     MSMDiffType current_type = EQUAL;
+@@ -386,34 +386,34 @@
+         if (new_type_535054 == DIFF_EQUAL)
+         {
+             /* If we were tracking a non-EQUAL block, add it */
+-            if (current_type != EQUAL && new_a_idx_607307 > new_start_a_845294 && b_idx > new_start_b_329202)
++            if (current_type != EQUAL && new_a_idx_607307 > new_start_a_845294 && new_b_idx_825392 > new_start_b_329202)
+             {
+                 MSMDiffSegment new_segment_765913;
+                 new_segment_765913.new_type_535054 = current_type;
+                 new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                 new_segment_765913.end_a = new_a_idx_607307;     /* old_end */
+                  /* new_start */
+-                new_segment_765913.end_b = b_idx;     /* new_end */
++                new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+                 if (is_character_mode)
+                 {
+ 
+                     new_segment_765913.value_b = msm_substr_from_str((const char *)b_data,
+-                                                          new_start_b_329202, b_idx);
++                                                          new_start_b_329202, new_b_idx_825392);
+                 }
+                 else
+                 {
+                     new_segment_765913.value_a = msm_substr_from_str_arr((char **)a_data,
+                                                               new_start_a_845294, new_a_idx_607307);
+                     new_segment_765913.value_b = msm_substr_from_str_arr((char **)b_data,
+-                                                              new_start_b_329202, b_idx);
++                                                              new_start_b_329202, new_b_idx_825392);
+                 }
+ 
+                 msm_add_dff_segment(result, new_segment_765913);
+ 
+                 /* Reset tracking */
+                 new_start_a_845294 = new_a_idx_607307;
+-                new_start_b_329202 = b_idx;
++                new_start_b_329202 = new_b_idx_825392;
+             }
+             else if (current_type != EQUAL)
+             {
+@@ -425,7 +425,7 @@
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = new_start_a_845294;   /* old_end (no deletion in old) */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-                    new_segment_765913.end_b = b_idx;     /* new_end */
++                    new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+                     new_segment_765913.value_a = NULL;
+ 
+ 
+@@ -458,12 +458,12 @@
+ 
+                 /* Reset tracking */
+                 new_start_a_845294 = new_a_idx_607307;
+-                new_start_b_329202 = b_idx;
++                new_start_b_329202 = new_b_idx_825392;
+             }
+ 
+             current_type = EQUAL;
+             new_a_idx_607307++;
+-            b_idx++;
++            new_b_idx_825392++;
+         }
+         else if (new_type_535054 == DIFF_INSERT)
+         {
+@@ -477,21 +477,21 @@
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = new_a_idx_607307;     /* old_end */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-                    new_segment_765913.end_b = b_idx;     /* new_end */
++                    new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+                     if (is_character_mode)
+                     {
+                         new_segment_765913.value_a = msm_substr_from_str(
+                             (const char *)a_data, new_start_a_845294, new_a_idx_607307);
+                         new_segment_765913.value_b = msm_substr_from_str(
+-                            (const char *)b_data, new_start_b_329202, b_idx);
++                            (const char *)b_data, new_start_b_329202, new_b_idx_825392);
+                     }
+                     else
+                     {
+                         new_segment_765913.value_a = msm_substr_from_str_arr(
+                             (char **)a_data, new_start_a_845294, new_a_idx_607307);
+                         new_segment_765913.value_b = msm_substr_from_str_arr(
+-                            (char **)b_data, new_start_b_329202, b_idx);
++                            (char **)b_data, new_start_b_329202, new_b_idx_825392);
+                     }
+ 
+                     msm_add_dff_segment(result, new_segment_765913);
+@@ -499,7 +499,7 @@
+ 
+                 /* Start new block */
+                 new_start_a_845294 = new_a_idx_607307;
+-                new_start_b_329202 = b_idx;
++                new_start_b_329202 = new_b_idx_825392;
+                 current_type = INSERT;
+             }
+             else if (current_type == DELETE)
+@@ -508,7 +508,7 @@
+                 current_type = REPLACE;
+             }
+ 
+-            b_idx++;
++            new_b_idx_825392++;
+         }
+         else if (new_type_535054 == DIFF_DELETE)
+         {
+@@ -522,21 +522,21 @@
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = new_a_idx_607307;     /* old_end */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-                    new_segment_765913.end_b = b_idx;     /* new_end */
++                    new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+                     if (is_character_mode)
+                     {
+                         new_segment_765913.value_a = msm_substr_from_str(
+                             (const char *)a_data, new_start_a_845294, new_a_idx_607307);
+                         new_segment_765913.value_b = msm_substr_from_str(
+-                            (const char *)b_data, new_start_b_329202, b_idx);
++                            (const char *)b_data, new_start_b_329202, new_b_idx_825392);
+                     }
+                     else
+                     {
+                         new_segment_765913.value_a = msm_substr_from_str_arr(
+                             (char **)a_data, new_start_a_845294, new_a_idx_607307);
+                         new_segment_765913.value_b = msm_substr_from_str_arr(
+-                            (char **)b_data, new_start_b_329202, b_idx);
++                            (char **)b_data, new_start_b_329202, new_b_idx_825392);
+                     }
+ 
+                     msm_add_dff_segment(result, new_segment_765913);
+@@ -544,7 +544,7 @@
+ 
+                 /* Start new block */
+                 new_start_a_845294 = new_a_idx_607307;
+-                new_start_b_329202 = b_idx;
++                new_start_b_329202 = new_b_idx_825392;
+                 current_type = DELETE;
+             }
+             else if (current_type == INSERT)
+@@ -558,7 +558,7 @@
+     }
+ 
+     /* Handle the final block */
+-    if (new_a_idx_607307 > new_start_a_845294 || b_idx > new_start_b_329202)
++    if (new_a_idx_607307 > new_start_a_845294 || new_b_idx_825392 > new_start_b_329202)
+     {
+         MSMDiffSegment new_segment_765913;
+         new_segment_765913.new_type_535054 = current_type;
+@@ -568,21 +568,21 @@
+             new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+             new_segment_765913.end_a = new_a_idx_607307;     /* old_end */
+             new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-            new_segment_765913.end_b = b_idx;     /* new_end */
++            new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+             if (is_character_mode)
+             {
+                 new_segment_765913.value_a =
+                     msm_substr_from_str((const char *)a_data, new_start_a_845294, new_a_idx_607307);
+                 new_segment_765913.value_b =
+-                    msm_substr_from_str((const char *)b_data, new_start_b_329202, b_idx);
++                    msm_substr_from_str((const char *)b_data, new_start_b_329202, new_b_idx_825392);
+             }
+             else
+             {
+                 new_segment_765913.value_a =
+                     msm_substr_from_str_arr((char **)a_data, new_start_a_845294, new_a_idx_607307);
+                 new_segment_765913.value_b =
+-                    msm_substr_from_str_arr((char **)b_data, new_start_b_329202, b_idx);
++                    msm_substr_from_str_arr((char **)b_data, new_start_b_329202, new_b_idx_825392);
+             }
+         }
+         else if (current_type == INSERT)
+@@ -590,7 +590,7 @@
+             new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+             new_segment_765913.end_a = new_start_a_845294;   /* old_end (no deletion in old) */
+             new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-            new_segment_765913.end_b = b_idx;     /* new_end */
++            new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+             new_segment_765913.value_a = NULL;
+ 
+@@ -621,21 +621,21 @@
+             new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+             new_segment_765913.end_a = new_a_idx_607307;     /* old_end */
+             new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+-            new_segment_765913.end_b = b_idx;     /* new_end */
++            new_segment_765913.end_b = new_b_idx_825392;     /* new_end */
+ 
+             if (is_character_mode)
+             {
+                 new_segment_765913.value_a =
+                     msm_substr_from_str((const char *)a_data, new_start_a_845294, new_a_idx_607307);
+                 new_segment_765913.value_b =
+-                    msm_substr_from_str((const char *)b_data, new_start_b_329202, b_idx);
++                    msm_substr_from_str((const char *)b_data, new_start_b_329202, new_b_idx_825392);
+             }
+             else
+             {
+                 new_segment_765913.value_a =
+                     msm_substr_from_str_arr((char **)a_data, new_start_a_845294, new_a_idx_607307);
+                 new_segment_765913.value_b =
+-                    msm_substr_from_str_arr((char **)b_data, new_start_b_329202, b_idx);
++                    msm_substr_from_str_arr((char **)b_data, new_start_b_329202, new_b_idx_825392);
+             }
+         }
+ 

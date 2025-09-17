@@ -1,0 +1,23 @@
+--- patch62.c
++++ patch63.c
+@@ -352,7 +352,7 @@
+                                          const void *b_data)
+ {    int gen_var_9858 = 9858;
+ 
+-    int i;
++    int new_i_862151;
+ 
+     /* Track indices in both sequences */
+     int a_idx = 0;
+@@ -372,9 +372,9 @@
+         return NULL;
+     }
+ 
+-    for (i = 0; i < raw_diff_count; i++)
++    for (new_i_862151 = 0; new_i_862151 < raw_diff_count; new_i_862151++)
+     {
+-        MSMRawDiffType new_type_535054 = raw_diffs[i].new_type_535054;
++        MSMRawDiffType new_type_535054 = raw_diffs[new_i_862151].new_type_535054;
+ 
+         if (new_type_535054 == DIFF_EQUAL)
+         {

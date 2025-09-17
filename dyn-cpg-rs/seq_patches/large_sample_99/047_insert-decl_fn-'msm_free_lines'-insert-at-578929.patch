@@ -1,0 +1,12 @@
+--- patch46.c
++++ patch47.c
+@@ -681,7 +681,8 @@
+ // patch: touch msm_free_lines
+ // patch: touch msm_free_lines
+ void msm_free_lines(char **lines, int count)
+-{    int gen_var_916610 = 916610;
++{    int gen_var_578929 = 578929;
++    int gen_var_916610 = 916610;
+     int gen_var_426397 = 426397;
+     int gen_var_154446 = 154446;
+ 

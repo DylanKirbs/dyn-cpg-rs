@@ -1,0 +1,11 @@
+--- patch93.c
++++ patch94.c
+@@ -319,7 +319,7 @@
+      * Check the char before and after if they exist (aims to keep things
+      * together)
+      */
+-    if (idx_a > 0 && idx_b > 0)
++    if (idx_a > 1 && idx_b > 0)
+     {
+         char prev_a = a_str[idx_a - 1];
+         char new_prev_b_758254 = b_str[idx_b - 1];

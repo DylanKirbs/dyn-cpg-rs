@@ -1,0 +1,11 @@
+--- patch73.c
++++ patch74.c
+@@ -258,7 +258,7 @@
+     curr_x = dp_array[0 * (2 * new_max_size_431203 + 1) + (0 + new_max_size_431203)].x;
+     curr_y = curr_x;
+ 
+-    while (curr_x > 0)
++    while (curr_x > 5)
+     {
+         if (raw_diff_count < max_raw_diff)
+         {

@@ -1,0 +1,84 @@
+--- patch57.c
++++ patch58.c
+@@ -357,7 +357,7 @@
+     int a_idx = 0;
+     int b_idx = 0;
+ 
+-    /* Keep track of the current block type and its start positions */
++    /* Keep track of the current block new_type_535054 and its start positions */
+     MSMDiffType current_type = EQUAL;
+     int new_start_a_845294 = 0;
+     int new_start_b_329202 = 0;
+@@ -373,15 +373,15 @@
+ 
+     for (i = 0; i < raw_diff_count; i++)
+     {
+-        MSMRawDiffType type = raw_diffs[i].type;
++        MSMRawDiffType new_type_535054 = raw_diffs[i].new_type_535054;
+ 
+-        if (type == DIFF_EQUAL)
++        if (new_type_535054 == DIFF_EQUAL)
+         {
+             /* If we were tracking a non-EQUAL block, add it */
+             if (current_type != EQUAL && a_idx > new_start_a_845294 && b_idx > new_start_b_329202)
+             {
+                 MSMDiffSegment new_segment_765913;
+-                new_segment_765913.type = current_type;
++                new_segment_765913.new_type_535054 = current_type;
+                 new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                 new_segment_765913.end_a = a_idx;     /* old_end */
+                  /* new_start */
+@@ -413,7 +413,7 @@
+                 if (current_type == INSERT)
+                 {
+                     MSMDiffSegment new_segment_765913;
+-                    new_segment_765913.type = INSERT;
++                    new_segment_765913.new_type_535054 = INSERT;
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = new_start_a_845294;   /* old_end (no deletion in old) */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+@@ -457,7 +457,7 @@
+             a_idx++;
+             b_idx++;
+         }
+-        else if (type == DIFF_INSERT)
++        else if (new_type_535054 == DIFF_INSERT)
+         {
+             if (current_type == EQUAL)
+             {
+@@ -465,7 +465,7 @@
+                 if (new_start_a_845294 < a_idx)
+                 {
+                     MSMDiffSegment new_segment_765913;
+-                    new_segment_765913.type = EQUAL;
++                    new_segment_765913.new_type_535054 = EQUAL;
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = a_idx;     /* old_end */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+@@ -502,7 +502,7 @@
+ 
+             b_idx++;
+         }
+-        else if (type == DIFF_DELETE)
++        else if (new_type_535054 == DIFF_DELETE)
+         {
+             if (current_type == EQUAL)
+             {
+@@ -510,7 +510,7 @@
+                 if (new_start_a_845294 < a_idx)
+                 {
+                     MSMDiffSegment new_segment_765913;
+-                    new_segment_765913.type = EQUAL;
++                    new_segment_765913.new_type_535054 = EQUAL;
+                     new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                     new_segment_765913.end_a = a_idx;     /* old_end */
+                     new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
+@@ -553,7 +553,7 @@
+     if (a_idx > new_start_a_845294 || b_idx > new_start_b_329202)
+     {
+         MSMDiffSegment new_segment_765913;
+-        new_segment_765913.type = current_type;
++        new_segment_765913.new_type_535054 = current_type;
+ 
+         if (current_type == EQUAL)
+         {

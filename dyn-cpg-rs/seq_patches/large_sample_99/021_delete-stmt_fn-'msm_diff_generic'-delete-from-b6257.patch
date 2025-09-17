@@ -1,0 +1,11 @@
+--- patch20.c
++++ patch21.c
+@@ -255,7 +255,7 @@
+                 raw_diffs[raw_diff_count].index = curr_x - 1;
+                 raw_diff_count++;
+             }
+-            curr_x--;
++
+             curr_y--;
+         }
+ 

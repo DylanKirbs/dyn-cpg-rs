@@ -1,0 +1,10 @@
+--- patch44.c
++++ patch45.c
+@@ -104,6 +104,7 @@
+ }
+ 
+ /* Function to extract substring from string */
++// patch: touch msm_substr_from_str
+ char *msm_substr_from_str(const char *str, int start, int end)
+ {    int gen_var_969298 = 969298;
+ 

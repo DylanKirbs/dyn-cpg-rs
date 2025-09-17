@@ -1,0 +1,11 @@
+--- patch85.c
++++ patch86.c
+@@ -43,7 +43,7 @@
+     }
+ 
+     result->count = 0;
+-    result->capacity = initial_capacity;
++
+     return result;
+ }
+ 

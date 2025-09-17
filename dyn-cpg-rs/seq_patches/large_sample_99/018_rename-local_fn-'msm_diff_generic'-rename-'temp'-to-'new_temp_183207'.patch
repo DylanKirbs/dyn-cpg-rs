@@ -1,0 +1,14 @@
+--- patch17.c
++++ patch18.c
+@@ -305,9 +305,9 @@
+     /* Reverse the raw_diffs array */
+     for (i = 0; i < raw_diff_count / 2; i++)
+     {
+-        MSMRawDiff temp = raw_diffs[i];
++        MSMRawDiff new_temp_183207 = raw_diffs[i];
+         raw_diffs[i] = raw_diffs[raw_diff_count - 1 - i];
+-        raw_diffs[raw_diff_count - 1 - i] = temp;
++        raw_diffs[raw_diff_count - 1 - i] = new_temp_183207;
+     }
+ 
+     *diff_count = raw_diff_count;

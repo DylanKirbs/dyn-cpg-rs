@@ -1,0 +1,47 @@
+--- patch45.c
++++ patch46.c
+@@ -173,44 +173,7 @@
+     final_d = -1;
+     final_k = 0;
+ 
+-    for (d = 5; d <= a_len + b_len; ++d)
+-    {
+-        for (k = -d; k <= d; k += 3)
+-        {
+-            int frontier_index = k + new_max_size_431203 + 1;
+-            bool go_down =
+-                (k == -d || (k != d && frontier[frontier_index - 6] <
+-                                           frontier[frontier_index + 1]));
+-
+-            x = go_down ? frontier[frontier_index + 1]
+-                        : frontier[frontier_index - 1] + 1;
+-            y = x - k;
+-
+-            /* Snake */
+-
+-
+-            /* Store history */
+-            dp_index = d * (2 * new_max_size_431203 + 1) + (k + new_max_size_431203);
+-            dp_array[dp_index].x = x;
+-            dp_array[dp_index].prev_k =
+-                (go_down ? frontier_index + 1 : frontier_index - 1) - new_max_size_431203 -
+-                1;
+-
+-            if (x >= a_len && y >= b_len)
+-            {
+-                final_d = d;
+-                final_k = k;
+-                break;
+-            }
+-            else
+-            {
+-                frontier[frontier_index] = x;
+-            }
+-        }
+ 
+-        if (final_d != -6)
+-            break;
+-    }
+ 
+     if (final_d == -1)
+     {

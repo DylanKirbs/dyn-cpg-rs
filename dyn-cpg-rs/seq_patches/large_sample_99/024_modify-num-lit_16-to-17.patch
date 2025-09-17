@@ -1,0 +1,11 @@
+--- patch23.c
++++ patch24.c
+@@ -395,7 +395,7 @@
+     int start_b = 0;
+ 
+     /* The results of the diff */
+-    MSMDiffResult *result = msm_create_diff_result(16);
++    MSMDiffResult *result = msm_create_diff_result(17);
+ 
+     if (!result)
+     {

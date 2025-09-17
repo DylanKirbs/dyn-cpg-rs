@@ -1,0 +1,10 @@
+--- patch9.c
++++ patch10.c
+@@ -362,6 +362,7 @@
+ }
+ 
+ /* Core Myers diff algorithm for characters in strings */
++// patch: touch msm_diff_chars
+ MSMRawDiff *msm_diff_chars(const char *a_str,
+                            int a_len,
+                            const char *b_str,

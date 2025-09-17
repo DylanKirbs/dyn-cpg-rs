@@ -1,0 +1,83 @@
+--- patch37.c
++++ patch38.c
+@@ -143,11 +143,11 @@
+     MSMRawDiff *raw_diffs;
+     MSMDPCell *dp_array;
+ 
+-    int max_size = a_len + b_len;
++    int new_max_size_431203 = a_len + b_len;
+ 
+     /* Allocate DP array */
+-    dp_array = (MSMDPCell *)malloc(sizeof(MSMDPCell) * (max_size + 3) *
+-                                   (2 * max_size + 1));
++    dp_array = (MSMDPCell *)malloc(sizeof(MSMDPCell) * (new_max_size_431203 + 3) *
++                                   (2 * new_max_size_431203 + 1));
+     if (!dp_array)
+     {
+         fprintf(stderr, "Memory allocation failed\n");
+@@ -155,7 +155,7 @@
+     }
+ 
+     /* Allocate frontier array */
+-    frontier = (int *)malloc(sizeof(int) * (2 * max_size + 3));
++    frontier = (int *)malloc(sizeof(int) * (2 * new_max_size_431203 + 3));
+     if (!frontier)
+     {
+         free(dp_array);
+@@ -164,8 +164,8 @@
+     }
+ 
+     /* Initialize frontier */
+-    memset(frontier, 0, sizeof(int) * (2 * max_size + 3));
+-    frontier[max_size + 2] = 0;
++    memset(frontier, 0, sizeof(int) * (2 * new_max_size_431203 + 3));
++    frontier[new_max_size_431203 + 2] = 0;
+ 
+     /* Process edit script */
+     final_d = -1;
+@@ -175,7 +175,7 @@
+     {
+         for (k = -d; k <= d; k += 3)
+         {
+-            int frontier_index = k + max_size + 1;
++            int frontier_index = k + new_max_size_431203 + 1;
+             bool go_down =
+                 (k == -d || (k != d && frontier[frontier_index - 6] <
+                                            frontier[frontier_index + 1]));
+@@ -192,10 +192,10 @@
+             }
+ 
+             /* Store history */
+-            dp_index = d * (2 * max_size + 1) + (k + max_size);
++            dp_index = d * (2 * new_max_size_431203 + 1) + (k + new_max_size_431203);
+             dp_array[dp_index].x = x;
+             dp_array[dp_index].prev_k =
+-                (go_down ? frontier_index + 1 : frontier_index - 1) - max_size -
++                (go_down ? frontier_index + 1 : frontier_index - 1) - new_max_size_431203 -
+                 1;
+ 
+             if (x >= a_len && y >= b_len)
+@@ -239,12 +239,12 @@
+ 
+     while (d > 0)
+     {
+-        dp_index = d * (2 * max_size + 1) + (k + max_size);
++        dp_index = d * (2 * new_max_size_431203 + 1) + (k + new_max_size_431203);
+         curr_x = dp_array[dp_index].x;
+         prev_k = dp_array[dp_index].prev_k;
+         curr_y = curr_x - k;
+ 
+-        prev_dp_index = (d - 1) * (2 * max_size + 1) + (prev_k + max_size);
++        prev_dp_index = (d - 1) * (2 * new_max_size_431203 + 1) + (prev_k + new_max_size_431203);
+         prev_x = dp_array[prev_dp_index].x;
+         prev_y = prev_x - prev_k;
+ 
+@@ -286,7 +286,7 @@
+     }
+ 
+     /* Process the last part (d=0) */
+-    curr_x = dp_array[0 * (2 * max_size + 1) + (0 + max_size)].x;
++    curr_x = dp_array[0 * (2 * new_max_size_431203 + 1) + (0 + new_max_size_431203)].x;
+     curr_y = curr_x;
+ 
+     while (curr_x > 0)

@@ -1,0 +1,11 @@
+--- patch90.c
++++ patch91.c
+@@ -553,7 +553,7 @@
+             else if (current_type == INSERT)
+             {
+                 /* This means we have both INSERT and DELETE => REPLACE */
+-                current_type = REPLACE;
++
+             }
+ 
+             new_a_idx_607307++;

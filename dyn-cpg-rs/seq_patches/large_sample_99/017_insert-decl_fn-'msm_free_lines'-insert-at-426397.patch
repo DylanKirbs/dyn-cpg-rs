@@ -1,0 +1,12 @@
+--- patch16.c
++++ patch17.c
+@@ -746,7 +746,8 @@
+ 
+ /* Helper function to free lines array */
+ void msm_free_lines(char **lines, int count)
+-{    int gen_var_154446 = 154446;
++{    int gen_var_426397 = 426397;
++    int gen_var_154446 = 154446;
+ 
+     int i;
+ 

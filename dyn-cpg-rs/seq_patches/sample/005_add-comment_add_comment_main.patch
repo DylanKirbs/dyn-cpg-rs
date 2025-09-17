@@ -1,0 +1,7 @@
+--- patch4.c
++++ patch5.c
+@@ -1,3 +1,4 @@
++// patch: touch main
+ int main(int argc, char *argv[])
+ {    int gen_var_37263_renamed = 37263;
+ 

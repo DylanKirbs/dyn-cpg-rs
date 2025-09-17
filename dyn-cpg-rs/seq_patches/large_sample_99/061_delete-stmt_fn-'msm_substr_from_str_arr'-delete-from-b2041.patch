@@ -1,0 +1,12 @@
+--- patch60.c
++++ patch61.c
+@@ -100,8 +100,7 @@
+     for (i = start; i < end; i++)
+     {
+         strcat(result, strings[i]);
+-        if (i < end - 1)
+-            strcat(result, "\n");
++
+     }
+ 
+     return result;

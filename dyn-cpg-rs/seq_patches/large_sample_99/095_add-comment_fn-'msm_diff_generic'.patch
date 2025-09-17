@@ -1,0 +1,10 @@
+--- patch94.c
++++ patch95.c
+@@ -134,6 +134,7 @@
+ 
+ /* Core Myers diff algorithm implementation */
+ // patch: touch msm_diff_generic
++// patch: touch msm_diff_generic
+ static MSMRawDiff *msm_diff_generic(const void *a_data,
+                                     int a_len,
+                                     const void *b_data,

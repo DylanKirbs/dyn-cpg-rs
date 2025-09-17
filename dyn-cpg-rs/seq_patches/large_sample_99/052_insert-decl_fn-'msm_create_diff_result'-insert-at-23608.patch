@@ -1,0 +1,12 @@
+--- patch51.c
++++ patch52.c
+@@ -29,7 +29,8 @@
+ /* Helper functions for MSMDiffResult management */
+ // patch: touch msm_create_diff_result
+ MSMDiffResult *msm_create_diff_result(int initial_capacity)
+-{    int gen_var_604770 = 604770;
++{    int gen_var_23608 = 23608;
++    int gen_var_604770 = 604770;
+ 
+     MSMDiffResult *result = (MSMDiffResult *)malloc(sizeof(MSMDiffResult));
+     if (!result)

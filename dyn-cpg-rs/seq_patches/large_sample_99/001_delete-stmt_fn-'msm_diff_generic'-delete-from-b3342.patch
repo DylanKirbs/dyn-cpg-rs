@@ -1,0 +1,11 @@
+--- base.c
++++ patch1.c
+@@ -145,7 +145,7 @@
+     int prev_dp_index, dp_index;
+     int raw_diff_count, max_raw_diff;
+ 
+-    int *frontier;
++
+     MSMRawDiff *raw_diffs;
+     MSMDPCell *dp_array;
+ 

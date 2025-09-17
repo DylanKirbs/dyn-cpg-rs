@@ -1,0 +1,10 @@
+--- patch29.c
++++ patch30.c
+@@ -377,6 +377,7 @@
+ }
+ 
+ /* Process raw diffs into higher-level diff segments */
++// patch: touch msm_proc_raw_diffs
+ static MSMDiffResult *msm_proc_raw_diffs(MSMRawDiff *raw_diffs,
+                                          int raw_diff_count,
+                                          bool is_character_mode,

@@ -1,0 +1,11 @@
+--- patch50.c
++++ patch51.c
+@@ -202,7 +202,7 @@
+     {
+         dp_index = d * (2 * new_max_size_431203 + 1) + (k + new_max_size_431203);
+         curr_x = dp_array[dp_index].x;
+-        prev_k = dp_array[dp_index].prev_k;
++
+         curr_y = curr_x - k;
+ 
+         prev_dp_index = (d - 1) * (2 * new_max_size_431203 + 1) + (prev_k + new_max_size_431203);

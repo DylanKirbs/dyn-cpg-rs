@@ -1,0 +1,12 @@
+--- patch86.c
++++ patch87.c
+@@ -309,7 +309,8 @@
+                              const void *b_data,
+                              size_t idx_a,
+                              size_t idx_b)
+-{
++{    int gen_var_76087 = 76087;
++
+     const char *a_str = (const char *)a_data;
+     const char *b_str = (const char *)b_data;
+ 

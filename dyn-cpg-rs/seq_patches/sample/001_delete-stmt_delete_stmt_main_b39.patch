@@ -1,0 +1,10 @@
+--- base.c
++++ patch1.c
+@@ -1,6 +1,6 @@
+ int main(int argc, char *argv[])
+ {
+-    int x = source();
++
+     if (x > 0)
+     {
+         int z = 2 * x;

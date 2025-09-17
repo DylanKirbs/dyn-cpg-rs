@@ -1,0 +1,11 @@
+--- patch30.c
++++ patch31.c
+@@ -487,7 +487,7 @@
+                             (char **)a_data, start_a, a_idx);
+                     }
+ 
+-                    new_segment_765913.value_b = NULL;
++
+                     msm_add_dff_segment(result, new_segment_765913);
+                 }
+ 

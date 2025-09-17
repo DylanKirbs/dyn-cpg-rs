@@ -1,0 +1,11 @@
+--- patch33.c
++++ patch34.c
+@@ -145,7 +145,7 @@
+     int max_size = a_len + b_len;
+ 
+     /* Allocate DP array */
+-    dp_array = (MSMDPCell *)malloc(sizeof(MSMDPCell) * (max_size + 1) *
++    dp_array = (MSMDPCell *)malloc(sizeof(MSMDPCell) * (max_size + 3) *
+                                    (2 * max_size + 1));
+     if (!dp_array)
+     {

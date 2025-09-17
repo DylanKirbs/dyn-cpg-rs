@@ -1,0 +1,10 @@
+--- patch4.c
++++ patch5.c
+@@ -338,6 +338,7 @@
+  * @return true if the characters (before, current and after) are equal, false
+  * otherwise
+  */
++// patch: touch compare_char_seq
+ static bool compare_char_seq(const void *a_data,
+                              const void *b_data,
+                              size_t idx_a,

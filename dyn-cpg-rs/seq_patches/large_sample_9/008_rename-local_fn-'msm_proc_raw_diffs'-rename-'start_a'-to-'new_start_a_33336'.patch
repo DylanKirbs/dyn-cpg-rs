@@ -1,0 +1,268 @@
+--- patch7.c
++++ patch8.c
+@@ -397,7 +397,7 @@
+ 
+     /* Keep track of the current block type and its start positions */
+     MSMDiffType current_type = EQUAL;
+-    int start_a = 0;
++    int new_start_a_33336 = 0;
+     int start_b = 0;
+ 
+     /* The results of the diff */
+@@ -416,11 +416,11 @@
+         if (type == DIFF_EQUAL)
+         {
+             /* If we were tracking a non-EQUAL block, add it */
+-            if (current_type != EQUAL && a_idx > start_a && b_idx > start_b)
++            if (current_type != EQUAL && a_idx > new_start_a_33336 && b_idx > start_b)
+             {
+                 MSMDiffSegment segment;
+                 segment.type = current_type;
+-                segment.start_a = start_a; /* old_start */
++                segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+                 segment.end_a = a_idx;     /* old_end */
+                 segment.start_b = start_b; /* new_start */
+                 segment.end_b = b_idx;     /* new_end */
+@@ -428,14 +428,14 @@
+                 if (is_character_mode)
+                 {
+                     segment.value_a = msm_substr_from_str((const char *)a_data,
+-                                                          start_a, a_idx);
++                                                          new_start_a_33336, a_idx);
+                     segment.value_b = msm_substr_from_str((const char *)b_data,
+                                                           start_b, b_idx);
+                 }
+                 else
+                 {
+                     segment.value_a = msm_substr_from_str_arr((char **)a_data,
+-                                                              start_a, a_idx);
++                                                              new_start_a_33336, a_idx);
+                     segment.value_b = msm_substr_from_str_arr((char **)b_data,
+                                                               start_b, b_idx);
+                 }
+@@ -443,7 +443,7 @@
+                 msm_add_dff_segment(result, segment);
+ 
+                 /* Reset tracking */
+-                start_a = a_idx;
++                new_start_a_33336 = a_idx;
+                 start_b = b_idx;
+             }
+             else if (current_type != EQUAL)
+@@ -453,8 +453,8 @@
+                 {
+                     MSMDiffSegment segment;
+                     segment.type = INSERT;
+-                    segment.start_a = start_a; /* old_start */
+-                    segment.end_a = start_a;   /* old_end (no deletion in old) */
++                    segment.new_start_a_33336 = new_start_a_33336; /* old_start */
++                    segment.end_a = new_start_a_33336;   /* old_end (no deletion in old) */
+                     segment.start_b = start_b; /* new_start */
+                     segment.end_b = b_idx;     /* new_end */
+                     segment.value_a = NULL;
+@@ -476,7 +476,7 @@
+                 {
+                     MSMDiffSegment segment;
+                     segment.type = DELETE;
+-                    segment.start_a = start_a; /* old_start */
++                    segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+                     segment.end_a = a_idx;     /* old_end */
+                     segment.start_b = start_b; /* new_start */
+                     segment.end_b = start_b;   /* new_end (no insertion in new) */
+@@ -484,12 +484,12 @@
+                     if (is_character_mode)
+                     {
+                         segment.value_a = msm_substr_from_str(
+-                            (const char *)a_data, start_a, a_idx);
++                            (const char *)a_data, new_start_a_33336, a_idx);
+                     }
+                     else
+                     {
+                         segment.value_a = msm_substr_from_str_arr(
+-                            (char **)a_data, start_a, a_idx);
++                            (char **)a_data, new_start_a_33336, a_idx);
+                     }
+ 
+                     segment.value_b = NULL;
+@@ -497,7 +497,7 @@
+                 }
+ 
+                 /* Reset tracking */
+-                start_a = a_idx;
++                new_start_a_33336 = a_idx;
+                 start_b = b_idx;
+             }
+ 
+@@ -510,11 +510,11 @@
+             if (current_type == EQUAL)
+             {
+                 /* Finalize EQUAL block if needed */
+-                if (start_a < a_idx)
++                if (new_start_a_33336 < a_idx)
+                 {
+                     MSMDiffSegment segment;
+                     segment.type = EQUAL;
+-                    segment.start_a = start_a; /* old_start */
++                    segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+                     segment.end_a = a_idx;     /* old_end */
+                     segment.start_b = start_b; /* new_start */
+                     segment.end_b = b_idx;     /* new_end */
+@@ -522,14 +522,14 @@
+                     if (is_character_mode)
+                     {
+                         segment.value_a = msm_substr_from_str(
+-                            (const char *)a_data, start_a, a_idx);
++                            (const char *)a_data, new_start_a_33336, a_idx);
+                         segment.value_b = msm_substr_from_str(
+                             (const char *)b_data, start_b, b_idx);
+                     }
+                     else
+                     {
+                         segment.value_a = msm_substr_from_str_arr(
+-                            (char **)a_data, start_a, a_idx);
++                            (char **)a_data, new_start_a_33336, a_idx);
+                         segment.value_b = msm_substr_from_str_arr(
+                             (char **)b_data, start_b, b_idx);
+                     }
+@@ -538,7 +538,7 @@
+                 }
+ 
+                 /* Start new block */
+-                start_a = a_idx;
++                new_start_a_33336 = a_idx;
+                 start_b = b_idx;
+                 current_type = INSERT;
+             }
+@@ -555,11 +555,11 @@
+             if (current_type == EQUAL)
+             {
+                 /* Finalize EQUAL block if needed */
+-                if (start_a < a_idx)
++                if (new_start_a_33336 < a_idx)
+                 {
+                     MSMDiffSegment segment;
+                     segment.type = EQUAL;
+-                    segment.start_a = start_a; /* old_start */
++                    segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+                     segment.end_a = a_idx;     /* old_end */
+                     segment.start_b = start_b; /* new_start */
+                     segment.end_b = b_idx;     /* new_end */
+@@ -567,14 +567,14 @@
+                     if (is_character_mode)
+                     {
+                         segment.value_a = msm_substr_from_str(
+-                            (const char *)a_data, start_a, a_idx);
++                            (const char *)a_data, new_start_a_33336, a_idx);
+                         segment.value_b = msm_substr_from_str(
+                             (const char *)b_data, start_b, b_idx);
+                     }
+                     else
+                     {
+                         segment.value_a = msm_substr_from_str_arr(
+-                            (char **)a_data, start_a, a_idx);
++                            (char **)a_data, new_start_a_33336, a_idx);
+                         segment.value_b = msm_substr_from_str_arr(
+                             (char **)b_data, start_b, b_idx);
+                     }
+@@ -583,7 +583,7 @@
+                 }
+ 
+                 /* Start new block */
+-                start_a = a_idx;
++                new_start_a_33336 = a_idx;
+                 start_b = b_idx;
+                 current_type = DELETE;
+             }
+@@ -598,14 +598,14 @@
+     }
+ 
+     /* Handle the final block */
+-    if (a_idx > start_a || b_idx > start_b)
++    if (a_idx > new_start_a_33336 || b_idx > start_b)
+     {
+         MSMDiffSegment segment;
+         segment.type = current_type;
+ 
+         if (current_type == EQUAL)
+         {
+-            segment.start_a = start_a; /* old_start */
++            segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+             segment.end_a = a_idx;     /* old_end */
+             segment.start_b = start_b; /* new_start */
+             segment.end_b = b_idx;     /* new_end */
+@@ -613,22 +613,22 @@
+             if (is_character_mode)
+             {
+                 segment.value_a =
+-                    msm_substr_from_str((const char *)a_data, start_a, a_idx);
++                    msm_substr_from_str((const char *)a_data, new_start_a_33336, a_idx);
+                 segment.value_b =
+                     msm_substr_from_str((const char *)b_data, start_b, b_idx);
+             }
+             else
+             {
+                 segment.value_a =
+-                    msm_substr_from_str_arr((char **)a_data, start_a, a_idx);
++                    msm_substr_from_str_arr((char **)a_data, new_start_a_33336, a_idx);
+                 segment.value_b =
+                     msm_substr_from_str_arr((char **)b_data, start_b, b_idx);
+             }
+         }
+         else if (current_type == INSERT)
+         {
+-            segment.start_a = start_a; /* old_start */
+-            segment.end_a = start_a;   /* old_end (no deletion in old) */
++            segment.new_start_a_33336 = new_start_a_33336; /* old_start */
++            segment.end_a = new_start_a_33336;   /* old_end (no deletion in old) */
+             segment.start_b = start_b; /* new_start */
+             segment.end_b = b_idx;     /* new_end */
+ 
+@@ -647,7 +647,7 @@
+         }
+         else if (current_type == DELETE)
+         {
+-            segment.start_a = start_a; /* old_start */
++            segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+             segment.end_a = a_idx;     /* old_end */
+              /* new_start */
+             segment.end_b = start_b;   /* new_end (no insertion in new) */
+@@ -655,19 +655,19 @@
+             if (is_character_mode)
+             {
+                 segment.value_a =
+-                    msm_substr_from_str((const char *)a_data, start_a, a_idx);
++                    msm_substr_from_str((const char *)a_data, new_start_a_33336, a_idx);
+             }
+             else
+             {
+                 segment.value_a =
+-                    msm_substr_from_str_arr((char **)a_data, start_a, a_idx);
++                    msm_substr_from_str_arr((char **)a_data, new_start_a_33336, a_idx);
+             }
+ 
+             segment.value_b = NULL;
+         }
+         else if (current_type == REPLACE)
+         {
+-            segment.start_a = start_a; /* old_start */
++            segment.new_start_a_33336 = new_start_a_33336; /* old_start */
+             segment.end_a = a_idx;     /* old_end */
+             segment.start_b = start_b; /* new_start */
+             segment.end_b = b_idx;     /* new_end */
+@@ -675,14 +675,14 @@
+             if (is_character_mode)
+             {
+                 segment.value_a =
+-                    msm_substr_from_str((const char *)a_data, start_a, a_idx);
++                    msm_substr_from_str((const char *)a_data, new_start_a_33336, a_idx);
+                 segment.value_b =
+                     msm_substr_from_str((const char *)b_data, start_b, b_idx);
+             }
+             else
+             {
+                 segment.value_a =
+-                    msm_substr_from_str_arr((char **)a_data, start_a, a_idx);
++                    msm_substr_from_str_arr((char **)a_data, new_start_a_33336, a_idx);
+                 segment.value_b =
+                     msm_substr_from_str_arr((char **)b_data, start_b, b_idx);
+             }

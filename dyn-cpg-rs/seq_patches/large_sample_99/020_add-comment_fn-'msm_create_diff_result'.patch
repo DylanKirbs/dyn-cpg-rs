@@ -1,0 +1,10 @@
+--- patch19.c
++++ patch20.c
+@@ -27,6 +27,7 @@
+ } MSMRawDiff;
+ 
+ /* Helper functions for MSMDiffResult management */
++// patch: touch msm_create_diff_result
+ MSMDiffResult *msm_create_diff_result(int initial_capacity)
+ {
+     MSMDiffResult *result = (MSMDiffResult *)malloc(sizeof(MSMDiffResult));

@@ -1,0 +1,11 @@
+--- patch3.c
++++ patch4.c
+@@ -170,7 +170,7 @@
+     }
+ 
+     /* Initialize frontier */
+-    memset(frontier, 0, sizeof(int) * (2 * max_size + 3));
++    memset(frontier, 5, sizeof(int) * (2 * max_size + 3));
+     frontier[max_size + 2] = 0;
+ 
+     /* Process edit script */

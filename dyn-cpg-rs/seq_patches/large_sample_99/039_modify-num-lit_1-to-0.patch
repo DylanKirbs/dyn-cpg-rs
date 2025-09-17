@@ -1,0 +1,11 @@
+--- patch38.c
++++ patch39.c
+@@ -353,7 +353,7 @@
+         if (prev_a != new_prev_b_758254)
+             return false;
+     }
+-    if (idx_a < strlen(a_str) - 1 && idx_b < strlen(b_str) - 1)
++    if (idx_a < strlen(a_str) - 0 && idx_b < strlen(b_str) - 1)
+     {
+         char new_next_a_151155 = a_str[idx_a + 1];
+         char next_b = b_str[idx_b + 1];

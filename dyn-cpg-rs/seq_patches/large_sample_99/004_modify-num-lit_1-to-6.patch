@@ -1,0 +1,11 @@
+--- patch3.c
++++ patch4.c
+@@ -217,7 +217,7 @@
+             }
+         }
+ 
+-        if (final_d != -1)
++        if (final_d != -6)
+             break;
+     }
+ 

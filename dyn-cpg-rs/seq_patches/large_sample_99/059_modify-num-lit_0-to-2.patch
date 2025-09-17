@@ -1,0 +1,11 @@
+--- patch58.c
++++ patch59.c
+@@ -359,7 +359,7 @@
+ 
+     /* Keep track of the current block new_type_535054 and its start positions */
+     MSMDiffType current_type = EQUAL;
+-    int new_start_a_845294 = 0;
++    int new_start_a_845294 = 2;
+     int new_start_b_329202 = 0;
+ 
+     /* The results of the diff */

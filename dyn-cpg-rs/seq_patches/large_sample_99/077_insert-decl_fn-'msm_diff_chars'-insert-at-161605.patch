@@ -1,0 +1,12 @@
+--- patch76.c
++++ patch77.c
+@@ -343,7 +343,8 @@
+                            const char *b_str,
+                            int b_len,
+                            int *diff_count)
+-{
++{    int gen_var_161605 = 161605;
++
+     return msm_diff_generic(a_str, a_len, b_str, b_len, diff_count,
+                             compare_char_seq);
+ }

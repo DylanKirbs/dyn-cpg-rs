@@ -1,0 +1,9 @@
+--- patch2.c
++++ patch3.c
+@@ -1,5 +1,5 @@
+ int main(int argc, char *argv[])
+-{    int gen_var_37263 = 37263;
++{    int gen_var_37263_renamed = 37263;
+ 
+ 
+     if (x > 0)

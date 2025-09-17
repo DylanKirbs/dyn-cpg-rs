@@ -1,0 +1,11 @@
+--- patch5.c
++++ patch6.c
+@@ -648,7 +648,7 @@
+         {
+             segment.start_a = start_a; /* old_start */
+             segment.end_a = a_idx;     /* old_end */
+-            segment.start_b = start_b; /* new_start */
++             /* new_start */
+             segment.end_b = start_b;   /* new_end (no insertion in new) */
+ 
+             if (is_character_mode)

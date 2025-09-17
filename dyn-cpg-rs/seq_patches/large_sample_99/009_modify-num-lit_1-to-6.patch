@@ -1,0 +1,11 @@
+--- patch8.c
++++ patch9.c
+@@ -174,7 +174,7 @@
+         {
+             int frontier_index = k + max_size + 1;
+             bool go_down =
+-                (k == -d || (k != d && frontier[frontier_index - 1] <
++                (k == -d || (k != d && frontier[frontier_index - 6] <
+                                            frontier[frontier_index + 1]));
+ 
+             x = go_down ? frontier[frontier_index + 1]

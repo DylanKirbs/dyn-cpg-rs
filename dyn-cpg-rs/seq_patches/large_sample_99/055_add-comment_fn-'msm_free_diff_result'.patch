@@ -1,0 +1,10 @@
+--- patch54.c
++++ patch55.c
+@@ -48,6 +48,7 @@
+     return result;
+ }
+ 
++// patch: touch msm_free_diff_result
+ void msm_free_diff_result(MSMDiffResult *result)
+ {
+     int i;

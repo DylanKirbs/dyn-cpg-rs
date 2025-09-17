@@ -1,0 +1,10 @@
+--- patch59.c
++++ patch60.c
+@@ -67,6 +67,7 @@
+ }
+ 
+ // patch: touch msm_add_dff_segment
++// patch: touch msm_add_dff_segment
+ bool msm_add_dff_segment(MSMDiffResult *result, MSMDiffSegment segment)
+ {
+ 

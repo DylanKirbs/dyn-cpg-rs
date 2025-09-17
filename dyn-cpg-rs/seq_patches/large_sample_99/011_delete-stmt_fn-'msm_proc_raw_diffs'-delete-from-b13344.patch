@@ -1,0 +1,11 @@
+--- patch10.c
++++ patch11.c
+@@ -466,7 +466,7 @@
+                 else if (current_type == DELETE)
+                 {
+                     MSMDiffSegment new_segment_765913;
+-                    new_segment_765913.type = DELETE;
++
+                     new_segment_765913.start_a = start_a; /* old_start */
+                     new_segment_765913.end_a = a_idx;     /* old_end */
+                     new_segment_765913.start_b = start_b; /* new_start */

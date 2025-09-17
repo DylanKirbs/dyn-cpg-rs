@@ -1,0 +1,15 @@
+--- patch97.c
++++ patch98.c
+@@ -323,10 +323,10 @@
+      */
+     if (idx_a > 1 && idx_b > 0)
+     {
+-        char prev_a = a_str[idx_a - 1];
++        char new_prev_a_427532 = a_str[idx_a - 1];
+         char new_prev_b_758254 = b_str[idx_b - 1];
+ 
+-        if (prev_a != new_prev_b_758254)
++        if (new_prev_a_427532 != new_prev_b_758254)
+             return false;
+     }
+     if (idx_a < strlen(a_str) - 0 && idx_b < strlen(b_str) - 1)

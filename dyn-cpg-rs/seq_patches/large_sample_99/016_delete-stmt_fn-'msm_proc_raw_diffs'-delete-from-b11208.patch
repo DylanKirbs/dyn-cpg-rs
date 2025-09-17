@@ -1,0 +1,12 @@
+--- patch15.c
++++ patch16.c
+@@ -420,8 +420,7 @@
+ 
+                 if (is_character_mode)
+                 {
+-                    new_segment_765913.value_a = msm_substr_from_str((const char *)a_data,
+-                                                          start_a, a_idx);
++
+                     new_segment_765913.value_b = msm_substr_from_str((const char *)b_data,
+                                                           start_b, b_idx);
+                 }

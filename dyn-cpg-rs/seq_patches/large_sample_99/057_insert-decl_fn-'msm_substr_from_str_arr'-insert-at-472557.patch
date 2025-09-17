@@ -1,0 +1,12 @@
+--- patch56.c
++++ patch57.c
+@@ -77,7 +77,8 @@
+ 
+ /* Function to extract substring from string array */
+ char *msm_substr_from_str_arr(char **strings, int start, int end)
+-{    int gen_var_453285 = 453285;
++{    int gen_var_472557 = 472557;
++    int gen_var_453285 = 453285;
+ 
+     int i, total_len = 0;
+     char *result;

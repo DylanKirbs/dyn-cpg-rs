@@ -1,0 +1,11 @@
+--- patch13.c
++++ patch14.c
+@@ -170,7 +170,7 @@
+ 
+     for (d = 0; d <= a_len + b_len; ++d)
+     {
+-        for (k = -d; k <= d; k += 2)
++        for (k = -d; k <= d; k += 3)
+         {
+             int frontier_index = k + max_size + 1;
+             bool go_down =

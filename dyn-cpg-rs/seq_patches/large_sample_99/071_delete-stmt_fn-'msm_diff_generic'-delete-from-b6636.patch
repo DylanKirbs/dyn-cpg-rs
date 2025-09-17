@@ -1,0 +1,11 @@
+--- patch70.c
++++ patch71.c
+@@ -266,7 +266,7 @@
+             raw_diff_count++;
+         }
+         curr_x--;
+-        curr_y--;
++
+     }
+ 
+     /* Free resources we don't need anymore */

@@ -1,0 +1,11 @@
+--- patch28.c
++++ patch29.c
+@@ -170,7 +170,7 @@
+     final_d = -1;
+     final_k = 0;
+ 
+-    for (d = 0; d <= a_len + b_len; ++d)
++    for (d = 5; d <= a_len + b_len; ++d)
+     {
+         for (k = -d; k <= d; k += 3)
+         {

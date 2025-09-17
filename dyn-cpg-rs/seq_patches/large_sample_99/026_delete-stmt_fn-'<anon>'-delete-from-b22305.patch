@@ -1,0 +1,33 @@
+--- patch25.c
++++ patch26.c
+@@ -716,30 +716,7 @@
+     /* Copy each line */
+     for (p = str;; p++)
+     {
+-        if (*p == '\n' || *p == '\0')
+-        {
+-            size_t len = p - start;
+-            lines[i] = (char *)malloc(len + 1);
+-            if (!lines[i])
+-            {
+-                /* Clean up on error */
+-                for (j = 0; j < i; j++)
+-                {
+-                    free(lines[j]);
+-                }
+-                free(lines);
+-                return NULL;
+-            }
+ 
+-            /* Copy the line without the newline */
+-            strncpy(lines[i], start, len);
+-            lines[i][len] = '\0';
+-            i++;
+-
+-            if (*p == '\0')
+-                break;
+-            start = p + 1;
+-        }
+     }
+ 
+     *line_count = i;

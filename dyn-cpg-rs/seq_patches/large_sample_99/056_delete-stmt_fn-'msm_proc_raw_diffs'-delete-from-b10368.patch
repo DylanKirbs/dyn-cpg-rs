@@ -1,0 +1,11 @@
+--- patch55.c
++++ patch56.c
+@@ -383,7 +383,7 @@
+                 new_segment_765913.type = current_type;
+                 new_segment_765913.new_start_a_845294 = new_start_a_845294; /* old_start */
+                 new_segment_765913.end_a = a_idx;     /* old_end */
+-                new_segment_765913.new_start_b_329202 = new_start_b_329202; /* new_start */
++                 /* new_start */
+                 new_segment_765913.end_b = b_idx;     /* new_end */
+ 
+                 if (is_character_mode)

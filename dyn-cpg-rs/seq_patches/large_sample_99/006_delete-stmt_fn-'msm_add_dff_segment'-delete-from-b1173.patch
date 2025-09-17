@@ -1,0 +1,20 @@
+--- patch5.c
++++ patch6.c
+@@ -64,17 +64,7 @@
+ 
+ bool msm_add_dff_segment(MSMDiffResult *result, MSMDiffSegment segment)
+ {
+-    if (result->count >= result->capacity)
+-    {
+-        int new_capacity = result->capacity * 2;
+-        MSMDiffSegment *new_segments = (MSMDiffSegment *)realloc(
+-            result->segments, new_capacity * sizeof(MSMDiffSegment));
+-        if (!new_segments)
+-            return false;
+ 
+-        result->segments = new_segments;
+-        result->capacity = new_capacity;
+-    }
+ 
+     result->segments[result->count++] = segment;
+     return true;

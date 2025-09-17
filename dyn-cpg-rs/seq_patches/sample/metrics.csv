@@ -1,0 +1,6 @@
+patch_name,edits_count,full_timings_ms,incremental_timings_ms
+001_delete-stmt_delete_stmt_main_b39.patch,1,1,2
+002_insert-decl_insert_decl_main_37263.patch,1,0,1
+003_rename-local_rename_local_main_gen_var_37263_to_gen_var_37263_renamed.patch,1,0,0
+004_modify-numeric-literal_modify_num_0_to_0.patch,0,0,0
+005_add-comment_add_comment_main.patch,1,1,2

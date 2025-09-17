@@ -1,0 +1,15 @@
+--- patch40.c
++++ patch41.c
+@@ -185,11 +185,7 @@
+             y = x - k;
+ 
+             /* Snake */
+-            while (x < a_len && y < b_len && compare_fn(a_data, b_data, x, y))
+-            {
+-                ++x;
+-                ++y;
+-            }
++
+ 
+             /* Store history */
+             dp_index = d * (2 * new_max_size_431203 + 1) + (k + new_max_size_431203);

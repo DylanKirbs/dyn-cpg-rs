@@ -1,0 +1,10 @@
+--- patch34.c
++++ patch35.c
+@@ -725,6 +725,7 @@
+ }
+ 
+ /* Helper function to free lines array */
++// patch: touch msm_free_lines
+ void msm_free_lines(char **lines, int count)
+ {    int gen_var_916610 = 916610;
+     int gen_var_426397 = 426397;

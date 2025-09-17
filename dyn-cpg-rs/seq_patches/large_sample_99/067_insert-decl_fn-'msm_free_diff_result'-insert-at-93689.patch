@@ -1,0 +1,12 @@
+--- patch66.c
++++ patch67.c
+@@ -50,7 +50,8 @@
+ 
+ // patch: touch msm_free_diff_result
+ void msm_free_diff_result(MSMDiffResult *result)
+-{
++{    int gen_var_93689 = 93689;
++
+     int i;
+ 
+     if (!result)
