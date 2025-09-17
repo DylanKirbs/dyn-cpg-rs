@@ -235,6 +235,10 @@ def main():
 
     print(f"Loaded metrics from {len(all_dfs)} directories, {missing} missing.")
 
+    # Some simple textual metrics like the average times for each dir
+    for df in all_dfs:
+        print(f"Directory: {df['directory'].iloc[0]}\n{df.describe()}")
+
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
         plot_metrics(combined_df, output_dir)

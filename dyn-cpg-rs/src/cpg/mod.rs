@@ -94,9 +94,9 @@ pub struct Cpg {
     /// Maps EdgeId to Edge
     edges: SlotMap<EdgeId, Edge>,
     /// Maps NodeId to a list of EdgeIds that point to it
-    incoming: HashMap<NodeId, Vec<EdgeId>>,
+    incoming: HashMap<NodeId, HashSet<EdgeId>>,
     /// Maps NodeId to a list of EdgeIds that point from it
-    outgoing: HashMap<NodeId, Vec<EdgeId>>,
+    outgoing: HashMap<NodeId, HashSet<EdgeId>>,
     /// Spatial index for fast lookups by byte range
     spatial_index: Index,
     /// The language of the CPG
@@ -167,18 +167,18 @@ impl Cpg {
 
     pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
         let id = self.edges.insert(edge.clone());
-        self.incoming.entry(edge.to).or_default().push(id);
-        self.outgoing.entry(edge.from).or_default().push(id);
+        self.incoming.entry(edge.to).or_default().insert(id);
+        self.outgoing.entry(edge.from).or_default().insert(id);
         id
     }
 
     pub fn remove_edge(&mut self, edge: EdgeId) -> Option<Edge> {
         if let Some(e) = self.edges.remove(edge) {
             if let Some(in_edges) = self.incoming.get_mut(&e.to) {
-                in_edges.retain(|&e| e != edge);
+                in_edges.remove(&edge);
             }
             if let Some(out_edges) = self.outgoing.get_mut(&e.from) {
-                out_edges.retain(|&e| e != edge);
+                out_edges.remove(&edge);
             }
             Some(e)
         } else {
