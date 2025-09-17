@@ -829,22 +829,3 @@ fn test_mre_patch_53() {
     dyn_cpg_rs::logging::init();
     seq_patch_parse("seq_patches/mre_53/");
 }
-
-// --- Criterion benchmarks --- //
-
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-
-fn benchmark_example_function() {
-    // Example function to benchmark
-    let sum: u32 = (1..1000).sum();
-    black_box(sum);
-}
-
-fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("example_function", |b| {
-        b.iter(|| benchmark_example_function())
-    });
-}
-
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
