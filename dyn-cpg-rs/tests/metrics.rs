@@ -578,12 +578,15 @@ fn run_benchmark(
     println!("Results written to {}", output_file);
 
     if let Ok(report) = guard.report().build() {
-        let file = File::create(format!("{}-flamegraph.svg", repository))
+        let file = File::create(format!("benchmarks/{}-flamegraph.svg", repository))
             .expect("Failed to create flamegraph file");
         report.flamegraph(file).expect("Failed to write flamegraph");
     }
 
-    println!("Flamegraph written to {}-flamegraph.svg", repository);
+    println!(
+        "Flamegraph written to benchmarks/{}-flamegraph.svg",
+        repository
+    );
 
     let elapsed = start.elapsed();
     println!("Benchmark on {} repos completed in {:?}", depth, elapsed);
@@ -643,7 +646,7 @@ fn seq_patch_parse(path: &str) {
     let csv_path = format!("{}metrics.csv", path);
     std::fs::write(
         &csv_path,
-        "patch_name,edits_count,full_timings_ms,incremental_timings_ms\n",
+        "patch_name,edits_count,full_timings_ms,incremental_timings_ms,same\n",
     )
     .expect("Failed to create metrics CSV file");
 
@@ -751,7 +754,7 @@ fn seq_patch_parse(path: &str) {
 
         // Assert that the CPGs are equivalent
         if !matches!(comparison, DetailedComparisonResult::Equivalent) {
-            info!(
+            warn!(
                 "Patch {} resulted in mismatched CPGs!\nComparison: {}\nFull CPG: {} nodes, {} edges\nIncremental CPG: {} nodes, {} edges\nEdits applied: {} edits, {} lines changed, Performance: full={}ms, incremental={}ms",
                 patch.display(),
                 comparison.non_diff_string(),
@@ -788,11 +791,16 @@ fn seq_patch_parse(path: &str) {
             .expect("Failed to convert patch file name to string");
 
         let csv_line = format!(
-            "{},{},{},{}\n",
+            "{},{},{},{},{}\n",
             patch_name,
             edits.len(),
             full_timings.full_parse_total_ms().unwrap_or(0),
-            incr_timings.incremental_parse_total_ms().unwrap_or(0)
+            incr_timings.incremental_parse_total_ms().unwrap_or(0),
+            if matches!(comparison, DetailedComparisonResult::Equivalent) {
+                "1"
+            } else {
+                "0"
+            }
         );
 
         std::fs::OpenOptions::new()

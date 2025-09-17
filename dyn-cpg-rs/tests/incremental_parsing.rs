@@ -116,6 +116,7 @@ fn test_incremental_reparse() {
 
 /// Integration test for incremental parsing and CPG updates
 /// This test verifies that incremental updates produce semantically equivalent CPGs
+#[ignore = "Quite slow, only run if we want the metrics"]
 #[test]
 fn test_incremental_reparse_perf() {
     // Init the lang and parser

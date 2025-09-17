@@ -186,11 +186,39 @@ def incremental_vs_full(df: pd.DataFrame, output_file: Path):
     save_plot(fig, output_file)
 
 
+@analysis
+def num_same_by_patch_type(df: pd.DataFrame, output_file: Path):
+    agg = (
+        df.groupby(["patch_type", "same"])["edits_count"]
+        .count()
+        .reset_index()
+        .rename(columns={"edits_count": "count"})
+    )
+    agg["same"] = agg["same"].map({1: "Same", 0: "Different"})
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(x="patch_type", y="count", hue="same", data=agg, ax=ax)
+    ax.set_title("Number of Same vs Different CPGs by Patch Type")
+    ax.set_ylabel("Count")
+    ax.set_xlabel("Patch Type")
+    save_plot(fig, output_file)
+
+
 # --- Preprocessing --- #
 
 
 def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    # edits_count full_timings_ms incremental_timings_ms same patch_index patch_name patch_type directory
     df = df.copy()
+
+    # Make numeric and bump the min to 0.1ms to avoid log(0) issues
+    df["full_timings_ms"] = pd.to_numeric(df["full_timings_ms"], errors="coerce").clip(
+        lower=0.1
+    )
+    df["incremental_timings_ms"] = pd.to_numeric(
+        df["incremental_timings_ms"], errors="coerce"
+    ).clip(lower=0.1)
+
     df["patch_type"] = df["patch_name"].str.split("_", n=2).str[1]
     df["patch_index"] = pd.to_numeric(
         df["patch_name"].str.split("_", n=1).str[0], errors="coerce"

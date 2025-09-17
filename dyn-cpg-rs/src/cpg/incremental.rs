@@ -395,7 +395,7 @@ impl Cpg {
         }
     }
 
-    /// Phase 3B: Full Rebuild - Replace subtree completely
+    /// Replace subtree completely
     fn rebuild_subtree(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) -> NodeId {
         trace!("[REBUILD] Rebuilding subtree for node {:?}", cpg_node);
 
@@ -1502,39 +1502,36 @@ impl Cpg {
             self.remove_subtree(edge.to)?;
         }
 
+        // Remove the node and its spatial index entry first
         self.nodes.remove(root);
         self.spatial_index.delete(root);
 
-        let mut edges_to_remove = Vec::new();
-        for (edge_id, edge) in self.edges.iter() {
-            if edge.from == root || edge.to == root {
-                edges_to_remove.push(edge_id);
-            }
+        // Collect edge ids directly from adjacency sets instead of scanning the whole edges map.
+        // This avoids iterating self.edges and the expensive ::next calls on large maps.
+        let mut edges_to_remove: HashSet<super::EdgeId> = HashSet::new();
+
+        if let Some(out_set) = self.outgoing.remove(&root) {
+            edges_to_remove.extend(out_set.into_iter());
+        }
+        if let Some(in_set) = self.incoming.remove(&root) {
+            edges_to_remove.extend(in_set.into_iter());
         }
 
-        // Remove each edge and update adjacency lists
+        // Remove each edge and update adjacency lists of neighbor nodes
         for edge_id in edges_to_remove {
             if let Some(edge) = self.edges.remove(edge_id) {
-                // Remove from outgoing list of the 'from' node
-                if let Some(outgoing_list) = self.outgoing.get_mut(&edge.from) {
-                    outgoing_list.retain(|&id| id != edge_id);
-                    if outgoing_list.is_empty() {
-                        self.outgoing.remove(&edge.from);
+                if edge.from != root {
+                    if let Some(out_edges) = self.outgoing.get_mut(&edge.from) {
+                        out_edges.remove(&edge_id);
                     }
                 }
-
-                // Remove from incoming list of the 'to' node
-                if let Some(incoming_list) = self.incoming.get_mut(&edge.to) {
-                    incoming_list.retain(|&id| id != edge_id);
-                    if incoming_list.is_empty() {
-                        self.incoming.remove(&edge.to);
+                if edge.to != root {
+                    if let Some(in_edges) = self.incoming.get_mut(&edge.to) {
+                        in_edges.remove(&edge_id);
                     }
                 }
             }
         }
-
-        self.incoming.remove(&root);
-        self.outgoing.remove(&root);
 
         Ok(())
     }

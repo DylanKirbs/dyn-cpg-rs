@@ -224,7 +224,9 @@ impl SexpSerializer {
 
         self.on_node_enter(cpg, id)?;
 
-        for edge in cpg.get_outgoing_edges(id) {
+        let mut outgoing = cpg.get_outgoing_edges(id);
+        outgoing.sort_by_key(|edge| (cpg.spatial_index.get_node_span(edge.to), edge.type_.label()));
+        for edge in outgoing {
             write!(
                 self.buf,
                 "\n{}(-> {} ",
