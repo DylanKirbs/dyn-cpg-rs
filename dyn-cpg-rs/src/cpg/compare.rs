@@ -1,7 +1,7 @@
 use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType, serialization::SexpSerializer};
 use similar::TextDiff;
 use std::collections::{HashMap, HashSet};
-use tracing::debug;
+use tracing::{debug, trace};
 
 // --- Comparison Results --- //
 
@@ -130,7 +130,7 @@ impl std::fmt::Display for FunctionComparisonResult {
                 l_root,
                 r_root,
             } => {
-                let max_diff_size = 512;
+                let max_diff_size = 1024;
 
                 let mut source = left_cpg.source_diff(right_cpg, mismatches);
                 let mut sexp = left_cpg.sexp_diff(right_cpg, *l_root, *r_root);
@@ -180,7 +180,7 @@ impl Cpg {
     /// Returns a detailed comparison result indicating structural differences and function-level mismatches
     pub fn compare(&self, other: &Cpg) -> Result<DetailedComparisonResult, CpgError> {
         debug!(
-            "Comparing CPGs: left root = {:?}, right root = {:?}",
+            "[COMPARE] Comparing CPGs: left root = {:?}, right root = {:?}",
             self.get_root(),
             other.get_root()
         );
@@ -322,7 +322,7 @@ impl Cpg {
         let child_edges = self.get_outgoing_edges(root);
 
         debug!(
-            "Looking for functions in {} child edges from root {:?}",
+            "[COMPARE] Looking for functions in {} child edges from root {:?}",
             child_edges.len(),
             root
         );
@@ -333,8 +333,8 @@ impl Cpg {
                     CpgError::MissingField(format!("Child node with id {:?} not found", edge.to))
                 })?;
 
-                debug!(
-                    "Child node type: {:?}, properties: {:?}",
+                trace!(
+                    "[COMPARE] Child node type: {:?}, properties: {:?}",
                     node.type_, node.properties
                 );
 
@@ -346,14 +346,14 @@ impl Cpg {
                         .get("name")
                         .cloned()
                         .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
-                    debug!("Found function with name: {}", name);
+                    trace!("[COMPARE] Found function with name: {}", name);
                     functions.insert(name, edge.to);
                 }
             }
         }
 
         debug!(
-            "Found {} functions: {:?}",
+            "[COMPARE] Found {} functions: {:?}",
             functions.len(),
             functions.keys().collect::<Vec<_>>()
         );

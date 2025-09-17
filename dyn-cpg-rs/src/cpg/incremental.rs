@@ -6,9 +6,9 @@ use crate::{
 };
 use std::{
     cmp::{max, min},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 /// Configuration for incremental update thresholds
 #[derive(Debug, Clone)]
@@ -675,6 +675,64 @@ impl Cpg {
                 }
             }
         }
+
+        // After applying operations, ensure SyntaxSibling edges reflect the
+        // current source ordering of SyntaxChild children. Surgical inserts
+        // and deletes may leave sibling edges out-of-date which breaks
+        // ordering-dependent logic (and can cause missing nodes in diffs).
+        // Strategy: gather all current SyntaxChild children of `parent`,
+        // sort them by their start byte from the spatial index, remove any
+        // existing SyntaxSibling edges among them, and re-add sibling edges
+        // to form a proper chain.
+        let mut children: Vec<NodeId> = self
+            .get_outgoing_edges(parent)
+            .into_iter()
+            .filter(|e| e.type_ == EdgeType::SyntaxChild)
+            .map(|e| e.to)
+            .collect();
+
+        if children.len() > 1 {
+            // Sort by start byte (fallback to node id order if no span)
+            children.sort_by_key(|&child| {
+                self.spatial_index
+                    .get_node_span(child)
+                    .map(|(s, _)| s)
+                    .unwrap_or(usize::MAX)
+            });
+
+            // Build set for quick membership tests
+            let children_set: std::collections::HashSet<_> = children.iter().copied().collect();
+
+            // Remove existing SyntaxSibling edges among these children
+            // Collect edge ids to remove first to avoid borrow conflicts
+            let mut sibling_edges_to_remove = Vec::new();
+            for &child in &children {
+                for edge in self.get_outgoing_edges(child) {
+                    if edge.type_ == EdgeType::SyntaxSibling && children_set.contains(&edge.to) {
+                        // Find the EdgeId for this edge
+                        if let Some((edge_id, _)) = self.edges.iter().find(|(_, e)| {
+                            e.from == child && e.to == edge.to && e.type_ == EdgeType::SyntaxSibling
+                        }) {
+                            sibling_edges_to_remove.push(edge_id);
+                        }
+                    }
+                }
+            }
+
+            for edge_id in sibling_edges_to_remove {
+                self.remove_edge(edge_id);
+            }
+
+            // Recreate sibling edges in order
+            for i in 0..(children.len().saturating_sub(1)) {
+                self.add_edge(crate::cpg::Edge {
+                    from: children[i],
+                    to: children[i + 1],
+                    type_: EdgeType::SyntaxSibling,
+                    properties: std::collections::HashMap::new(),
+                });
+            }
+        }
     }
 
     /// Incrementally update the CPG from the CST edits
@@ -959,49 +1017,212 @@ impl Cpg {
             })
             .collect();
 
-        // Deduplicate nodes - if multiple ranges point to the same containing node,
-        // merge their ranges so the node only gets updated once
-        let mut node_to_merged_range: HashMap<NodeId, (usize, usize, usize, usize)> =
-            HashMap::new();
-        let original_count = containing_nodes_with_ranges.len();
-        for (node_id, range) in containing_nodes_with_ranges {
-            match node_to_merged_range.get(&node_id).copied() {
-                Some(existing_range) => {
-                    // Merge with existing range
-                    let merged = (
-                        min(existing_range.0, range.0), // old_start
-                        max(existing_range.1, range.1), // old_end
-                        min(existing_range.2, range.2), // new_start
-                        max(existing_range.3, range.3), // new_end
+        // First attempt: try to surgically update nodes that can be updated in-place
+        // If a node can't be surgically updated, collect it as a rebuild candidate and
+        // proceed to merge/expand those ranges as before.
+        let thresholds = UpdateThresholds::default();
+
+        let mut rebuild_candidates: Vec<(NodeId, (usize, usize, usize, usize))> = Vec::new();
+        // Surgical candidates will be applied after we compute merged rebuild ranges
+        // to avoid mutating spatial_index before pairing merged ranges to containers.
+        let mut early_surgical_candidates: Vec<(NodeId, tree_sitter::Node)> = Vec::new();
+        let mut early_surgical_ids: HashSet<NodeId> = HashSet::new();
+        // Track structures/functions updated by surgical updates so we don't
+        // double-work them later.
+        let mut updated_structures: Vec<NodeId> = Vec::new();
+        let mut updated_functions: Vec<NodeId> = Vec::new();
+
+        for (node_id, range) in &containing_nodes_with_ranges {
+            // If this node was identified as an orphaned parent for a changed range,
+            // prefer a full rebuild — orphaned parents usually indicate newly added
+            // structure that surgical updates may not handle correctly.
+            if orphaned_parent_nodes.contains(node_id) {
+                rebuild_candidates.push((*node_id, *range));
+                continue;
+            }
+            // Pair to CST node in the new tree (special-case root)
+            let cst_node_opt = if self.root.map_or(false, |root| root == *node_id) {
+                Some(new_tree.root_node())
+            } else {
+                new_tree
+                    .root_node()
+                    .descendant_for_byte_range(range.0, range.1)
+            };
+
+            if let Some(cst_node) = cst_node_opt {
+                let (should_rebuild, metrics) =
+                    self.should_rebuild(*node_id, &cst_node, &thresholds);
+                trace!(
+                    "[INCREMENTAL UPDATE] [EARLY DECIDE] Node {:?}: should_rebuild={}, metrics={:?}",
+                    node_id, should_rebuild, metrics
+                );
+
+                if !should_rebuild {
+                    // Defer actual surgical update until after we compute merged rebuild ranges
+                    trace!(
+                        "[INCREMENTAL UPDATE] [EARLY SURGICAL] Queuing node {:?} for surgical update",
+                        node_id
                     );
-                    node_to_merged_range.insert(node_id, merged);
-                    debug!(
-                        "[INCREMENTAL UPDATE] [FILTERING] Merged ranges for node {:?}: {:?} + {:?} = {:?}",
-                        node_id, existing_range, range, merged
-                    );
+                    early_surgical_candidates.push((*node_id, cst_node));
+                    early_surgical_ids.insert(*node_id);
+                } else {
+                    // Needs rebuild, collect for merge/expand
+                    rebuild_candidates.push((*node_id, *range));
                 }
-                None => {
-                    node_to_merged_range.insert(node_id, range);
+            } else {
+                // No CST pairing - schedule for rebuild
+                rebuild_candidates.push((*node_id, *range));
+            }
+        }
+
+        // Now continue with the existing merge/expand logic but only for rebuild candidates
+        // Group overlapping ranges from rebuild_candidates
+        let mut merged_ranges: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+        for (_, range) in rebuild_candidates.iter() {
+            let mut current_range = *range;
+            let mut i = 0;
+
+            // Try to merge with existing ranges
+            while i < merged_ranges.len() {
+                if ranges_overlap(current_range, merged_ranges[i]) {
+                    // Merge ranges and remove the old one
+                    current_range = merge_ranges(current_range, merged_ranges.remove(i));
+                    // Don't increment i since we removed an element
+                } else {
+                    i += 1;
+                }
+            }
+
+            merged_ranges.push(current_range);
+        }
+
+        debug!(
+            "[INCREMENTAL UPDATE] [FILTERING] From {} rebuild candidates merged into {} ranges",
+            rebuild_candidates.len(),
+            merged_ranges.len()
+        );
+
+        // Apply queued surgical updates now that rebuild ranges are computed.
+        // Doing this earlier could mutate spans used for pairing merged ranges.
+        for (node_id, cst_node) in early_surgical_candidates.drain(..) {
+            trace!(
+                "[INCREMENTAL UPDATE] [EARLY SURGICAL APPLY] Applying surgical update for {:?}",
+                node_id
+            );
+            // Clean analysis edges before surgical update to avoid stale PDData/CF edges
+            // interfering with post-translation and comparison.
+            self.clean_analysis_edges(node_id);
+            self.update_in_place_pairwise(node_id, &cst_node);
+
+            let structure = crate::languages::get_container_parent(self, node_id);
+            if !updated_structures.contains(&structure) {
+                updated_structures.push(structure);
+            }
+            if let Some(function) = crate::languages::get_containing_function(self, node_id) {
+                if !updated_functions.contains(&function) {
+                    updated_functions.push(function);
                 }
             }
         }
 
-        let mut dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> =
-            node_to_merged_range.into_iter().collect();
-
-        debug!(
-            "[INCREMENTAL UPDATE] [FILTERING] After deduplication: {} containing nodes found from {} original ranges",
-            dirty_nodes.len(),
-            original_count
-        );
-
         // Add any orphaned parent nodes that weren't already included
-        for node_id in orphaned_parent_nodes {
-            if !dirty_nodes.iter().any(|(id, _)| *id == node_id) {
+        for node_id in orphaned_parent_nodes.iter().cloned() {
+            if let Some((start, end)) = self.spatial_index.get_node_span(node_id) {
+                if !merged_ranges.iter().any(|mr| mr.0 <= start && end <= mr.1) {
+                    merged_ranges.push((start, end, start, end));
+                    trace!(
+                        "[INCREMENTAL UPDATE] [FILTERING] Added orphaned parent node {:?} to rebuild ranges",
+                        node_id
+                    );
+                }
+            }
+        }
+
+        // Pair merged ranges back to containing nodes to produce the rebuild update plan
+        let mut containing_nodes_with_ranges: Vec<(NodeId, (usize, usize, usize, usize))> =
+            merged_ranges
+                .into_iter()
+                .filter_map(|range| {
+                    // Get all nodes that contain the merged range
+                    let candidates = self
+                        .spatial_index
+                        .get_nodes_covering_range(range.0, range.1)
+                        .into_iter()
+                        .filter(|node_id| {
+                            // Only consider nodes that fully contain the range
+                            let node_range = self.spatial_index.get_node_span(*node_id);
+                            if let Some((start, end)) = node_range {
+                                start <= range.0 && range.1 <= end
+                            } else {
+                                false
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    // Choose the most appropriate node to rehydrate (same logic as above)
+                    let containing_node = candidates
+                        .into_iter()
+                        .filter_map(|node_id| {
+                            // Skip nodes already queued for surgical updates
+                            if early_surgical_ids.contains(&node_id) {
+                                return None;
+                            }
+                            let node = self.get_node_by_id(&node_id)?;
+                            let node_range = self.spatial_index.get_node_span(node_id)?;
+                            let range_size = node_range.1 - node_range.0;
+
+                            // Assign priority weights - lower values = higher priority
+                            let priority_weight = match &node.type_ {
+                                NodeType::TranslationUnit => 0,
+                                NodeType::Branch { .. } => 1,
+                                NodeType::Loop { .. } => 1,
+                                NodeType::Function { .. } => 2,
+                                NodeType::Statement => 20,
+                                NodeType::Block => 30,
+                                NodeType::Expression => 100,
+                                NodeType::Call => 100,
+                                NodeType::Return => 100,
+                                NodeType::Identifier { .. } => 1000,
+                                NodeType::Comment => 1000,
+                                NodeType::Type => 500,
+                                NodeType::LanguageImplementation(_) => 800,
+                                _ => 200,
+                            };
+
+                            Some((node_id, priority_weight + range_size))
+                        })
+                        .min_by_key(|(_, weight)| *weight)
+                        .map(|(node_id, _)| node_id);
+
+                    if let Some(node_id) = containing_node {
+                        trace!(
+                            "[INCREMENTAL UPDATE] [FILTERING] Found containing node {:?} for merged range {:?}",
+                            node_id, range
+                        );
+                        Some((node_id, range))
+                    } else {
+                        warn!(
+                            "[INCREMENTAL UPDATE] [FILTERING] No containing node found for merged range {:?}",
+                            range
+                        );
+                        None
+                    }
+                })
+                .collect();
+
+        // Ensure any orphaned parent nodes are included in the rebuild plan if they
+        // weren't matched by spatial_index pairing above. This covers cases where
+        // ranges moved or the index lookup missed the intended parent.
+        for node_id in orphaned_parent_nodes.clone().into_iter() {
+            if !containing_nodes_with_ranges
+                .iter()
+                .any(|(id, _)| *id == node_id)
+            {
                 if let Some((start, end)) = self.spatial_index.get_node_span(node_id) {
-                    dirty_nodes.push((node_id, (start, end, start, end)));
-                    debug!(
-                        "[INCREMENTAL UPDATE] [FILTERING] Added orphaned parent node {:?} to dirty nodes",
+                    containing_nodes_with_ranges.push((node_id, (start, end, start, end)));
+                    trace!(
+                        "[INCREMENTAL UPDATE] [FILTERING] Added orphaned parent node {:?} to containing_nodes_with_ranges",
                         node_id
                     );
                 }
@@ -1009,19 +1230,18 @@ impl Cpg {
         }
 
         debug!(
-            "[INCREMENTAL UPDATE] [CST PAIRING] Updating {} dirty nodes: {:?}",
-            dirty_nodes.len(),
-            dirty_nodes
+            "[INCREMENTAL UPDATE] [FILTERING] After deduplication: {} containing nodes to consider for rebuild",
+            containing_nodes_with_ranges.len()
         );
 
         // To avoid borrow checker issues, collect update info first
         let mut update_plan = Vec::new();
-        for (id, _pos) in &dirty_nodes {
+        for (id, _pos) in &containing_nodes_with_ranges {
             let node_span = self.spatial_index.get_node_span(*id);
             if let Some((start, end)) = node_span {
                 // Special case: if this is the root node, use the root of the new tree
                 let cst_node = if self.root.map_or(false, |root| root == *id) {
-                    debug!(
+                    trace!(
                         "[INCREMENTAL UPDATE] [CST PAIRING] Using new tree root for CPG root node {:?}",
                         id
                     );
@@ -1042,7 +1262,7 @@ impl Cpg {
                 } else if let Some(cst_node) =
                     new_tree.root_node().descendant_for_byte_range(start, end)
                 {
-                    debug!(
+                    trace!(
                         "[INCREMENTAL UPDATE] [CST PAIRING] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
                         id,
                         start,
@@ -1068,22 +1288,16 @@ impl Cpg {
                 );
             }
         }
-
-        let mut updated_structures = Vec::new();
-        let mut updated_functions = Vec::new();
-
-        // Decide surgical vs rebuild for each node
-        let thresholds = UpdateThresholds::default();
         for (id, cst_node) in &update_plan {
             let (should_rebuild, metrics) = self.should_rebuild(*id, cst_node, &thresholds);
-            debug!(
+            trace!(
                 "[INCREMENTAL UPDATE] [REBUILD] [DECIDE] Node {:?}: should_rebuild={}, metrics={:?}",
                 id, should_rebuild, metrics
             );
 
             let new_id;
             if should_rebuild {
-                debug!(
+                trace!(
                     "[INCREMENTAL UPDATE] [REBUILD] [FULL] Rebuilding subtree for node {:?} ({}% children changed, {} ops, depth {})",
                     id,
                     metrics.children_change_percentage * 100.0,
@@ -1093,14 +1307,16 @@ impl Cpg {
                 self.clean_analysis_edges(*id);
                 new_id = self.rebuild_subtree(*id, cst_node);
             } else {
-                debug!(
+                trace!(
                     "[INCREMENTAL UPDATE] [REBUILD] [SURGICAL] Updating node {:?} ({}% children changed, {} ops, depth {})",
                     id,
                     metrics.children_change_percentage * 100.0,
                     metrics.operations_count,
                     metrics.subtree_depth
                 );
-                //self.clean_analysis_edges(*id);
+                // Clean analysis edges before performing surgical updates so we can
+                // recompute them deterministically afterwards.
+                self.clean_analysis_edges(*id);
                 self.update_in_place_pairwise(*id, cst_node);
                 new_id = *id;
             }
@@ -1121,6 +1337,10 @@ impl Cpg {
             updated_structures
         );
         for structure in &updated_structures {
+            trace!(
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running cf_pass on {:?}",
+                structure
+            );
             if let Err(e) = cf_pass(self, *structure) {
                 warn!(
                     "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute control flow for node {:?}: {}",
@@ -1133,8 +1353,8 @@ impl Cpg {
             updated_functions
         );
         for function in &updated_functions {
-            debug!(
-                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on function {:?}",
+            trace!(
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on {:?}",
                 function
             );
             if let Err(e) = data_dep_pass(self, *function) {
