@@ -623,6 +623,7 @@ fn test_seq_patch_parse_large_sample_9() {
     seq_patch_parse("seq_patches/large_sample_9/");
 }
 
+#[ignore = "Quite slow, only run if we want the metrics"]
 #[test]
 fn test_seq_patch_parse_large_sample_99() {
     dyn_cpg_rs::logging::init();
