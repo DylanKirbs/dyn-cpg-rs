@@ -2,7 +2,7 @@
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
 use crate::cpg::{Cpg, Edge, EdgeType, IdenType, Node, NodeId, NodeType};
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 mod c;
 use c::C;
 
@@ -257,7 +257,7 @@ pub fn post_translate_node(
                 cpg.get_node_by_id_mut(&cpg_node_id)
                     .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
 
-                debug!(
+                trace!(
                     "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
                     cst_node.kind(),
                     name
@@ -294,7 +294,7 @@ pub fn post_translate_node(
 
         // Statements and Expressions get their reads and writes tracked
         NodeType::Statement | NodeType::Expression | NodeType::Return => {
-            debug!(
+            trace!(
                 "[POST TRANSLATE NODE] Tracking reads and writes for: {:?} {:?}",
                 cst_node.kind(),
                 cpg_node_id
@@ -373,7 +373,7 @@ pub fn post_translate_node(
             {
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
 
-                debug!(
+                trace!(
                     "[POST TRANSLATE NODE] Identifier node name found: {:?} {:?}",
                     cst_node.kind(),
                     iden_name
@@ -391,7 +391,7 @@ pub fn post_translate_node(
                     .cloned()
                     .unwrap_or_default();
 
-                debug!(
+                trace!(
                     "[POST TRANSLATE NODE] Identifier node name update: {:?} current={:?} new={:?}",
                     cst_node.kind(),
                     current_name,
@@ -432,22 +432,21 @@ fn add_control_flow_edge(
     to: NodeId,
     edge_type: EdgeType,
 ) -> Result<(), String> {
-    debug!(
-        "[CONTROL FLOW] Adding control flow edge: {:?} -> {:?} of type: {:?}",
-        from, to, edge_type
-    );
-
     let existing_edges = cpg.get_outgoing_edges(from);
     for edge in existing_edges {
         if edge.to == to && edge.type_ == edge_type {
-            debug!(
-                "[CONTROL FLOW] Control flow edge already exists: {:?} -> {:?}",
-                from, to
+            trace!(
+                "[CONTROL FLOW] Edge {{{:?} -> [{:?}] -> {:?}}} exists",
+                from, edge_type, to
             );
             return Ok(());
         }
     }
 
+    trace!(
+        "[CONTROL FLOW] Edge {{{:?} -> [{:?}] -> {:?}}} created",
+        from, edge_type, to
+    );
     cpg.add_edge(Edge {
         from,
         to,
@@ -464,16 +463,11 @@ fn add_data_dep_edge(
     to: NodeId,
     edge_type: EdgeType,
 ) -> Result<(), String> {
-    debug!(
-        "[DATA DEPENDENCE] Adding data dependency edge: {:?} -> {:?} of type: {:?}",
-        from, to, edge_type
-    );
-
     // Don't create self-loops for data dependence
     if from == to {
-        debug!(
-            "[DATA DEPENDENCE] Skipping self-loop data dependency edge: {:?} -> {:?}",
-            from, to
+        trace!(
+            "[DATA DEPENDENCE] Edge {{{:?} -> [{:?}] -> {:?}}} skipped (self-loop)",
+            from, edge_type, to
         );
         return Ok(());
     }
@@ -481,17 +475,18 @@ fn add_data_dep_edge(
     let existing_edges = cpg.get_outgoing_edges(from);
     for edge in existing_edges {
         if edge.to == to && edge.type_ == edge_type {
-            debug!(
-                "[DATA DEPENDENCE] Data dependency edge already exists: {:?} -> {:?} of type: {:?}",
-                from, to, edge_type
+            trace!(
+                "[DATA DEPENDENCE] Edge {{{:?} -> [{:?}] -> {:?}}} skipped (exists)",
+                from, edge_type, to
             );
+
             return Ok(());
         }
     }
 
-    debug!(
-        "[DATA DEPENDENCE] Creating new data dependency edge: {:?} -> {:?} of type: {:?}",
-        from, to, edge_type
+    trace!(
+        "[DATA DEPENDENCE] Edge {{{:?} -> [{:?}] -> {:?}}} created",
+        from, edge_type, to
     );
     cpg.add_edge(Edge {
         from,
@@ -597,13 +592,19 @@ pub fn get_containing_function(cpg: &Cpg, node_id: NodeId) -> Option<NodeId> {
 /// Idempotent computation of the control flow for a subtree in the CPG.
 /// This pass assumes that the AST has been construed into a CPG.
 pub fn cf_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
-    debug!("[CONTROL FLOW] Starting control flow pass");
+    debug!(
+        "[CONTROL FLOW] Starting control flow pass on subtree rooted at {:?}",
+        subtree_root
+    );
     compute_control_flow_postorder(
         cpg,
         get_container_parent(cpg, subtree_root),
         get_containing_function(cpg, subtree_root),
     )?;
-    debug!("[CONTROL FLOW] Control flow pass completed");
+    debug!(
+        "[CONTROL FLOW] Control flow pass completed on subtree rooted at {:?}",
+        subtree_root
+    );
     Ok(())
 }
 
@@ -643,8 +644,8 @@ fn compute_control_flow_postorder(
                 )
             })?;
 
-            debug!(
-                "[CONTROL FLOW] Branch - condition: {:?}, then: {:?}, else: {:?}",
+            trace!(
+                "[CONTROL FLOW] [BRANCH] condition: {:?}, then: {:?}, else: {:?}",
                 condition, then_block, else_block
             );
 
@@ -696,8 +697,8 @@ fn compute_control_flow_postorder(
                 )
             })?;
 
-            debug!(
-                "[CONTROL FLOW] Loop - condition: {:?}, body: {:?}",
+            trace!(
+                "[CONTROL FLOW] [LOOP] condition: {:?}, body: {:?}",
                 condition, body
             );
 
@@ -854,7 +855,7 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
         };
         // Check for variable read
         if let Some(vars) = node.properties.get("read_vars") {
-            debug!(
+            trace!(
                 "[DATA DEPENDENCE] Node {:?} reads vars: {}",
                 curr_node_id, vars
             );
@@ -871,7 +872,7 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
         }
         // Check for variable write (assignment)
         if let Some(vars) = node.properties.get("assigned_vars") {
-            debug!(
+            trace!(
                 "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
                 curr_node_id, vars
             );

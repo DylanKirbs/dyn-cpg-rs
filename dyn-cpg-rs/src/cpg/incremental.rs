@@ -8,7 +8,7 @@ use std::{
     cmp::{max, min},
     collections::HashMap,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Configuration for incremental update thresholds
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct UpdateThresholds {
 impl Default for UpdateThresholds {
     fn default() -> Self {
         Self {
-            max_children_change_percentage: 0.3,
+            max_children_change_percentage: 1.0,
             max_surgical_depth: 6,
             max_operations_count: 8,
         }
@@ -363,8 +363,8 @@ impl Cpg {
                             | EdgeType::PDControlTrue
                             | EdgeType::PDControlFalse
                             | EdgeType::PDData(_) => {
-                                debug!(
-                                    "[CLEAN ANALYSIS EDGES] Marking edge {:?} for removal: {:?} -> {:?} type: {:?}",
+                                trace!(
+                                    "[CLEAN ANALYSIS EDGES] [COLLECT] Marking edge {:?} for removal: {:?} -> {:?} type: {:?}",
                                     edge_id, edge.from, edge.to, edge.type_
                                 );
                                 edges_to_remove.push(edge_id);
@@ -382,27 +382,22 @@ impl Cpg {
             }
         }
 
-        debug!(
-            "[CLEAN ANALYSIS EDGES] Starting to clean analysis edges from subtree rooted at {:?}",
-            root
-        );
         collect_analysis_edges_recursive(self, root, &mut to_remove);
 
         debug!(
-            "[CLEAN ANALYSIS EDGES] Removing {} analysis edges",
-            to_remove.len()
+            "[CLEAN ANALYSIS EDGES] Removing {} analysis edges from subtree rooted at {:?}",
+            to_remove.len(),
+            root
         );
         // Remove collected edges
         for edge_id in to_remove {
-            debug!("[CLEAN ANALYSIS EDGES] Removing edge {:?}", edge_id);
             self.remove_edge(edge_id);
         }
-        debug!("[CLEAN ANALYSIS EDGES] Completed cleaning analysis edges");
     }
 
     /// Phase 3B: Full Rebuild - Replace subtree completely
     fn rebuild_subtree(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) -> NodeId {
-        debug!("[REBUILD] Rebuilding subtree for node {:?}", cpg_node);
+        trace!("[REBUILD] Rebuilding subtree for node {:?}", cpg_node);
 
         // 1. Preserve parent connections by finding the parent edge and check if this is the root
         let parent_edge = self
@@ -690,8 +685,10 @@ impl Cpg {
         new_tree: &tree_sitter::Tree,
         new_source: Vec<u8>,
     ) {
+        let changed_ranges = changed_ranges.collect::<Vec<_>>();
+
         debug!(
-            "[INCREMENTAL UPDATE] Update with {} edits and {} changed ranges",
+            "[INCREMENTAL UPDATE] [PARSE EDITS] Update with {} edits and {} changed ranges",
             edits.len(),
             changed_ranges.len()
         );
@@ -702,7 +699,7 @@ impl Cpg {
         let root_node = new_tree.root_node();
         if root_node.start_byte() > source_len || root_node.end_byte() > source_len {
             warn!(
-                "[INCREMENTAL UPDATE] Invalid root node range ({}, {}) for source length {}.",
+                "[INCREMENTAL UPDATE] [PARSE EDITS] Invalid root node range ({}, {}) for source length {}.",
                 root_node.start_byte(),
                 root_node.end_byte(),
                 source_len
@@ -710,17 +707,23 @@ impl Cpg {
         }
 
         let mut dirty_nodes = HashMap::new();
+        debug!(
+            "[INCREMENTAL UPDATE] [PARSE EDITS] TS Changed ranges: {:?}",
+            changed_ranges.clone()
+        );
         for range in changed_ranges {
-            debug!("[INCREMENTAL UPDATE] TS Changed range: {:?}", range);
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(range.start_byte, range.end_byte)
             {
-                debug!(
-                    "[INCREMENTAL UPDATE] Found node {:?} for range {:?}",
+                trace!(
+                    "[INCREMENTAL UPDATE] [PARSE EDITS] Found node {:?} for range {:?}",
                     node_id, range
                 );
                 if let Some(node) = self.get_node_by_id(&node_id) {
-                    debug!("[INCREMENTAL UPDATE] Node details: {:?}", node);
+                    trace!(
+                        "[INCREMENTAL UPDATE] [PARSE EDITS] Node details: {:?}",
+                        node
+                    );
                 }
                 dirty_nodes.insert(
                     node_id,
@@ -733,7 +736,7 @@ impl Cpg {
                 );
             } else {
                 debug!(
-                    "[INCREMENTAL UPDATE] No node found for changed range: {:?}",
+                    "[INCREMENTAL UPDATE] [PARSE EDITS] No node found for changed range: {:?}",
                     (range.start_byte, range.end_byte)
                 );
 
@@ -743,7 +746,7 @@ impl Cpg {
                     self.find_parent_node_for_range(range.start_byte, range.end_byte)
                 {
                     debug!(
-                        "[INCREMENTAL UPDATE] Found parent node {:?} for orphaned range {:?}",
+                        "[INCREMENTAL UPDATE] [PARSE EDITS] Found parent node {:?} for orphaned range {:?}",
                         parent_node_id, range
                     );
                     dirty_nodes.insert(
@@ -756,16 +759,19 @@ impl Cpg {
                         ),
                     );
                 } else {
-                    debug!(
-                        "[INCREMENTAL UPDATE] No parent node found for orphaned range: {:?}",
+                    warn!(
+                        "[INCREMENTAL UPDATE] [PARSE EDITS] No parent node found for orphaned range: {:?}",
                         (range.start_byte, range.end_byte)
                     );
                 }
             }
         }
 
+        debug!(
+            "[INCREMENTAL UPDATE] [PARSE EDITS] Textual edits: {:?}",
+            edits
+        );
         for edit in edits {
-            debug!("[INCREMENTAL UPDATE] Textual edit: {:?}", edit);
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
             {
@@ -782,14 +788,14 @@ impl Cpg {
                     .or_insert((edit.old_start, edit.old_end, edit.new_start, edit.new_end));
             } else {
                 debug!(
-                    "[INCREMENTAL UPDATE] No node found for edit range: {:?}",
+                    "[INCREMENTAL UPDATE] [PARSE EDITS] No node found for edit range: {:?}",
                     (edit.old_start, edit.old_end)
                 );
             }
         }
 
         debug!(
-            "[INCREMENTAL UPDATE] Filtering {} dirty nodes",
+            "[INCREMENTAL UPDATE] [FILTERING] Filtering {} dirty nodes",
             dirty_nodes.len()
         );
 
@@ -837,7 +843,7 @@ impl Cpg {
         }
 
         debug!(
-            "[INCREMENTAL UPDATE] Merged {} overlapping ranges into {} ranges",
+            "[INCREMENTAL UPDATE] [FILTERING] Merged {} overlapping ranges into {} ranges",
             dirty_nodes.len(),
             merged_ranges.len()
         );
@@ -913,21 +919,21 @@ impl Cpg {
                     .map(|(node_id, _)| node_id);
 
                 if let Some(node_id) = containing_node {
-                    debug!(
-                        "[INCREMENTAL UPDATE] Found containing node {:?} for merged range {:?}",
+                    trace!(
+                        "[INCREMENTAL UPDATE] [FILTERING] Found containing node {:?} for merged range {:?}",
                         node_id, range
                     );
                     Some((node_id, range))
                 } else {
-                    debug!(
-                        "[INCREMENTAL UPDATE] No containing node found for merged range {:?}",
+                    warn!(
+                        "[INCREMENTAL UPDATE] [FILTERING] No containing node found for merged range {:?}",
                         range
                     );
                     // For orphaned ranges, try to find a parent node that can be rebuilt
                     if let Some(parent_node_id) = self.find_parent_node_for_range(range.0, range.1)
                     {
-                        debug!(
-                            "[INCREMENTAL UPDATE] Found orphaned parent node {:?} for range {:?}",
+                        warn!(
+                            "[INCREMENTAL UPDATE] [FILTERING] Found orphaned parent node {:?} for range {:?}",
                             parent_node_id, range
                         );
                         orphaned_parent_nodes.insert(parent_node_id);
@@ -970,7 +976,7 @@ impl Cpg {
                     );
                     node_to_merged_range.insert(node_id, merged);
                     debug!(
-                        "[INCREMENTAL UPDATE] Merged ranges for node {:?}: {:?} + {:?} = {:?}",
+                        "[INCREMENTAL UPDATE] [FILTERING] Merged ranges for node {:?}: {:?} + {:?} = {:?}",
                         node_id, existing_range, range, merged
                     );
                 }
@@ -984,7 +990,7 @@ impl Cpg {
             node_to_merged_range.into_iter().collect();
 
         debug!(
-            "[INCREMENTAL UPDATE] After deduplication: {} containing nodes found from {} original ranges",
+            "[INCREMENTAL UPDATE] [FILTERING] After deduplication: {} containing nodes found from {} original ranges",
             dirty_nodes.len(),
             original_count
         );
@@ -995,7 +1001,7 @@ impl Cpg {
                 if let Some((start, end)) = self.spatial_index.get_node_span(node_id) {
                     dirty_nodes.push((node_id, (start, end, start, end)));
                     debug!(
-                        "[INCREMENTAL UPDATE] Added orphaned parent node {:?} to dirty nodes",
+                        "[INCREMENTAL UPDATE] [FILTERING] Added orphaned parent node {:?} to dirty nodes",
                         node_id
                     );
                 }
@@ -1003,7 +1009,7 @@ impl Cpg {
         }
 
         debug!(
-            "[INCREMENTAL UPDATE] Updating {} dirty nodes: {:?}",
+            "[INCREMENTAL UPDATE] [CST PAIRING] Updating {} dirty nodes: {:?}",
             dirty_nodes.len(),
             dirty_nodes
         );
@@ -1016,7 +1022,7 @@ impl Cpg {
                 // Special case: if this is the root node, use the root of the new tree
                 let cst_node = if self.root.map_or(false, |root| root == *id) {
                     debug!(
-                        "[INCREMENTAL UPDATE] Using new tree root for CPG root node {:?}",
+                        "[INCREMENTAL UPDATE] [CST PAIRING] Using new tree root for CPG root node {:?}",
                         id
                     );
 
@@ -1025,7 +1031,7 @@ impl Cpg {
                     let source_len = self.get_source().len();
                     if root_node.start_byte() > source_len || root_node.end_byte() > source_len {
                         warn!(
-                            "[INCREMENTAL UPDATE] Tree root node range ({}, {}) exceeds source length {}.",
+                            "[INCREMENTAL UPDATE] [CST PAIRING] Tree root node range ({}, {}) exceeds source length {}.",
                             root_node.start_byte(),
                             root_node.end_byte(),
                             source_len
@@ -1037,7 +1043,7 @@ impl Cpg {
                     new_tree.root_node().descendant_for_byte_range(start, end)
                 {
                     debug!(
-                        "[INCREMENTAL UPDATE] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
+                        "[INCREMENTAL UPDATE] [CST PAIRING] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
                         id,
                         start,
                         end,
@@ -1048,7 +1054,7 @@ impl Cpg {
                     cst_node
                 } else {
                     warn!(
-                        "[INCREMENTAL UPDATE] No CST node found for CPG node {:?} in new tree",
+                        "[INCREMENTAL UPDATE] [CST PAIRING] No CST node found for CPG node {:?} in new tree",
                         id
                     );
                     continue;
@@ -1056,51 +1062,45 @@ impl Cpg {
 
                 update_plan.push((*id, cst_node));
             } else {
-                warn!("[INCREMENTAL UPDATE] No span found for CPG node {:?}", id);
+                warn!(
+                    "[INCREMENTAL UPDATE] [CST PAIRING] No span found for CPG node {:?}",
+                    id
+                );
             }
         }
 
         let mut updated_structures = Vec::new();
         let mut updated_functions = Vec::new();
 
-        // Phase 1: Clean Slate - Remove all analysis edges from dirty subtrees
-        debug!(
-            "[INCREMENTAL UPDATE] Phase 1: Cleaning analysis edges from {} dirty nodes",
-            update_plan.len()
-        );
-        for (id, _cst_node) in &update_plan {
-            self.clean_analysis_edges(*id);
-        }
-
-        // Phase 2: Decision Framework - Decide surgical vs rebuild for each node
+        // Decide surgical vs rebuild for each node
         let thresholds = UpdateThresholds::default();
         for (id, cst_node) in &update_plan {
             let (should_rebuild, metrics) = self.should_rebuild(*id, cst_node, &thresholds);
             debug!(
-                "[INCREMENTAL UPDATE] Node {:?}: should_rebuild={}, metrics={:?}",
+                "[INCREMENTAL UPDATE] [REBUILD] [DECIDE] Node {:?}: should_rebuild={}, metrics={:?}",
                 id, should_rebuild, metrics
             );
 
             let new_id;
             if should_rebuild {
-                // Phase 3B: Full Rebuild
                 debug!(
-                    "[INCREMENTAL UPDATE] Rebuilding subtree for node {:?} ({}% children changed, {} ops, depth {})",
+                    "[INCREMENTAL UPDATE] [REBUILD] [FULL] Rebuilding subtree for node {:?} ({}% children changed, {} ops, depth {})",
                     id,
                     metrics.children_change_percentage * 100.0,
                     metrics.operations_count,
                     metrics.subtree_depth
                 );
+                self.clean_analysis_edges(*id);
                 new_id = self.rebuild_subtree(*id, cst_node);
             } else {
-                // Phase 3A: Surgical Update
                 debug!(
-                    "[INCREMENTAL UPDATE] Surgical update for node {:?} ({}% children changed, {} ops, depth {})",
+                    "[INCREMENTAL UPDATE] [REBUILD] [SURGICAL] Updating node {:?} ({}% children changed, {} ops, depth {})",
                     id,
                     metrics.children_change_percentage * 100.0,
                     metrics.operations_count,
                     metrics.subtree_depth
                 );
+                //self.clean_analysis_edges(*id);
                 self.update_in_place_pairwise(*id, cst_node);
                 new_id = *id;
             }
@@ -1117,29 +1117,29 @@ impl Cpg {
         }
 
         debug!(
-            "[INCREMENTAL UPDATE] Recomputing control flow for updated structures: {:?}",
+            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing control flow for updated structures: {:?}",
             updated_structures
         );
         for structure in &updated_structures {
             if let Err(e) = cf_pass(self, *structure) {
                 warn!(
-                    "[INCREMENTAL UPDATE] Failed to recompute control flow for node {:?}: {}",
+                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute control flow for node {:?}: {}",
                     structure, e
                 );
             }
         }
         debug!(
-            "[INCREMENTAL UPDATE] Recomputing data dependence for updated functions: {:?}",
+            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for updated functions: {:?}",
             updated_functions
         );
         for function in &updated_functions {
             debug!(
-                "[INCREMENTAL UPDATE] Running data_dep_pass on function {:?}",
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on function {:?}",
                 function
             );
             if let Err(e) = data_dep_pass(self, *function) {
                 warn!(
-                    "[INCREMENTAL UPDATE] Failed to recompute data dependence for node {:?}: {}",
+                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute data dependence for node {:?}: {}",
                     function, e
                 );
             }
