@@ -8,7 +8,7 @@ use std::{
     cmp::{max, min},
     collections::HashMap,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Configuration for incremental update thresholds
 #[derive(Debug, Clone)]
@@ -698,6 +698,17 @@ impl Cpg {
 
         self.set_source(new_source);
 
+        let source_len = self.get_source().len();
+        let root_node = new_tree.root_node();
+        if root_node.start_byte() > source_len || root_node.end_byte() > source_len {
+            warn!(
+                "[INCREMENTAL UPDATE] Invalid root node range ({}, {}) for source length {}.",
+                root_node.start_byte(),
+                root_node.end_byte(),
+                source_len
+            );
+        }
+
         let mut dirty_nodes = HashMap::new();
         for range in changed_ranges {
             debug!("[INCREMENTAL UPDATE] TS Changed range: {:?}", range);
@@ -835,7 +846,7 @@ impl Cpg {
         let mut orphaned_parent_nodes = std::collections::HashSet::new();
 
         // For each merged range, find the appropriate node that contains it
-        let mut dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
+        let containing_nodes_with_ranges: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
             .into_iter()
             .filter_map(|range| {
                 // Get all nodes that contain the merged range
@@ -942,6 +953,42 @@ impl Cpg {
             })
             .collect();
 
+        // Deduplicate nodes - if multiple ranges point to the same containing node,
+        // merge their ranges so the node only gets updated once
+        let mut node_to_merged_range: HashMap<NodeId, (usize, usize, usize, usize)> =
+            HashMap::new();
+        let original_count = containing_nodes_with_ranges.len();
+        for (node_id, range) in containing_nodes_with_ranges {
+            match node_to_merged_range.get(&node_id).copied() {
+                Some(existing_range) => {
+                    // Merge with existing range
+                    let merged = (
+                        min(existing_range.0, range.0), // old_start
+                        max(existing_range.1, range.1), // old_end
+                        min(existing_range.2, range.2), // new_start
+                        max(existing_range.3, range.3), // new_end
+                    );
+                    node_to_merged_range.insert(node_id, merged);
+                    debug!(
+                        "[INCREMENTAL UPDATE] Merged ranges for node {:?}: {:?} + {:?} = {:?}",
+                        node_id, existing_range, range, merged
+                    );
+                }
+                None => {
+                    node_to_merged_range.insert(node_id, range);
+                }
+            }
+        }
+
+        let mut dirty_nodes: Vec<(NodeId, (usize, usize, usize, usize))> =
+            node_to_merged_range.into_iter().collect();
+
+        debug!(
+            "[INCREMENTAL UPDATE] After deduplication: {} containing nodes found from {} original ranges",
+            dirty_nodes.len(),
+            original_count
+        );
+
         // Add any orphaned parent nodes that weren't already included
         for node_id in orphaned_parent_nodes {
             if !dirty_nodes.iter().any(|(id, _)| *id == node_id) {
@@ -972,7 +1019,20 @@ impl Cpg {
                         "[INCREMENTAL UPDATE] Using new tree root for CPG root node {:?}",
                         id
                     );
-                    new_tree.root_node()
+
+                    let root_node = new_tree.root_node();
+                    // Validate that the tree root's ranges are within the new source bounds
+                    let source_len = self.get_source().len();
+                    if root_node.start_byte() > source_len || root_node.end_byte() > source_len {
+                        warn!(
+                            "[INCREMENTAL UPDATE] Tree root node range ({}, {}) exceeds source length {}.",
+                            root_node.start_byte(),
+                            root_node.end_byte(),
+                            source_len
+                        );
+                    }
+
+                    root_node
                 } else if let Some(cst_node) =
                     new_tree.root_node().descendant_for_byte_range(start, end)
                 {

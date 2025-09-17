@@ -822,3 +822,9 @@ fn apply_patch(base: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
 
     Ok(result.into_bytes())
 }
+
+#[test]
+fn test_mre_patch_53() {
+    dyn_cpg_rs::logging::init();
+    seq_patch_parse("seq_patches/mre_53/");
+}

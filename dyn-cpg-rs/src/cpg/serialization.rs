@@ -15,10 +15,8 @@ pub enum SerializationError {
     IoError(#[from] std::io::Error),
 }
 
-pub trait CpgSerializer {
-    /// Serialize the CPG into a string representation.
-    /// Optionally specify a "subtree" root to serialize instead of the entire graph.
-    fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError>;
+pub trait CpgSerializer<T> {
+    fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<T, SerializationError>;
 }
 
 // --- DOT --- //
@@ -129,7 +127,7 @@ impl DotSerializer {
     }
 }
 
-impl CpgSerializer for DotSerializer {
+impl CpgSerializer<String> for DotSerializer {
     fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError> {
         self.start(cpg)?;
         if let Some(root) = root {
@@ -264,7 +262,7 @@ impl SexpSerializer {
     }
 }
 
-impl CpgSerializer for SexpSerializer {
+impl CpgSerializer<String> for SexpSerializer {
     fn serialize(&mut self, cpg: &Cpg, root: Option<NodeId>) -> Result<String, SerializationError> {
         self.start(cpg);
         if let Some(root) = root {
@@ -288,15 +286,15 @@ impl CpgSerializer for SexpSerializer {
 // --- CPG --- //
 
 impl Cpg {
-    pub fn serialize<S: CpgSerializer>(
+    pub fn serialize<T, S: CpgSerializer<T>>(
         &self,
         serializer: &mut S,
         root: Option<NodeId>,
-    ) -> Result<String, SerializationError> {
+    ) -> Result<T, SerializationError> {
         serializer.serialize(self, root)
     }
 
-    pub fn serialize_to_file<S: CpgSerializer, P: Into<PathBuf>>(
+    pub fn serialize_to_file<T: AsRef<[u8]>, S: CpgSerializer<T>, P: Into<PathBuf>>(
         &self,
         serializer: &mut S,
         path: P,
