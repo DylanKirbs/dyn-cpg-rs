@@ -24,6 +24,9 @@ pub trait CpgSerializer<T> {
 pub struct DotSerializer {
     buf: String,
     visited: HashSet<NodeId>,
+
+    id_map: std::collections::HashMap<NodeId, usize>,
+    next_id: usize,
 }
 
 impl Default for DotSerializer {
@@ -37,6 +40,8 @@ impl DotSerializer {
         Self {
             buf: String::new(),
             visited: HashSet::new(),
+            id_map: std::collections::HashMap::new(),
+            next_id: 0,
         }
     }
 
@@ -51,6 +56,13 @@ impl DotSerializer {
         if !self.visited.insert(id) {
             return Ok(());
         }
+
+        let canon = self.id_map.entry(id).or_insert_with(|| {
+            let id = self.next_id;
+            self.next_id += 1;
+            id
+        });
+
         let node = cpg
             .get_node_by_id(&id)
             .ok_or(SerializationError::NodeNotFound(id))?;
@@ -61,7 +73,8 @@ impl DotSerializer {
             .map_or("unknown".to_string(), |(s, e)| format!("{s}-{e}"));
 
         let label = format!(
-            "{} {} {} {} {}",
+            "canonical-id:{} type:{} pos:{} kind:{} name:{} id:{}",
+            canon,
             node.type_.label(),
             pos,
             node.properties
@@ -109,7 +122,7 @@ impl DotSerializer {
                 continue;
             }
             self.on_node(cpg, id)?;
-            for edge in cpg.get_outgoing_edges(id) {
+            for edge in cpg.get_deterministic_sorted_outgoing_edges(id) {
                 stack.push(edge.to);
                 self.on_edge(cpg, edge)?;
             }
@@ -149,7 +162,7 @@ impl CpgSerializer<String> for DotSerializer {
 pub struct SexpSerializer {
     buf: String,
     include_common_props: bool,
-    // mapping from real NodeId to canonical serialization id
+
     id_map: std::collections::HashMap<NodeId, usize>,
     next_id: usize,
 }
@@ -185,9 +198,10 @@ impl SexpSerializer {
         };
         write!(
             self.buf,
-            "({} :canonical-id \"{}\"",
+            "({} :canonical-id \"{}\" :id {}",
             node.type_.label(),
-            canon
+            canon,
+            id.as_str()
         )?;
 
         if self.include_common_props {
