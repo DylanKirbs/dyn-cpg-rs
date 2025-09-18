@@ -238,6 +238,14 @@ pub fn pre_translate_node(
 
     let cpg_node_id = cpg.add_node(cpg_node, cst_node.start_byte(), cst_node.end_byte());
 
+    trace!(
+        "[PRE TRANSLATE NODE] Created {:?} kind={} range=({}, {})",
+        cpg_node_id,
+        cst_node.kind(),
+        cst_node.start_byte(),
+        cst_node.end_byte()
+    );
+
     Ok((cpg_node_id, type_))
 }
 
@@ -247,6 +255,13 @@ pub fn post_translate_node(
     cpg_node_id: NodeId,
     cst_node: &tree_sitter::Node,
 ) {
+    trace!(
+        "[POST TRANSLATE NODE] Processing kind={} range=({}, {}) -> {:?}",
+        cst_node.kind(),
+        cst_node.start_byte(),
+        cst_node.end_byte(),
+        cpg_node_id
+    );
     match type_ {
         // Functions get their names from their name_traversal & a special return node
         NodeType::Function { name_traversal } => {
