@@ -389,6 +389,7 @@ fn test_incremental_update_samples() {
         .expect("Failed to write reference CPG");
 
     // Compare the incrementally updated CPG with the reference CPG
+    debug!("Comparing CPGs: left = incremental, right = reference");
     let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
     println!("=== COMPARISON ===");
     println!("{}", diff);

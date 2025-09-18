@@ -159,7 +159,7 @@ impl Cpg {
     /// (i.e. in the order they appear in the source code)
     pub fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
         // Guard against no edges
-        let outgoing_edges = self.get_outgoing_edges(root);
+        let outgoing_edges = self.get_deterministic_sorted_outgoing_edges(root);
         if outgoing_edges.is_empty() {
             return Vec::new();
         }
@@ -180,7 +180,7 @@ impl Cpg {
         }
 
         for &child in &child_nodes {
-            let child_outgoing = self.get_outgoing_edges(child);
+            let child_outgoing = self.get_deterministic_sorted_outgoing_edges(child);
             for edge in child_outgoing {
                 if edge.type_ == EdgeType::SyntaxSibling {
                     sibling_map.insert(edge.from, edge.to);

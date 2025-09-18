@@ -219,9 +219,8 @@ impl Cpg {
                     || r_node.type_ != NodeType::TranslationUnit
                 {
                     // If roots aren't TranslationUnits, fall back to subtree comparison
-                    let mut mismatches = Vec::new();
                     let mut visited = std::collections::HashSet::new();
-                    self.compare_subtrees(other, &mut mismatches, l_root, r_root, &mut visited)?;
+                    let mismatches = self.compare_subtrees(other, l_root, r_root, &mut visited)?;
                     if mismatches.is_empty() {
                         return Ok(DetailedComparisonResult::Equivalent);
                     } else {
@@ -249,6 +248,12 @@ impl Cpg {
                 let left_functions = self.get_top_level_functions(l_root)?;
                 let right_functions = other.get_top_level_functions(r_root)?;
 
+                debug!(
+                    "[COMPARE] Left functions: {:?} Right functions: {:?}",
+                    left_functions.keys().collect::<Vec<_>>(),
+                    right_functions.keys().collect::<Vec<_>>()
+                );
+
                 let mut only_in_left = Vec::new();
                 let mut only_in_right = Vec::new();
                 let mut function_mismatches = Vec::new();
@@ -270,11 +275,9 @@ impl Cpg {
                 // Compare functions present in both CPGs
                 for (name, left_func_id) in &left_functions {
                     if let Some(right_func_id) = right_functions.get(name) {
-                        let mut mismatches = Vec::new();
                         let mut visited = std::collections::HashSet::new();
-                        self.compare_subtrees(
+                        let mismatches = self.compare_subtrees(
                             other,
-                            &mut mismatches,
                             *left_func_id,
                             *right_func_id,
                             &mut visited,
@@ -319,24 +322,13 @@ impl Cpg {
         let mut functions = HashMap::new();
 
         // Get all SyntaxChild edges from the root
-        let child_edges = self.get_outgoing_edges(root);
-
-        debug!(
-            "[COMPARE] Looking for functions in {} child edges from root {:?}",
-            child_edges.len(),
-            root
-        );
+        let child_edges = self.get_deterministic_sorted_outgoing_edges(root);
 
         for edge in child_edges {
             if edge.type_ == EdgeType::SyntaxChild {
                 let node = self.get_node_by_id(&edge.to).ok_or_else(|| {
                     CpgError::MissingField(format!("Child node with id {:?} not found", edge.to))
                 })?;
-
-                trace!(
-                    "[COMPARE] Child node type: {:?}, properties: {:?}",
-                    node.type_, node.properties
-                );
 
                 // Check if this child is a Function node
                 if let NodeType::Function { .. } = node.type_ {
@@ -346,17 +338,12 @@ impl Cpg {
                         .get("name")
                         .cloned()
                         .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
-                    trace!("[COMPARE] Found function with name: {}", name);
+
                     functions.insert(name, edge.to);
                 }
             }
         }
 
-        debug!(
-            "[COMPARE] Found {} functions: {:?}",
-            functions.len(),
-            functions.keys().collect::<Vec<_>>()
-        );
         Ok(functions)
     }
 
@@ -364,15 +351,19 @@ impl Cpg {
     fn compare_subtrees(
         &self,
         other: &Cpg,
-        mismatches: &mut Vec<(Option<NodeId>, Option<NodeId>)>,
         l_root: NodeId,
         r_root: NodeId,
         visited: &mut HashSet<(NodeId, NodeId)>,
-    ) -> Result<(), CpgError> {
+    ) -> Result<Vec<(Option<NodeId>, Option<NodeId>)>, CpgError> {
         // Avoid re-comparing the same pair of nodes
         if !visited.insert((l_root, r_root)) {
-            return Ok(());
+            return Ok(vec![]);
         }
+
+        trace!(
+            "[COMPARE] Comparing subtrees: left root = {:?}, right root = {:?}",
+            l_root, r_root
+        );
 
         let l_node = self.get_node_by_id(&l_root).ok_or_else(|| {
             CpgError::MissingField(format!("Node with id {:?} not found in left CPG", l_root))
@@ -383,12 +374,15 @@ impl Cpg {
         })?;
 
         if l_node != r_node {
-            mismatches.push((Some(l_root), Some(r_root)));
-            return Ok(());
+            trace!(
+                "[COMPARE] Node mismatch found: {:?} != {:?}",
+                l_node, r_node
+            );
+            return Ok(vec![(Some(l_root), Some(r_root))]);
         }
 
-        let l_edges = self.get_outgoing_edges(l_root);
-        let r_edges = other.get_outgoing_edges(r_root);
+        let l_edges = self.get_deterministic_sorted_outgoing_edges(l_root);
+        let r_edges = other.get_deterministic_sorted_outgoing_edges(r_root);
 
         let mut grouped_left: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
         let mut grouped_right: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
@@ -406,6 +400,7 @@ impl Cpg {
                 .push(e);
         }
 
+        let mut mismatches = Vec::new();
         for ((edge_type, props), left_group) in &grouped_left {
             let right_group = grouped_right.get(&(*edge_type, props.clone()));
             match right_group {
@@ -416,34 +411,48 @@ impl Cpg {
 
                         if ordered_left.len() != ordered_right.len() {
                             mismatches.push((Some(l_root), Some(r_root)));
-                            return Ok(());
+                            trace!(
+                                "[COMPARE] Syntax child (count) mismatch: left = {:?}, right = {:?}",
+                                ordered_left, ordered_right
+                            );
+                            return Ok(mismatches);
                         }
 
                         for (lc, rc) in ordered_left.iter().zip(ordered_right.iter()) {
-                            self.compare_subtrees(other, mismatches, *lc, *rc, visited)?;
-                            // Pass visited
+                            mismatches.extend(self.compare_subtrees(other, *lc, *rc, visited)?);
                         }
                     } else {
                         if left_group.len() != rg.len() {
                             mismatches.push((Some(l_root), Some(r_root)));
-                            return Ok(());
+                            trace!(
+                                "[COMPARE] Edge count mismatch for type {:?} with props {:?}: left = {}, right = {}",
+                                edge_type,
+                                props,
+                                left_group.len(),
+                                rg.len()
+                            );
+                            return Ok(mismatches);
                         }
 
                         for (l_edge, r_edge) in left_group.iter().zip(rg.iter()) {
-                            self.compare_subtrees(
-                                other, mismatches, l_edge.to, r_edge.to, visited,
-                            )?; // Pass visited
+                            mismatches.extend(
+                                self.compare_subtrees(other, l_edge.to, r_edge.to, visited)?,
+                            );
                         }
                     }
                 }
                 None => {
                     mismatches.push((Some(l_root), Some(r_root)));
-                    return Ok(());
+                    trace!(
+                        "[COMPARE] Missing edge group in right CPG: type {:?} with props {:?}",
+                        edge_type, props
+                    );
+                    return Ok(mismatches);
                 }
             }
         }
 
-        Ok(())
+        Ok(mismatches)
     }
 
     /// Format mismatch details with text diffs showing the actual source code differences
@@ -616,6 +625,64 @@ mod tests {
                 assert!(only_in_right.contains(&"root".to_string()));
             }
             _ => panic!("Expected structural mismatch"),
+        }
+    }
+
+    #[test]
+    fn test_mre_bug_non_deterministic_ordered_syntax_children() {
+        use std::collections::HashSet;
+
+        let mut observed_orders = HashSet::new();
+
+        // Run multiple times to potentially observe different orderings
+        for run in 0..100 {
+            let mut cpg = create_test_cpg();
+            let root = cpg.add_node(create_test_node(NodeType::TranslationUnit, None), 0, 100);
+
+            // Add multiple children in a specific order
+            let child1 = cpg.add_node(create_test_node(NodeType::Statement, None), 10, 20);
+            let child2 = cpg.add_node(create_test_node(NodeType::Statement, None), 30, 40);
+            let child3 = cpg.add_node(create_test_node(NodeType::Statement, None), 50, 60);
+
+            // Add parent-child edges (deliberately in different order than creation)
+            cpg.add_edge(Edge {
+                from: root,
+                to: child2,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+            cpg.add_edge(Edge {
+                from: root,
+                to: child1,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+            cpg.add_edge(Edge {
+                from: root,
+                to: child3,
+                type_: EdgeType::SyntaxChild,
+                properties: HashMap::new(),
+            });
+
+            // No sibling edges - this creates ambiguity about which child comes first
+            let ordered = cpg.ordered_syntax_children(root);
+            observed_orders.insert(format!("{:?}", ordered));
+
+            if observed_orders.len() > 1 {
+                println!("Non-deterministic ordering detected on run {}", run);
+                println!("Observed orders: {:?}", observed_orders);
+                break;
+            }
+        }
+
+        if observed_orders.len() > 1 {
+            panic!(
+                "Observed {} different orderings: {:?}",
+                observed_orders.len(),
+                observed_orders
+            );
+        } else {
+            println!("No non-deterministic behavior observed in {} runs", 100);
         }
     }
 }
