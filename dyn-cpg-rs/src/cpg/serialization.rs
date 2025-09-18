@@ -198,10 +198,12 @@ impl SexpSerializer {
         };
         write!(
             self.buf,
-            "({} :canonical-id \"{}\" :id {}",
+            "({} :canonical-id \"{}\" :id {} :span \"{:?}\"",
             node.type_.label(),
             canon,
-            id.as_str()
+            id.as_str(),
+            cpg.get_node_offsets_by_id(&id)
+                .unwrap_or((usize::MAX, usize::MAX))
         )?;
 
         if self.include_common_props {

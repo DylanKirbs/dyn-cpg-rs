@@ -107,8 +107,24 @@ impl NodeType {
     }
 
     pub fn label(&self) -> String {
-        format!("{:?}", self)
-            .replace("NodeType::", "")
-            .replace('_', " ")
+        match self {
+            NodeType::LanguageImplementation(lang) => format!("LangImpl({})", lang),
+            NodeType::Error(msg) => format!("Error({})", msg),
+            NodeType::TranslationUnit => "TranslationUnit".to_string(),
+            NodeType::Function { .. } => "Function".to_string(),
+            NodeType::FunctionReturn => "FunctionReturn".to_string(),
+            NodeType::Identifier { type_ } => format!("Identifier({})", type_),
+            NodeType::Statement => "Statement".to_string(),
+            NodeType::Expression => "Expression".to_string(),
+            NodeType::Type => "Type".to_string(),
+            NodeType::Comment => "Comment".to_string(),
+            NodeType::Branch { .. } => "Branch".to_string(),
+            NodeType::Loop { .. } => "Loop".to_string(),
+            NodeType::CFBreak => "CFBreak".to_string(),
+            NodeType::CFContinue => "CFContinue".to_string(),
+            NodeType::Block => "Block".to_string(),
+            NodeType::Call => "Call".to_string(),
+            NodeType::Return => "Return".to_string(),
+        }
     }
 }
