@@ -1,6 +1,9 @@
-use super::{Cpg, ListenerType, NodeId};
-use std::collections::HashMap;
+use crate::cpg::spatial_index::SpatialIndex;
+
+use super::{Cpg, EdgeId, ListenerType, NodeId};
+use std::collections::{HashMap, HashSet};
 use strum_macros::Display;
+use tracing::warn;
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
 pub enum EdgeType {
@@ -31,6 +34,201 @@ pub struct Edge {
     pub to: NodeId,
     pub type_: EdgeType,
     pub properties: HashMap<String, String>, // As little as possible should be stored here
+}
+
+// --- CPG --- ///
+
+impl Cpg {
+    /// Get the number of edges in the CPG
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
+        let id = self.edges.insert(edge.clone());
+        self.incoming.entry(edge.to).or_default().insert(id);
+        self.outgoing.entry(edge.from).or_default().insert(id);
+        id
+    }
+
+    pub fn remove_edge(&mut self, edge: EdgeId) -> Option<Edge> {
+        if let Some(e) = self.edges.remove(edge) {
+            if let Some(in_edges) = self.incoming.get_mut(&e.to) {
+                in_edges.remove(&edge);
+            }
+            if let Some(out_edges) = self.outgoing.get_mut(&e.from) {
+                out_edges.remove(&edge);
+            }
+            Some(e)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_incoming_edges(&self, to: NodeId) -> Vec<&Edge> {
+        self.incoming
+            .get(&to)
+            .into_iter()
+            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
+            .collect()
+    }
+
+    pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
+        self.outgoing
+            .get(&from)
+            .into_iter()
+            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
+            .collect()
+    }
+
+    pub fn get_deterministic_sorted_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
+        let mut edges = self.get_outgoing_edges(from);
+        edges.sort_by(|a, b| {
+            if a == b {
+                return std::cmp::Ordering::Equal;
+            }
+
+            // Sort first on arrival node span (start)
+            let a_start = self
+                .spatial_index
+                .get_node_span(a.to)
+                .map(|(s, _)| s)
+                .unwrap_or(usize::MAX);
+            let b_start = self
+                .spatial_index
+                .get_node_span(b.to)
+                .map(|(s, _)| s)
+                .unwrap_or(usize::MAX);
+
+            let ord = a_start.cmp(&b_start);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            // Sort first on arrival node span (end)
+            let a_end = self
+                .spatial_index
+                .get_node_span(a.to)
+                .map(|(_, e)| e)
+                .unwrap_or(usize::MAX);
+            let b_end = self
+                .spatial_index
+                .get_node_span(b.to)
+                .map(|(_, e)| e)
+                .unwrap_or(usize::MAX);
+
+            let ord = a_end.cmp(&b_end);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            // Then on edge types
+            let a_type = a.type_.label();
+            let b_type = b.type_.label();
+            let ord = a_type.cmp(&b_type);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            // Then arrival node type
+            let a_node_type = self
+                .get_node_by_id(&a.to)
+                .map(|n| n.type_.label())
+                .unwrap_or_default();
+            let b_node_type = self
+                .get_node_by_id(&b.to)
+                .map(|n| n.type_.label())
+                .unwrap_or_default();
+            let ord = a_node_type.cmp(&b_node_type);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            warn!(
+                "[EDGE SORT] Used unstable node id as tie breaker for edges {:?} and {:?}",
+                a, b
+            );
+            let a_id = a.to.as_str();
+            let b_id = b.to.as_str();
+            a_id.cmp(&b_id)
+        });
+        edges
+    }
+
+    /// Get all of the Syntax Children of a node, ordered by their SyntaxSibling edges
+    /// (i.e. in the order they appear in the source code)
+    pub fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
+        // Guard against no edges
+        let outgoing_edges = self.get_outgoing_edges(root);
+        if outgoing_edges.is_empty() {
+            return Vec::new();
+        }
+
+        let mut child_nodes = Vec::new();
+        let mut sibling_map = HashMap::new();
+        let mut has_incoming_sibling = HashSet::new();
+
+        for edge in outgoing_edges {
+            if edge.type_ == EdgeType::SyntaxChild {
+                child_nodes.push(edge.to);
+            }
+        }
+
+        // Guard against no children
+        if child_nodes.is_empty() {
+            return Vec::new();
+        }
+
+        for &child in &child_nodes {
+            let child_outgoing = self.get_outgoing_edges(child);
+            for edge in child_outgoing {
+                if edge.type_ == EdgeType::SyntaxSibling {
+                    sibling_map.insert(edge.from, edge.to);
+                    has_incoming_sibling.insert(edge.to);
+                    break; // Each node has at most one outgoing sibling edge
+                }
+            }
+        }
+
+        let start = child_nodes
+            .iter()
+            .find(|&&node| !has_incoming_sibling.contains(&node))
+            .copied();
+
+        let mut ordered = Vec::with_capacity(child_nodes.len());
+        let mut current = start;
+        while let Some(id) = current {
+            ordered.push(id);
+            current = sibling_map.get(&id).copied();
+        }
+
+        ordered
+    }
+}
+
+impl EdgeType {
+    pub fn colour(&self) -> &'static str {
+        match self {
+            EdgeType::Unknown => "black",
+            EdgeType::SyntaxChild => "blue",
+            EdgeType::SyntaxSibling => "green",
+            EdgeType::ControlFlowEpsilon => "red",
+            EdgeType::ControlFlowFunctionReturn => "darkred",
+            EdgeType::ControlFlowTrue => "orange",
+            EdgeType::ControlFlowFalse => "purple",
+            EdgeType::PDControlTrue => "cyan",
+            EdgeType::PDControlFalse => "magenta",
+            EdgeType::PDData(_) => "brown",
+            EdgeType::Listener(_) => "gray",
+        }
+    }
+
+    pub fn label(&self) -> String {
+        format!("{:?}", self)
+            .replace("EdgeType::", "")
+            .replace('_', " ")
+            .replace('"', "'")
+    }
 }
 
 // --- Edge query --- //

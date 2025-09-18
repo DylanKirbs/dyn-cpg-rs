@@ -147,11 +147,6 @@ impl Cpg {
         self.nodes.len()
     }
 
-    /// Get the number of edges in the CPG
-    pub fn edge_count(&self) -> usize {
-        self.edges.len()
-    }
-
     /// Add a node to the CPG and update the spatial index
     /// If no root is set, the first node added will be assumed to be the root, this can be overridden using `set_root`.
     pub fn add_node(&mut self, node: Node, start_byte: usize, end_byte: usize) -> NodeId {
@@ -165,27 +160,6 @@ impl Cpg {
         node_id
     }
 
-    pub fn add_edge(&mut self, edge: Edge) -> EdgeId {
-        let id = self.edges.insert(edge.clone());
-        self.incoming.entry(edge.to).or_default().insert(id);
-        self.outgoing.entry(edge.from).or_default().insert(id);
-        id
-    }
-
-    pub fn remove_edge(&mut self, edge: EdgeId) -> Option<Edge> {
-        if let Some(e) = self.edges.remove(edge) {
-            if let Some(in_edges) = self.incoming.get_mut(&e.to) {
-                in_edges.remove(&edge);
-            }
-            if let Some(out_edges) = self.outgoing.get_mut(&e.from) {
-                out_edges.remove(&edge);
-            }
-            Some(e)
-        } else {
-            None
-        }
-    }
-
     pub fn get_node_by_id(&self, id: &NodeId) -> Option<&Node> {
         self.nodes.get(*id)
     }
@@ -197,72 +171,6 @@ impl Cpg {
     pub fn get_node_source(&self, node: &NodeId) -> String {
         let bytes: (usize, usize) = self.get_node_offsets_by_id(node).unwrap_or((0, 0));
         String::from_utf8_lossy(self.get_source().get(bytes.0..bytes.1).unwrap_or(&[])).to_string()
-    }
-
-    pub fn get_incoming_edges(&self, to: NodeId) -> Vec<&Edge> {
-        self.incoming
-            .get(&to)
-            .into_iter()
-            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
-            .collect()
-    }
-
-    pub fn get_outgoing_edges(&self, from: NodeId) -> Vec<&Edge> {
-        self.outgoing
-            .get(&from)
-            .into_iter()
-            .flat_map(|ids| ids.iter().map(|id| &self.edges[*id]))
-            .collect()
-    }
-
-    /// Get all of the Syntax Children of a node, ordered by their SyntaxSibling edges
-    /// (i.e. in the order they appear in the source code)
-    pub fn ordered_syntax_children(&self, root: NodeId) -> Vec<NodeId> {
-        // Guard against no edges
-        let outgoing_edges = self.get_outgoing_edges(root);
-        if outgoing_edges.is_empty() {
-            return Vec::new();
-        }
-
-        let mut child_nodes = Vec::new();
-        let mut sibling_map = HashMap::new();
-        let mut has_incoming_sibling = HashSet::new();
-
-        for edge in outgoing_edges {
-            if edge.type_ == EdgeType::SyntaxChild {
-                child_nodes.push(edge.to);
-            }
-        }
-
-        // Guard against no children
-        if child_nodes.is_empty() {
-            return Vec::new();
-        }
-
-        for &child in &child_nodes {
-            let child_outgoing = self.get_outgoing_edges(child);
-            for edge in child_outgoing {
-                if edge.type_ == EdgeType::SyntaxSibling {
-                    sibling_map.insert(edge.from, edge.to);
-                    has_incoming_sibling.insert(edge.to);
-                    break; // Each node has at most one outgoing sibling edge
-                }
-            }
-        }
-
-        let start = child_nodes
-            .iter()
-            .find(|&&node| !has_incoming_sibling.contains(&node))
-            .copied();
-
-        let mut ordered = Vec::with_capacity(child_nodes.len());
-        let mut current = start;
-        while let Some(id) = current {
-            ordered.push(id);
-            current = sibling_map.get(&id).copied();
-        }
-
-        ordered
     }
 
     /// Get all of the Syntax Children, Grandchildren, etc. of a node, ordered by their SyntaxSibling edges (DFS)

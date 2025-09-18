@@ -685,7 +685,7 @@ impl Cpg {
         // existing SyntaxSibling edges among them, and re-add sibling edges
         // to form a proper chain.
         let mut children: Vec<NodeId> = self
-            .get_outgoing_edges(parent)
+            .get_deterministic_sorted_outgoing_edges(parent)
             .into_iter()
             .filter(|e| e.type_ == EdgeType::SyntaxChild)
             .map(|e| e.to)
@@ -707,7 +707,7 @@ impl Cpg {
             // Collect edge ids to remove first to avoid borrow conflicts
             let mut sibling_edges_to_remove = Vec::new();
             for &child in &children {
-                for edge in self.get_outgoing_edges(child) {
+                for edge in self.get_deterministic_sorted_outgoing_edges(child) {
                     if edge.type_ == EdgeType::SyntaxSibling && children_set.contains(&edge.to) {
                         // Find the EdgeId for this edge
                         if let Some((edge_id, _)) = self.edges.iter().find(|(_, e)| {

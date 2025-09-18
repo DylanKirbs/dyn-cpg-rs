@@ -1,4 +1,4 @@
-use super::DescendantTraversal;
+use super::{DescendantTraversal, NodeId};
 use std::collections::HashMap;
 use strum_macros::Display;
 
@@ -87,5 +87,28 @@ impl Node {
         } else {
             None
         }
+    }
+}
+
+impl NodeId {
+    pub fn as_str(&self) -> String {
+        format!("\"{:?}\"", self)
+            .replace("NodeId(", "")
+            .replace(')', "")
+    }
+}
+
+impl NodeType {
+    pub fn colour(&self) -> &'static str {
+        match self {
+            NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
+            _ => "black",
+        }
+    }
+
+    pub fn label(&self) -> String {
+        format!("{:?}", self)
+            .replace("NodeType::", "")
+            .replace('_', " ")
     }
 }

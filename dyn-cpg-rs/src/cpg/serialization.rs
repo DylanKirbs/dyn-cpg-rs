@@ -1,11 +1,10 @@
-use super::{Cpg, Edge, EdgeId, EdgeType, NodeId, NodeType};
+use super::{Cpg, Edge, EdgeId, NodeId};
 use crate::cpg::spatial_index::SpatialIndex;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::PathBuf;
 use strum::Display;
 use thiserror::Error;
-use tracing::warn;
 
 #[derive(Debug, Error, Display)]
 pub enum SerializationError {
@@ -244,78 +243,7 @@ impl SexpSerializer {
 
         self.on_node_enter(cpg, id)?;
 
-        let mut outgoing = cpg.get_outgoing_edges(id);
-
-        outgoing.sort_by(|a, b| {
-            if a == b {
-                return std::cmp::Ordering::Equal;
-            }
-
-            // Sort first on arrival node span (start)
-            let a_start = cpg
-                .spatial_index
-                .get_node_span(a.to)
-                .map(|(s, _)| s)
-                .unwrap_or(usize::MAX);
-            let b_start = cpg
-                .spatial_index
-                .get_node_span(b.to)
-                .map(|(s, _)| s)
-                .unwrap_or(usize::MAX);
-
-            let ord = a_start.cmp(&b_start);
-            if ord != std::cmp::Ordering::Equal {
-                return ord;
-            }
-
-            // Sort first on arrival node span (end)
-            let a_end = cpg
-                .spatial_index
-                .get_node_span(a.to)
-                .map(|(_, e)| e)
-                .unwrap_or(usize::MAX);
-            let b_end = cpg
-                .spatial_index
-                .get_node_span(b.to)
-                .map(|(_, e)| e)
-                .unwrap_or(usize::MAX);
-
-            let ord = a_end.cmp(&b_end);
-            if ord != std::cmp::Ordering::Equal {
-                return ord;
-            }
-
-            // Then on edge types
-            let a_type = a.type_.label();
-            let b_type = b.type_.label();
-            let ord = a_type.cmp(&b_type);
-            if ord != std::cmp::Ordering::Equal {
-                return ord;
-            }
-
-            // Then arrival node type
-            let a_node_type = cpg
-                .get_node_by_id(&a.to)
-                .map(|n| n.type_.label())
-                .unwrap_or_default();
-            let b_node_type = cpg
-                .get_node_by_id(&b.to)
-                .map(|n| n.type_.label())
-                .unwrap_or_default();
-            let ord = a_node_type.cmp(&b_node_type);
-            if ord != std::cmp::Ordering::Equal {
-                return ord;
-            }
-
-            warn!(
-                "[CPG TO SEXP] Used unstable node id as tie breaker for edges {:?} and {:?}",
-                a, b
-            );
-            let a_id = a.to.as_str();
-            let b_id = b.to.as_str();
-            a_id.cmp(&b_id)
-        });
-        for edge in outgoing {
+        for edge in cpg.get_deterministic_sorted_outgoing_edges(id) {
             write!(
                 self.buf,
                 "\n{}(-> {} ",
@@ -413,52 +341,4 @@ fn escape_sexp(s: &str) -> String {
         }
     }
     out
-}
-
-impl EdgeType {
-    fn colour(&self) -> &'static str {
-        match self {
-            EdgeType::Unknown => "black",
-            EdgeType::SyntaxChild => "blue",
-            EdgeType::SyntaxSibling => "green",
-            EdgeType::ControlFlowEpsilon => "red",
-            EdgeType::ControlFlowFunctionReturn => "darkred",
-            EdgeType::ControlFlowTrue => "orange",
-            EdgeType::ControlFlowFalse => "purple",
-            EdgeType::PDControlTrue => "cyan",
-            EdgeType::PDControlFalse => "magenta",
-            EdgeType::PDData(_) => "brown",
-            EdgeType::Listener(_) => "gray",
-        }
-    }
-
-    fn label(&self) -> String {
-        format!("{:?}", self)
-            .replace("EdgeType::", "")
-            .replace('_', " ")
-            .replace('"', "'")
-    }
-}
-
-impl NodeId {
-    pub fn as_str(&self) -> String {
-        format!("\"{:?}\"", self)
-            .replace("NodeId(", "")
-            .replace(')', "")
-    }
-}
-
-impl NodeType {
-    fn colour(&self) -> &'static str {
-        match self {
-            NodeType::Comment | NodeType::LanguageImplementation(_) => "lightgray",
-            _ => "black",
-        }
-    }
-
-    fn label(&self) -> String {
-        format!("{:?}", self)
-            .replace("NodeType::", "")
-            .replace('_', " ")
-    }
 }
