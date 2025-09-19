@@ -105,17 +105,35 @@ def directory_means(df: pd.DataFrame, output_file: Path):
 @analysis
 def edits_vs_timing(df: pd.DataFrame, output_file: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Define markers based on same value
+    markers = {0: "x", 1: "o"}
+
+    # Plot incremental timings
+    for same_val in [0, 1]:
+        mask = df["same"] == same_val
+        if mask.any():
+            sns.scatterplot(
+                x="edits_count",
+                y="incremental_timings_ms",
+                data=df[mask],
+                marker=markers[same_val],
+                label=f"Incremental (same={same_val})",
+                alpha=0.7,
+                ax=ax,
+            )
+
+    # Plot full timings
     sns.scatterplot(
         x="edits_count",
-        y="incremental_timings_ms",
+        y="full_timings_ms",
         data=df,
-        label="Incremental",
+        marker="o",
+        label=f"Full",
         alpha=0.7,
         ax=ax,
     )
-    sns.scatterplot(
-        x="edits_count", y="full_timings_ms", data=df, label="Full", alpha=0.7, ax=ax
-    )
+
     ax.set_title("Timings vs Edits Count")
     ax.set_xlabel("Edits Count")
     ax.set_ylabel("Time (ms)")
@@ -235,7 +253,10 @@ def plot_metrics(df: pd.DataFrame, output_dir: Path):
     df = prepare_dataframe(df)
     for analysis_func in ANALYSES:
         print(f"Running analysis: {analysis_func.__name__} ({len(df)} rows)")
-        analysis_func(df.copy(), output_dir / analysis_func.__name__)
+        try:
+            analysis_func(df.copy(), output_dir / analysis_func.__name__)
+        except Exception as e:
+            print(f"Error occurred while running {analysis_func.__name__}: {e}")
 
 
 def load_metrics_from_directory(directory: Path) -> pd.DataFrame:

@@ -408,6 +408,25 @@ impl Cpg {
 
         let is_root_node = self.root.map_or(false, |root| root == cpg_node);
 
+        // 2. Preserve sibling relationships
+        // Find nodes that point to us (left siblings) and nodes we point to (right siblings)
+        let left_sibling = self
+            .get_incoming_edges(cpg_node)
+            .iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling)
+            .map(|e| e.from);
+
+        let right_sibling = self
+            .get_outgoing_edges(cpg_node)
+            .iter()
+            .find(|e| e.type_ == EdgeType::SyntaxSibling)
+            .map(|e| e.to);
+
+        trace!(
+            "[REBUILD] Node {:?}: Parent edge: {:?}, Is root: {}, Left sibling: {:?}, Right sibling: {:?}",
+            cpg_node, parent_edge, is_root_node, left_sibling, right_sibling
+        );
+
         // 2. Remove the old subtree completely
         self.remove_subtree(cpg_node).ok();
 
@@ -516,16 +535,49 @@ impl Cpg {
 
         // 6. Reattach to parent if it exists, or set as root only if it was originally the root
         if let Some(parent) = parent_edge {
+            trace!(
+                "[REBUILD] Adding parent edge: {:?} -> {:?}",
+                parent, new_node_id
+            );
             self.add_edge(crate::cpg::Edge {
                 from: parent,
                 to: new_node_id,
                 type_: EdgeType::SyntaxChild,
                 properties: std::collections::HashMap::new(),
             });
+            trace!("[REBUILD] Parent edge added successfully");
         } else if is_root_node {
             // Only set as root if this node was originally the root
             self.set_root(new_node_id);
         }
+
+        // 7. Restore sibling relationships
+        if let Some(left) = left_sibling {
+            trace!(
+                "[REBUILD] Restoring left sibling edge: {:?} -> {:?}",
+                left, new_node_id
+            );
+            self.add_edge(crate::cpg::Edge {
+                from: left,
+                to: new_node_id,
+                type_: EdgeType::SyntaxSibling,
+                properties: std::collections::HashMap::new(),
+            });
+        }
+
+        if let Some(right) = right_sibling {
+            trace!(
+                "[REBUILD] Restoring right sibling edge: {:?} -> {:?}",
+                new_node_id, right
+            );
+            self.add_edge(crate::cpg::Edge {
+                from: new_node_id,
+                to: right,
+                type_: EdgeType::SyntaxSibling,
+                properties: std::collections::HashMap::new(),
+            });
+        }
+
         // If no parent and not originally root, this node will be orphaned,
         // which is expected for some incremental update scenarios
 

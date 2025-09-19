@@ -632,6 +632,94 @@ fn test_mre_variable_name_change_bug() {
     }
 }
 
+/// MRE test for CST pairing bug in else clause deletion
+/// Reproduces the issue where compound_statement gets incorrectly paired with translation_unit
+/// because the original span (33, 178) extends beyond new source length (139)
+#[test]
+fn test_mre_cst_pairing_span_bug() {
+    dyn_cpg_rs::logging::init();
+    debug!("Testing CST pairing span bug with else clause deletion");
+
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Use the actual stmt-del files that trigger the bug
+    let s_orig = Resource::new("samples/stmt-del.old.c")
+        .expect("Failed to create resource for stmt-del.old.c");
+    let s_new = Resource::new("samples/stmt-del.new.c")
+        .expect("Failed to create resource for stmt-del.new.c");
+
+    let old_source = s_orig.read_bytes().expect("Failed to read stmt-del.old.c");
+    let new_source = s_new.read_bytes().expect("Failed to read stmt-del.new.c");
+
+    debug!(
+        "Old source length: {}, New source length: {}",
+        old_source.len(),
+        new_source.len()
+    );
+
+    let mut old_tree = parser
+        .parse(&old_source, None)
+        .expect("Failed to parse old source");
+
+    // Create CPG from original tree BEFORE incremental parsing
+    let mut incremental_cpg = lang
+        .cst_to_cpg(old_tree.clone(), old_source.to_vec())
+        .expect("Failed to create initial CPG");
+
+    println!("=== INITIAL CPG ===");
+    println!("Nodes: {}", incremental_cpg.node_count());
+    println!("Edges: {}", incremental_cpg.edge_count());
+
+    // Perform incremental parsing
+    let (edits, new_tree) = incremental_parse(&mut parser, &old_source, &new_source, &mut old_tree)
+        .expect("Failed to incrementally parse");
+
+    println!("=== EDITS ===");
+    for edit in &edits {
+        println!("{:?}", edit);
+    }
+
+    // This debug output should show the CST pairing bug:
+    // A compound_statement CPG node with span (33, 178) getting paired with translation_unit (0, 139)
+
+    // Create reference CPG
+    let reference_cpg = lang
+        .cst_to_cpg(new_tree.clone(), new_source.to_vec())
+        .expect("Failed to create reference CPG");
+
+    println!("=== BEFORE INCREMENTAL UPDATE ===");
+    println!("Incremental CPG nodes: {}", incremental_cpg.node_count());
+    println!("Reference CPG nodes: {}", reference_cpg.node_count());
+
+    // Apply incremental update - this should trigger the CST pairing bug
+    let changed_ranges = old_tree.changed_ranges(&new_tree);
+    incremental_cpg.incremental_update(edits, changed_ranges, &new_tree, new_source.to_vec());
+
+    println!("=== AFTER INCREMENTAL UPDATE ===");
+    println!("Incremental CPG nodes: {}", incremental_cpg.node_count());
+    println!("Reference CPG nodes: {}", reference_cpg.node_count());
+
+    // Property: Incremental update should produce equivalent result
+    let diff = incremental_cpg
+        .compare(&reference_cpg)
+        .expect("Failed to compare CPGs");
+
+    debug!("Comparison result: {:?}", diff);
+
+    match diff {
+        DetailedComparisonResult::Equivalent => {
+            debug!("SUCCESS: CPGs are equivalent");
+        }
+        _ => {
+            debug!("BUG REPRODUCED: CPGs have differences: {}", diff);
+            panic!(
+                "CST pairing bug reproduced - compound_statement incorrectly paired with translation_unit"
+            );
+        }
+    }
+}
+
 /// Test case derived from failing proptest
 #[test]
 fn test_mre_function_name_change_simple() {
