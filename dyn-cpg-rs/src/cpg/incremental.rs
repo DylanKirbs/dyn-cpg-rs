@@ -1311,25 +1311,81 @@ impl Cpg {
                     }
 
                     root_node
-                } else if let Some(cst_node) =
-                    new_tree.root_node().descendant_for_byte_range(start, end)
-                {
-                    trace!(
-                        "[INCREMENTAL UPDATE] [CST PAIRING] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
-                        id,
-                        start,
-                        end,
-                        cst_node.kind(),
-                        cst_node.start_byte(),
-                        cst_node.end_byte()
-                    );
-                    cst_node
                 } else {
-                    warn!(
-                        "[INCREMENTAL UPDATE] [CST PAIRING] No CST node found for CPG node {:?} in new tree",
-                        id
-                    );
-                    continue;
+                    // Handle case where original span extends beyond new source length
+                    let source_len = self.get_source().len();
+
+                    // First try with adjusted end position if original span is too large
+                    let cst_node = if end > source_len {
+                        let adjusted_end = source_len.saturating_sub(1).max(start);
+                        trace!(
+                            "[INCREMENTAL UPDATE] [CST PAIRING] Original span ({}, {}) exceeds source length {}, adjusting to ({}, {})",
+                            start, end, source_len, start, adjusted_end
+                        );
+                        new_tree
+                            .root_node()
+                            .descendant_for_byte_range(start, adjusted_end)
+                    } else {
+                        new_tree.root_node().descendant_for_byte_range(start, end)
+                    };
+
+                    if let Some(cst_node) = cst_node {
+                        // Check if we got the root node as a fallback (indicating failed lookup)
+                        if cst_node.start_byte() == 0
+                            && cst_node.end_byte() == source_len.saturating_sub(1)
+                        {
+                            // This is likely the root node fallback - try to find a better match
+                            // Look for the first child that contains our start position
+                            let mut cursor = cst_node.walk();
+                            let mut best_match = cst_node;
+
+                            if cursor.goto_first_child() {
+                                loop {
+                                    let current = cursor.node();
+                                    // Look for nodes that contain our start position
+                                    if current.start_byte() <= start && start < current.end_byte() {
+                                        best_match = current;
+                                        // Try to go deeper if possible
+                                        if cursor.goto_first_child() {
+                                            continue;
+                                        }
+                                    }
+
+                                    if !cursor.goto_next_sibling() {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            trace!(
+                                "[INCREMENTAL UPDATE] [CST PAIRING] Refined match for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
+                                id,
+                                start,
+                                end,
+                                best_match.kind(),
+                                best_match.start_byte(),
+                                best_match.end_byte()
+                            );
+                            best_match
+                        } else {
+                            trace!(
+                                "[INCREMENTAL UPDATE] [CST PAIRING] Found CST node for CPG node {:?} with span ({}, {}): kind={}, cst_span=({}, {})",
+                                id,
+                                start,
+                                end,
+                                cst_node.kind(),
+                                cst_node.start_byte(),
+                                cst_node.end_byte()
+                            );
+                            cst_node
+                        }
+                    } else {
+                        warn!(
+                            "[INCREMENTAL UPDATE] [CST PAIRING] No CST node found for CPG node {:?} in new tree",
+                            id
+                        );
+                        continue;
+                    }
                 };
 
                 update_plan.push((*id, cst_node));
