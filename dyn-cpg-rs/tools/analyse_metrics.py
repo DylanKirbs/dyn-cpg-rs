@@ -247,7 +247,7 @@ def prop_same_by_patch_type(df: pd.DataFrame, output_file: Path):
 
 
 def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    # edits_count full_timings_ms incremental_timings_ms same patch_index patch_name patch_type directory
+    # patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed
     df = df.copy()
 
     # Make numeric and bump the min to 0.1ms to avoid log(0) issues

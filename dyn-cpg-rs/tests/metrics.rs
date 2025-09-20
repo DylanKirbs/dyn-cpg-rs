@@ -15,6 +15,66 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{info, warn};
 
+#[derive(Default)]
+struct PatchResult {
+    patch_name: String,
+    same: u8, // 1 = same, 0 = different
+    full_node_count: usize,
+    full_edge_count: usize,
+    incr_node_count: usize,
+    incr_edge_count: usize,
+    edits_count: usize,
+    lines_changed: usize,
+    full_time_ms: u128,
+    incr_time_ms: u128,
+}
+
+impl PatchResult {
+    pub fn to_csv_header(&self) -> String {
+        "patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed\n".to_string()
+    }
+
+    pub fn to_csv_line(&self) -> String {
+        format!(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            self.patch_name,
+            self.edits_count,
+            self.full_time_ms,
+            self.incr_time_ms,
+            self.same,
+            self.full_node_count,
+            self.full_edge_count,
+            self.incr_node_count,
+            self.incr_edge_count,
+            self.lines_changed
+        )
+    }
+
+    pub fn display(&self) -> String {
+        format!(
+            "Patch {}: same={}, full_nodes={}, full_edges={}, incr_nodes={}, incr_edges={}, edits_count={}, lines_changed={}, full_time_ms={}, incr_time_ms={}",
+            self.patch_name,
+            self.same,
+            self.full_node_count,
+            self.full_edge_count,
+            self.incr_node_count,
+            self.incr_edge_count,
+            self.edits_count,
+            self.lines_changed,
+            self.full_time_ms,
+            self.incr_time_ms
+        )
+    }
+
+    pub fn log(&self) {
+        if self.same == 1 {
+            info!("{}", self.display());
+        } else {
+            warn!("{}", self.display());
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct DetailedTimings {
     // Full parse timings
@@ -643,11 +703,8 @@ fn seq_patch_parse(path: &str) {
 
     // Create/wipe the metrics CSV file and add headers
     let csv_path = format!("{}metrics.csv", path);
-    std::fs::write(
-        &csv_path,
-        "patch_name,edits_count,full_timings_ms,incremental_timings_ms,same\n",
-    )
-    .expect("Failed to create metrics CSV file");
+    std::fs::write(&csv_path, PatchResult::default().to_csv_header())
+        .expect("Failed to create metrics CSV file");
 
     // Init the lang and parser
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
@@ -666,14 +723,9 @@ fn seq_patch_parse(path: &str) {
         .expect("Failed to parse base source file");
 
     // Create CPG from original tree before incremental parsing
-    let start = std::time::Instant::now();
     let mut cpg = lang
         .cst_to_cpg(base_tree.clone(), base_source.clone())
         .expect("Failed to convert old tree to CPG");
-    info!(
-        "Initial CPG creation took {} ms",
-        start.elapsed().as_millis()
-    );
 
     let mut patches = glob(&format!("{}/*.patch", path))
         .expect("Failed to read glob pattern for patches")
@@ -726,87 +778,53 @@ fn seq_patch_parse(path: &str) {
         }
 
         // Perform full parse for comparison
-        let start = std::time::Instant::now();
         let (full_cpg, full_timings) =
             perform_full_parse(&mut parser, &lang, &new_src).expect("Failed to perform full parse");
-        info!("Full parse took {} ms", start.elapsed().as_millis());
 
         // Perform incremental parse and CPG update
-        let start = std::time::Instant::now();
         let (incremental_cpg, incr_timings, edits) =
             perform_incremental_parse(&mut parser, &base_source, &new_src, cpg)
                 .expect("Failed to perform incremental parse");
-        info!(
-            "Incremental parse and CPG update took {} ms",
-            start.elapsed().as_millis()
-        );
 
         // Compare the two results to ensure correctness
-        let comparison_start = std::time::Instant::now();
+        let comparison_time = Instant::now();
         let comparison = incremental_cpg
             .compare(&full_cpg)
             .expect("Failed to compare CPGs");
-        info!(
-            "CPG comparison took {} ms",
-            comparison_start.elapsed().as_millis()
-        );
+        let comparison_duration = comparison_time.elapsed();
+        info!("CPG comparison completed in {:?}", comparison_duration);
 
-        // Assert that the CPGs are equivalent
-        if !matches!(comparison, DetailedComparisonResult::Equivalent) {
-            warn!(
-                "Patch {} resulted in mismatched CPGs!\nComparison: {}\nFull CPG: {} nodes, {} edges\nIncremental CPG: {} nodes, {} edges\nEdits applied: {} edits, {} lines changed, Performance: full={}ms, incremental={}ms",
-                patch.display(),
-                comparison.non_diff_string(),
-                full_cpg.node_count(),
-                full_cpg.edge_count(),
-                incremental_cpg.node_count(),
-                incremental_cpg.edge_count(),
-                edits.len(),
-                count_lines_in_byte_ranges(
-                    &new_src,
-                    edits.iter().map(|e| (e.new_start, e.new_end))
-                ),
-                full_timings.full_parse_total_ms().unwrap_or(0),
-                incr_timings.incremental_parse_total_ms().unwrap_or(0)
-            );
-        } else {
-            info!(
-                "Patch {} applied successfully - CPGs match! Full: {}/{} nodes/edges, Incremental: {}/{} nodes/edges, Performance: full={}ms, incremental={}ms",
-                patch.display(),
-                full_cpg.node_count(),
-                full_cpg.edge_count(),
-                incremental_cpg.node_count(),
-                incremental_cpg.edge_count(),
-                full_timings.full_parse_total_ms().unwrap_or(0),
-                incr_timings.incremental_parse_total_ms().unwrap_or(0)
-            );
-        }
-
-        // Write metrics to CSV
-        let patch_name = patch
-            .file_name()
-            .expect("Failed to get patch file name")
-            .to_str()
-            .expect("Failed to convert patch file name to string");
-
-        let csv_line = format!(
-            "{},{},{},{},{}\n",
-            patch_name,
-            edits.len(),
-            full_timings.full_parse_total_ms().unwrap_or(0),
-            incr_timings.incremental_parse_total_ms().unwrap_or(0),
-            if matches!(comparison, DetailedComparisonResult::Equivalent) {
-                "1"
+        let res = PatchResult {
+            patch_name: patch
+                .file_name()
+                .expect("Failed to get patch file name")
+                .to_str()
+                .expect("Failed to convert patch file name to string")
+                .to_string(),
+            same: if matches!(comparison, DetailedComparisonResult::Equivalent) {
+                1
             } else {
-                "0"
-            }
-        );
+                0
+            },
+            full_node_count: full_cpg.node_count(),
+            full_edge_count: full_cpg.edge_count(),
+            incr_node_count: incremental_cpg.node_count(),
+            incr_edge_count: incremental_cpg.edge_count(),
+            edits_count: edits.len(),
+            lines_changed: count_lines_in_byte_ranges(
+                &new_src,
+                edits.iter().map(|e| (e.new_start, e.new_end)),
+            ),
+            full_time_ms: full_timings.full_parse_total_ms().unwrap_or(0),
+            incr_time_ms: incr_timings.incremental_parse_total_ms().unwrap_or(0),
+        };
+        res.log();
 
         std::fs::OpenOptions::new()
             .append(true)
             .open(&csv_path)
             .expect("Failed to open CSV file for appending")
-            .write_all(csv_line.as_bytes())
+            .write_all(res.to_csv_line().as_bytes())
             .expect("Failed to write to CSV file");
 
         // Update base source and CPG for next iteration (use full result for sanity)
