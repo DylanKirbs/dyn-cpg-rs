@@ -1087,7 +1087,7 @@ fn debug_print_function_names(
 }
 
 #[test]
-fn test_mre_prop_test_failing_case() {
+fn test_mre_function_rename_and_update_return() {
     dyn_cpg_rs::logging::init();
     let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
     let mut parser = lang.get_parser().expect("Failed to get parser for C");
@@ -1175,6 +1175,7 @@ fn test_mre_prop_test_failing_case() {
         .expect("Failed to write reference sexp");
 
     // Property: Incremental update should produce equivalent result
+    debug!("Comparing CPGs for property test case: left = incremental, right = reference");
     let comparison = incremental_cpg.compare(&reference_cpg);
     assert!(comparison.is_ok(), "CPG comparison should not fail");
 

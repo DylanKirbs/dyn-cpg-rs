@@ -441,8 +441,11 @@ impl Cpg {
 
         // 4. Recursively build children using the proper translate approach
         let mut cst_cursor = cst_node.walk();
+
         if cst_cursor.goto_first_child() {
             let mut children = Vec::new();
+            let mut child_info = Vec::new(); // Store (child_id, child_type, child_cst_node) for post-translation
+
             loop {
                 let child_cst_node = cst_cursor.node();
 
@@ -466,6 +469,7 @@ impl Cpg {
                 });
 
                 children.push(child_id);
+                child_info.push((child_id, child_type, child_cst_node));
 
                 // Recursively handle grandchildren if they exist
                 if child_cst_node.child_count() > 0 {
@@ -504,15 +508,13 @@ impl Cpg {
                             properties: std::collections::HashMap::new(),
                         });
 
-                        // Update the child in our children list
+                        // Update the child in our children list and info
                         if let Some(last_idx) = children.len().checked_sub(1) {
                             children[last_idx] = new_child_id;
+                            child_info[last_idx].0 = new_child_id;
                         }
                     }
                 }
-
-                // Apply post-translation logic for the child
-                post_translate_node(self, child_type, child_id, &child_cst_node);
 
                 if !cst_cursor.goto_next_sibling() {
                     break;
@@ -527,6 +529,11 @@ impl Cpg {
                     type_: EdgeType::SyntaxSibling,
                     properties: std::collections::HashMap::new(),
                 });
+            }
+
+            // Apply post-translation logic for all children after all relationships are established
+            for (child_id, child_type, child_cst_node) in child_info {
+                post_translate_node(self, child_type, child_id, &child_cst_node);
             }
         }
 
@@ -667,6 +674,10 @@ impl Cpg {
         cst_children: &[tree_sitter::Node],
         operations: Vec<EditOperation>,
     ) {
+        let mut updated_node_type = None;
+        let mut updated_id = None;
+        let mut updated_cst_child = None;
+
         // Apply operations
         for operation in operations {
             match operation {
@@ -692,8 +703,10 @@ impl Cpg {
                         properties: std::collections::HashMap::new(),
                     });
 
-                    // Apply post-translation logic
-                    post_translate_node(self, node_type, id, cst_child);
+                    // Record post translation info
+                    updated_node_type = Some(node_type);
+                    updated_id = Some(id);
+                    updated_cst_child = Some(cst_child);
                 }
                 EditOperation::Delete { cpg_index } => {
                     if cpg_index < cpg_children.len() {
@@ -721,21 +734,15 @@ impl Cpg {
                             cst_child.end_byte(),
                         );
 
-                        // Apply post-translation logic for updated node
-                        post_translate_node(self, new_type, cpg_id, cst_child);
+                        // Record post translation info
+                        updated_node_type = Some(new_type);
+                        updated_id = Some(cpg_id);
+                        updated_cst_child = Some(cst_child);
                     }
                 }
             }
         }
 
-        // After applying operations, ensure SyntaxSibling edges reflect the
-        // current source ordering of SyntaxChild children. Surgical inserts
-        // and deletes may leave sibling edges out-of-date which breaks
-        // ordering-dependent logic (and can cause missing nodes in diffs).
-        // Strategy: gather all current SyntaxChild children of `parent`,
-        // sort them by their start byte from the spatial index, remove any
-        // existing SyntaxSibling edges among them, and re-add sibling edges
-        // to form a proper chain.
         let mut children: Vec<NodeId> = self
             .get_deterministic_sorted_outgoing_edges(parent)
             .into_iter()
@@ -784,6 +791,13 @@ impl Cpg {
                     properties: std::collections::HashMap::new(),
                 });
             }
+        }
+
+        // Apply post-translation logic for updated/inserted node
+        if let (Some(new_type), Some(cpg_id), Some(cst_child)) =
+            (updated_node_type, updated_id, updated_cst_child)
+        {
+            post_translate_node(self, new_type, cpg_id, cst_child);
         }
     }
 
@@ -1523,11 +1537,6 @@ impl Cpg {
             }
         }
 
-        // Re-run post-translation analysis to update semantic properties (like function names)
-        // This is crucial for nodes like functions whose properties depend on their children
-        let updated_type = self.get_node_by_id(&cpg_node).unwrap().type_.clone();
-        crate::languages::post_translate_node(self, updated_type, cpg_node, cst_node);
-
         // Update children with smarter matching (by kind and span)
         let cpg_children = self.ordered_syntax_children(cpg_node);
         let mut cst_cursor = cst_node.walk();
@@ -1590,10 +1599,15 @@ impl Cpg {
                             );
                         }
                     }
-                    cst_child_index += 1;
                 }
+                cst_child_index += 1;
             }
         }
+
+        // Re-run post-translation analysis to update semantic properties (like function names)
+        // This is crucial for nodes like functions whose properties depend on their children
+        let updated_type = self.get_node_by_id(&cpg_node).unwrap().type_.clone();
+        crate::languages::post_translate_node(self, updated_type, cpg_node, cst_node);
     }
 
     /// Recursively removes a subtree from the CPG by its root node ID
