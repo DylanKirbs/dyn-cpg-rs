@@ -1,8 +1,3 @@
-use std::collections::HashMap;
-use std::io::Write;
-use std::path::PathBuf;
-use std::time::Instant;
-
 use dyn_cpg_rs::{
     cpg::{Cpg, DetailedComparisonResult},
     diff::{SourceEdit, incremental_parse},
@@ -13,7 +8,11 @@ use git2::{Oid, Repository};
 use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
+use std::collections::HashMap;
 use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+use std::time::Instant;
 use tracing::{info, warn};
 
 #[derive(Debug, Default)]

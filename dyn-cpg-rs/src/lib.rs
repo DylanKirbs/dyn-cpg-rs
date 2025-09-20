@@ -17,7 +17,7 @@ pub mod logging {
 
 pub mod diff {
     use similar::{Algorithm, DiffOp, capture_diff_slices};
-    use tracing::debug;
+    use tracing::{debug, trace};
     use tree_sitter::{Parser, Point, Tree};
 
     #[derive(Debug, Clone)]
@@ -121,21 +121,24 @@ pub mod diff {
         let new_line_index = LineIndex::new(new_src);
 
         let edits = source_edits(old_src, new_src);
-        debug!("Applying {} edits", edits.len());
+        debug!("Applying edits: {:#?}", edits);
 
-        for edit in edits.clone() {
+        for (i, edit) in edits.clone().into_iter().enumerate() {
             let start_point = line_index.point_for_offset(edit.old_start);
             let old_end_point = line_index.point_for_offset(edit.old_end);
             let new_end_point = new_line_index.point_for_offset(edit.new_end);
 
-            old_tree.edit(&tree_sitter::InputEdit {
+            let ts_edit = tree_sitter::InputEdit {
                 start_byte: edit.old_start,
                 old_end_byte: edit.old_end,
                 new_end_byte: edit.new_end,
                 start_position: start_point,
                 old_end_position: old_end_point,
                 new_end_position: new_end_point,
-            });
+            };
+
+            trace!("Applying tree-sitter edit {}: {:?}", i, ts_edit);
+            old_tree.edit(&ts_edit);
         }
 
         debug!("Parsing with updated edits");

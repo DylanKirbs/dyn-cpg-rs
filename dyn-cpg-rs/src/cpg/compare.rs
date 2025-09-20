@@ -1,7 +1,7 @@
 use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType, serialization::SexpSerializer};
 use similar::TextDiff;
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, trace};
+use tracing::debug;
 
 // --- Comparison Results --- //
 
@@ -86,11 +86,9 @@ pub enum FunctionComparisonResult {
     Mismatch {
         /// The name of the function
         function_name: String,
-        /// Details
-        details: String,
         left_cpg: Cpg,
         right_cpg: Cpg,
-        mismatches: Vec<(Option<NodeId>, Option<NodeId>)>,
+        mismatches: Vec<(Option<NodeId>, Option<NodeId>, String)>,
         l_root: NodeId,
         r_root: NodeId,
     },
@@ -102,16 +100,12 @@ impl PartialEq for FunctionComparisonResult {
             (FunctionComparisonResult::Equivalent, FunctionComparisonResult::Equivalent) => true,
             (
                 FunctionComparisonResult::Mismatch {
-                    function_name: fn1,
-                    details: d1,
-                    ..
+                    function_name: fn1, ..
                 },
                 FunctionComparisonResult::Mismatch {
-                    function_name: fn2,
-                    details: d2,
-                    ..
+                    function_name: fn2, ..
                 },
-            ) => fn1 == fn2 && d1 == d2,
+            ) => fn1 == fn2,
             _ => false,
         }
     }
@@ -123,7 +117,6 @@ impl std::fmt::Display for FunctionComparisonResult {
             FunctionComparisonResult::Equivalent => write!(f, "Function is equivalent"),
             FunctionComparisonResult::Mismatch {
                 function_name,
-                details,
                 left_cpg,
                 right_cpg,
                 mismatches,
@@ -145,7 +138,6 @@ impl std::fmt::Display for FunctionComparisonResult {
                 }
 
                 writeln!(f, "Function '{}' has differences:", function_name)?;
-                writeln!(f, "  Details: {}", details)?;
                 writeln!(
                     f,
                     "  Source Diff:\n    {}",
@@ -229,11 +221,6 @@ impl Cpg {
                             only_in_right: vec![],
                             function_mismatches: vec![FunctionComparisonResult::Mismatch {
                                 function_name: "root".to_string(),
-                                details: format!(
-                                    "Root nodes differ [Root not TranslationUnit (left={},right={})]",
-                                    l_node.type_ != NodeType::TranslationUnit,
-                                    r_node.type_ != NodeType::TranslationUnit,
-                                ),
                                 left_cpg: self.clone(),
                                 right_cpg: other.clone(),
                                 mismatches,
@@ -286,7 +273,6 @@ impl Cpg {
                         if !mismatches.is_empty() {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
-                                details: format!("Function {} has structural differences", name),
                                 mismatches,
                                 left_cpg: self.clone(),
                                 right_cpg: other.clone(),
@@ -354,16 +340,11 @@ impl Cpg {
         l_root: NodeId,
         r_root: NodeId,
         visited: &mut HashSet<(NodeId, NodeId)>,
-    ) -> Result<Vec<(Option<NodeId>, Option<NodeId>)>, CpgError> {
+    ) -> Result<Vec<(Option<NodeId>, Option<NodeId>, String)>, CpgError> {
         // Avoid re-comparing the same pair of nodes
         if !visited.insert((l_root, r_root)) {
             return Ok(vec![]);
         }
-
-        trace!(
-            "[COMPARE] Comparing subtrees: left root = {:?}, right root = {:?}",
-            l_root, r_root
-        );
 
         let l_node = self.get_node_by_id(&l_root).ok_or_else(|| {
             CpgError::MissingField(format!("Node with id {:?} not found in left CPG", l_root))
@@ -374,11 +355,14 @@ impl Cpg {
         })?;
 
         if l_node != r_node {
-            trace!(
-                "[COMPARE] Node mismatch found: {:?} != {:?}",
-                l_node, r_node
-            );
-            return Ok(vec![(Some(l_root), Some(r_root))]);
+            return Ok(vec![(
+                Some(l_root),
+                Some(r_root),
+                format!(
+                    "Node properties or type differ: left = {} {:?}, right = {} {:?}",
+                    l_node.type_, l_node.properties, r_node.type_, r_node.properties
+                ),
+            )]);
         }
 
         let l_edges = self.get_deterministic_sorted_outgoing_edges(l_root);
@@ -410,11 +394,15 @@ impl Cpg {
                         let ordered_right = other.ordered_syntax_children(r_root);
 
                         if ordered_left.len() != ordered_right.len() {
-                            mismatches.push((Some(l_root), Some(r_root)));
-                            trace!(
-                                "[COMPARE] Syntax child (count) mismatch: left = {:?}, right = {:?}",
-                                ordered_left, ordered_right
-                            );
+                            mismatches.push((
+                                Some(l_root),
+                                Some(r_root),
+                                format!(
+                                    "Ordered SyntaxChild count mismatch: #left = {}, #right = {}",
+                                    ordered_left.len(),
+                                    ordered_right.len()
+                                ),
+                            ));
                             return Ok(mismatches);
                         }
 
@@ -423,14 +411,13 @@ impl Cpg {
                         }
                     } else {
                         if left_group.len() != rg.len() {
-                            mismatches.push((Some(l_root), Some(r_root)));
-                            trace!(
-                                "[COMPARE] Edge count mismatch for type {:?} with props {:?}: left = {}, right = {}",
+                            mismatches.push((Some(l_root), Some(r_root), format!(
+                                "Edge count mismatch for type {:?} with props {:?}: #left = {}, #right = {}",
                                 edge_type,
                                 props,
                                 left_group.len(),
                                 rg.len()
-                            );
+                            )));
                             return Ok(mismatches);
                         }
 
@@ -442,11 +429,14 @@ impl Cpg {
                     }
                 }
                 None => {
-                    mismatches.push((Some(l_root), Some(r_root)));
-                    trace!(
-                        "[COMPARE] Missing edge group in right CPG: type {:?} with props {:?}",
-                        edge_type, props
-                    );
+                    mismatches.push((
+                        Some(l_root),
+                        Some(r_root),
+                        format!(
+                            "Missing edge group in right CPG: type {:?} with props {:?}",
+                            edge_type, props
+                        ),
+                    ));
                     return Ok(mismatches);
                 }
             }
@@ -459,11 +449,11 @@ impl Cpg {
     fn source_diff(
         &self,
         other: &Cpg,
-        mismatches: &Vec<(Option<NodeId>, Option<NodeId>)>,
+        mismatches: &Vec<(Option<NodeId>, Option<NodeId>, String)>,
     ) -> String {
         let mut details = vec![];
 
-        for (left_node_opt, right_node_opt) in mismatches {
+        for (left_node_opt, right_node_opt, detail) in mismatches {
             let left_source = left_node_opt
                 .map(|node_id| self.get_node_source(&node_id))
                 .unwrap_or_else(|| "".to_string());
@@ -484,7 +474,7 @@ impl Cpg {
             //     diff_output.push(format!("{}{}", sign, change.value().trim_end()));
             // }
 
-            details.push(format!("Mismatch:\n{}", diff.unified_diff()));
+            details.push(format!("Mismatch - {}:\n{}", detail, diff.unified_diff()));
         }
 
         details.join("\n")
