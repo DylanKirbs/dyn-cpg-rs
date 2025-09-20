@@ -56,154 +56,154 @@ pub mod diff {
     }
 
     fn source_edits(old: &[u8], new: &[u8]) -> Vec<SourceEdit> {
-        // Helper: split s into alternating runs of whitespace / non-whitespace and record byte offsets.
-        fn tokenize_with_offsets(s: &str) -> (Vec<&str>, Vec<usize>) {
-            let mut tokens = Vec::new();
-            let mut offsets = Vec::new();
-            let mut seg_start = 0usize;
-            let mut last_is_ws: Option<bool> = None;
+        // // Helper: split s into alternating runs of whitespace / non-whitespace and record byte offsets.
+        // fn tokenize_with_offsets(s: &str) -> (Vec<&str>, Vec<usize>) {
+        //     let mut tokens = Vec::new();
+        //     let mut offsets = Vec::new();
+        //     let mut seg_start = 0usize;
+        //     let mut last_is_ws: Option<bool> = None;
 
-            for (idx, ch) in s.char_indices() {
-                let is_ws = ch.is_whitespace();
-                if let Some(last) = last_is_ws {
-                    if is_ws != last {
-                        tokens.push(&s[seg_start..idx]);
-                        offsets.push(seg_start);
-                        seg_start = idx;
-                        last_is_ws = Some(is_ws);
-                    }
-                } else {
-                    last_is_ws = Some(is_ws);
-                }
-            }
+        //     for (idx, ch) in s.char_indices() {
+        //         let is_ws = ch.is_whitespace();
+        //         if let Some(last) = last_is_ws {
+        //             if is_ws != last {
+        //                 tokens.push(&s[seg_start..idx]);
+        //                 offsets.push(seg_start);
+        //                 seg_start = idx;
+        //                 last_is_ws = Some(is_ws);
+        //             }
+        //         } else {
+        //             last_is_ws = Some(is_ws);
+        //         }
+        //     }
 
-            if seg_start < s.len() {
-                tokens.push(&s[seg_start..]);
-                offsets.push(seg_start);
-            }
+        //     if seg_start < s.len() {
+        //         tokens.push(&s[seg_start..]);
+        //         offsets.push(seg_start);
+        //     }
 
-            (tokens, offsets)
-        }
+        //     (tokens, offsets)
+        // }
 
-        // Map token index + token count to byte range in the original string.
-        fn token_range_to_byte_range(
-            offsets: &[usize],
-            tokens: &[&str],
-            index: usize,
-            len: usize,
-            total_bytes: usize,
-        ) -> (usize, usize) {
-            if len == 0 {
-                // insertion at token boundary
-                if index >= offsets.len() {
-                    (total_bytes, total_bytes)
-                } else {
-                    let start = offsets[index];
-                    (start, start)
-                }
-            } else {
-                let start = offsets[index];
-                let last = index + len - 1;
-                let end = offsets[last] + tokens[last].len();
-                (start, end)
-            }
-        }
+        // // Map token index + token count to byte range in the original string.
+        // fn token_range_to_byte_range(
+        //     offsets: &[usize],
+        //     tokens: &[&str],
+        //     index: usize,
+        //     len: usize,
+        //     total_bytes: usize,
+        // ) -> (usize, usize) {
+        //     if len == 0 {
+        //         // insertion at token boundary
+        //         if index >= offsets.len() {
+        //             (total_bytes, total_bytes)
+        //         } else {
+        //             let start = offsets[index];
+        //             (start, start)
+        //         }
+        //     } else {
+        //         let start = offsets[index];
+        //         let last = index + len - 1;
+        //         let end = offsets[last] + tokens[last].len();
+        //         (start, end)
+        //     }
+        // }
 
-        // Try UTF-8 tokenized (word-aware) diff first.
-        if let (Ok(old_s), Ok(new_s)) = (std::str::from_utf8(old), std::str::from_utf8(new)) {
-            let (old_tokens, old_offsets) = tokenize_with_offsets(old_s);
-            let (new_tokens, new_offsets) = tokenize_with_offsets(new_s);
+        // // Try UTF-8 tokenized (word-aware) diff first.
+        // if let (Ok(old_s), Ok(new_s)) = (std::str::from_utf8(old), std::str::from_utf8(new)) {
+        //     let (old_tokens, old_offsets) = tokenize_with_offsets(old_s);
+        //     let (new_tokens, new_offsets) = tokenize_with_offsets(new_s);
 
-            let diff_ops = capture_diff_slices(Algorithm::Myers, &old_tokens, &new_tokens);
-            let mut edits = Vec::new();
+        //     let diff_ops = capture_diff_slices(Algorithm::Myers, &old_tokens, &new_tokens);
+        //     let mut edits = Vec::new();
 
-            for op in diff_ops {
-                match op {
-                    DiffOp::Equal { .. } => continue,
-                    DiffOp::Insert {
-                        old_index,
-                        new_index,
-                        new_len,
-                    } => {
-                        let (old_start, old_end) = token_range_to_byte_range(
-                            &old_offsets,
-                            &old_tokens,
-                            old_index,
-                            0,
-                            old_s.len(),
-                        );
-                        let (new_start, new_end) = token_range_to_byte_range(
-                            &new_offsets,
-                            &new_tokens,
-                            new_index,
-                            new_len,
-                            new_s.len(),
-                        );
-                        edits.push(SourceEdit {
-                            old_start,
-                            old_end,
-                            new_start,
-                            new_end,
-                        });
-                    }
-                    DiffOp::Delete {
-                        old_index,
-                        old_len,
-                        new_index,
-                    } => {
-                        let (old_start, old_end) = token_range_to_byte_range(
-                            &old_offsets,
-                            &old_tokens,
-                            old_index,
-                            old_len,
-                            old_s.len(),
-                        );
-                        let (new_start, new_end) = token_range_to_byte_range(
-                            &new_offsets,
-                            &new_tokens,
-                            new_index,
-                            0,
-                            new_s.len(),
-                        );
-                        edits.push(SourceEdit {
-                            old_start,
-                            old_end,
-                            new_start,
-                            new_end,
-                        });
-                    }
-                    DiffOp::Replace {
-                        old_index,
-                        old_len,
-                        new_index,
-                        new_len,
-                    } => {
-                        let (old_start, old_end) = token_range_to_byte_range(
-                            &old_offsets,
-                            &old_tokens,
-                            old_index,
-                            old_len,
-                            old_s.len(),
-                        );
-                        let (new_start, new_end) = token_range_to_byte_range(
-                            &new_offsets,
-                            &new_tokens,
-                            new_index,
-                            new_len,
-                            new_s.len(),
-                        );
-                        edits.push(SourceEdit {
-                            old_start,
-                            old_end,
-                            new_start,
-                            new_end,
-                        });
-                    }
-                }
-            }
+        //     for op in diff_ops {
+        //         match op {
+        //             DiffOp::Equal { .. } => continue,
+        //             DiffOp::Insert {
+        //                 old_index,
+        //                 new_index,
+        //                 new_len,
+        //             } => {
+        //                 let (old_start, old_end) = token_range_to_byte_range(
+        //                     &old_offsets,
+        //                     &old_tokens,
+        //                     old_index,
+        //                     0,
+        //                     old_s.len(),
+        //                 );
+        //                 let (new_start, new_end) = token_range_to_byte_range(
+        //                     &new_offsets,
+        //                     &new_tokens,
+        //                     new_index,
+        //                     new_len,
+        //                     new_s.len(),
+        //                 );
+        //                 edits.push(SourceEdit {
+        //                     old_start,
+        //                     old_end,
+        //                     new_start,
+        //                     new_end,
+        //                 });
+        //             }
+        //             DiffOp::Delete {
+        //                 old_index,
+        //                 old_len,
+        //                 new_index,
+        //             } => {
+        //                 let (old_start, old_end) = token_range_to_byte_range(
+        //                     &old_offsets,
+        //                     &old_tokens,
+        //                     old_index,
+        //                     old_len,
+        //                     old_s.len(),
+        //                 );
+        //                 let (new_start, new_end) = token_range_to_byte_range(
+        //                     &new_offsets,
+        //                     &new_tokens,
+        //                     new_index,
+        //                     0,
+        //                     new_s.len(),
+        //                 );
+        //                 edits.push(SourceEdit {
+        //                     old_start,
+        //                     old_end,
+        //                     new_start,
+        //                     new_end,
+        //                 });
+        //             }
+        //             DiffOp::Replace {
+        //                 old_index,
+        //                 old_len,
+        //                 new_index,
+        //                 new_len,
+        //             } => {
+        //                 let (old_start, old_end) = token_range_to_byte_range(
+        //                     &old_offsets,
+        //                     &old_tokens,
+        //                     old_index,
+        //                     old_len,
+        //                     old_s.len(),
+        //                 );
+        //                 let (new_start, new_end) = token_range_to_byte_range(
+        //                     &new_offsets,
+        //                     &new_tokens,
+        //                     new_index,
+        //                     new_len,
+        //                     new_s.len(),
+        //                 );
+        //                 edits.push(SourceEdit {
+        //                     old_start,
+        //                     old_end,
+        //                     new_start,
+        //                     new_end,
+        //                 });
+        //             }
+        //         }
+        //     }
 
-            return edits;
-        }
+        //     return edits;
+        // }
 
         // Fallback: byte-level diff (original behaviour) for non-UTF-8.
         let diff_ops = capture_diff_slices(Algorithm::Myers, old, new);
