@@ -278,16 +278,20 @@ pub fn post_translate_node(
                     name
                 );
             } else {
-                warn!("[POST TRANSLATE NODE] Function name traversal failed for node {:?}, attempting fallback", cpg_node_id);
-                
+                warn!(
+                    "[POST TRANSLATE NODE] Function name traversal failed for node {:?}, attempting fallback",
+                    cpg_node_id
+                );
+
                 let children = cpg.ordered_syntax_children(cpg_node_id);
                 for child in children {
                     if let Some(child_node) = cpg.get_node_by_id(&child) {
                         if matches!(child_node.type_, NodeType::Identifier { .. }) {
                             let name = cpg.get_node_source(&child);
-                            cpg.get_node_by_id_mut(&cpg_node_id)
-                                .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
-                            
+                            cpg.get_node_by_id_mut(&cpg_node_id).and_then(|f| {
+                                f.properties.insert("name".to_string(), name.clone())
+                            });
+
                             trace!(
                                 "[POST TRANSLATE NODE] Function node name found via fallback: {:?} {:?}",
                                 cst_node.kind(),
