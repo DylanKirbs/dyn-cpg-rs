@@ -21,14 +21,14 @@ def analysis(func):
 # --- Helpers --- #
 
 
-def save_plot(fig: plt.Figure, output_file: Path):
+def save_plot(fig, output_file: Path):
     fig.tight_layout()
     fig.savefig(output_file.with_suffix(".pdf"))
     # fig.savefig(output_file.with_suffix(".png"), dpi=150)
     plt.close(fig)
 
 
-def use_logscale_if_wide(ax: plt.Axes, column: pd.Series):
+def use_logscale_if_wide(ax, column: pd.Series):
     finite_vals = column.replace([np.inf, -np.inf], np.nan).dropna()
     if not finite_vals.empty and finite_vals.max() / max(finite_vals.min(), 1e-9) > 10:
         ax.set_yscale("log")
@@ -189,8 +189,8 @@ def incremental_vs_full(df: pd.DataFrame, output_file: Path):
     ]
     ax.plot(lims, lims, "r--", linewidth=1, label="y=x")
     ax.fill_between(lims, lims, lims[1], color="red", alpha=0.1)
-    ax.set_xlim(lims)
-    ax.set_ylim(lims)
+    ax.set_xlim(lims)  # type: ignore
+    ax.set_ylim(lims)  # type: ignore
 
     ax.set_title("Incremental vs Full Timings")
     ax.set_xlabel("Full Timings (ms)")
@@ -205,20 +205,41 @@ def incremental_vs_full(df: pd.DataFrame, output_file: Path):
 
 
 @analysis
-def num_same_by_patch_type(df: pd.DataFrame, output_file: Path):
+def prop_same_by_patch_type(df: pd.DataFrame, output_file: Path):
+    # aggregate counts per patch_type x same
     agg = (
         df.groupby(["patch_type", "same"])["edits_count"]
         .count()
         .reset_index()
         .rename(columns={"edits_count": "count"})
     )
-    agg["same"] = agg["same"].map({1: "Same", 0: "Different"})
 
+    # map 0/1 to labels and pivot to get counts in separate columns
+    agg["same"] = agg["same"].map({1: "Same", 0: "Different"})
+    pivot = agg.pivot(index="patch_type", columns="same", values="count").fillna(0)
+
+    # ensure both columns exist in a stable order
+    for col in ("Different", "Same"):
+        if col not in pivot.columns:
+            pivot[col] = 0
+    pivot = pivot[["Same", "Different"]]
+
+    # convert counts to proportions per patch_type
+    proportions = pivot.div(pivot.sum(axis=1), axis=0)
+
+    # plot stacked bar of proportions
     fig, ax = plt.subplots(figsize=(12, 6))
-    sns.barplot(x="patch_type", y="count", hue="same", data=agg, ax=ax)
-    ax.set_title("Number of Same vs Different CPGs by Patch Type")
-    ax.set_ylabel("Count")
+    proportions.plot(kind="bar", stacked=True, ax=ax)
+    ax.set_title("Proportion of Same vs Different CPGs by Patch Type")
+    ax.set_ylabel("Proportion")
     ax.set_xlabel("Patch Type")
+    ax.set_ylim(0, 1)
+
+    import matplotlib.ticker as mtick
+
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+    ax.legend()
     save_plot(fig, output_file)
 
 
