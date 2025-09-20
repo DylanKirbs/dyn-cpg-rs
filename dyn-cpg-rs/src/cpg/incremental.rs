@@ -1551,7 +1551,7 @@ impl Cpg {
         }
 
         let operations = self.calculate_sequence_alignment(&cpg_children, &cst_children);
-        debug!(
+        trace!(
             "[SURGICAL UPDATE] Calculated {} operations for node {:?}",
             operations.len(),
             cpg_node
@@ -1577,18 +1577,10 @@ impl Cpg {
                         let cst_kind = cst_child.kind().to_string();
 
                         if cpg_kind == cst_kind {
-                            debug!(
-                                "[SURGICAL UPDATE] Recursing into child {:?} of type {}",
-                                child_id, cpg_kind
-                            );
                             self.update_in_place_pairwise(child_id, cst_child);
 
                             // Re-run post-translation for the child node to update its semantic properties
                             let child_type = self.get_node_by_id(&child_id).unwrap().type_.clone();
-                            debug!(
-                                "[SURGICAL UPDATE] Calling post-translation for child {:?}",
-                                child_id
-                            );
                             crate::languages::post_translate_node(
                                 self, child_type, child_id, cst_child,
                             );

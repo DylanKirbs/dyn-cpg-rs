@@ -88,36 +88,70 @@ impl Cpg {
                 return std::cmp::Ordering::Equal;
             }
 
-            // Sort first on arrival node span (start)
-            let a_start = self
+            // Sort first on from node span (start)
+            let a_from_start = self
                 .spatial_index
-                .get_node_span(a.to)
+                .get_node_span(a.from)
                 .map(|(s, _)| s)
                 .unwrap_or(usize::MAX);
-            let b_start = self
+            let b_from_start = self
                 .spatial_index
-                .get_node_span(b.to)
+                .get_node_span(b.from)
                 .map(|(s, _)| s)
                 .unwrap_or(usize::MAX);
 
-            let ord = a_start.cmp(&b_start);
+            let ord = a_from_start.cmp(&b_from_start);
             if ord != std::cmp::Ordering::Equal {
                 return ord;
             }
 
-            // Sort first on arrival node span (end)
-            let a_end = self
+            // Sort first on from node span (end)
+            let a_from_end = self
+                .spatial_index
+                .get_node_span(a.from)
+                .map(|(_, e)| e)
+                .unwrap_or(usize::MAX);
+            let b_from_end = self
+                .spatial_index
+                .get_node_span(b.from)
+                .map(|(_, e)| e)
+                .unwrap_or(usize::MAX);
+
+            let ord = a_from_end.cmp(&b_from_end);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            // Sort first on to node span (start)
+            let a_to_start = self
+                .spatial_index
+                .get_node_span(a.to)
+                .map(|(s, _)| s)
+                .unwrap_or(usize::MAX);
+            let b_to_start = self
+                .spatial_index
+                .get_node_span(b.to)
+                .map(|(s, _)| s)
+                .unwrap_or(usize::MAX);
+
+            let ord = a_to_start.cmp(&b_to_start);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
+            // Sort first on to node span (end)
+            let a_to_end = self
                 .spatial_index
                 .get_node_span(a.to)
                 .map(|(_, e)| e)
                 .unwrap_or(usize::MAX);
-            let b_end = self
+            let b_to_end = self
                 .spatial_index
                 .get_node_span(b.to)
                 .map(|(_, e)| e)
                 .unwrap_or(usize::MAX);
 
-            let ord = a_end.cmp(&b_end);
+            let ord = a_to_end.cmp(&b_to_end);
             if ord != std::cmp::Ordering::Equal {
                 return ord;
             }
@@ -144,9 +178,17 @@ impl Cpg {
                 return ord;
             }
 
+            let a_children = self.get_outgoing_edges(a.to).len();
+            let b_children = self.get_outgoing_edges(b.to).len();
+            let ord = a_children.cmp(&b_children);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
             warn!(
-                "[EDGE SORT] Used unstable node id as tie breaker for edges {:?} and {:?}",
-                a, b
+                "[EDGE SORT] Used unstable node id as tie breaker for edges {:?} ({:?}, {:?})->({:?}, {:?}) and {:?} ({:?}, {:?})->({:?}, {:?}).",
+                a, a_from_start, a_from_end, a_to_start, a_to_end,
+                b, b_from_start, b_from_end, b_to_start, b_to_end
             );
             let a_id = a.to.as_str();
             let b_id = b.to.as_str();
