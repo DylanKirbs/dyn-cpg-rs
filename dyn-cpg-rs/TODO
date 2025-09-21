@@ -2,7 +2,6 @@
 
 ## Empirical Data
 - [x] Tree sitter
-- [ ] VLC
 - [x] Graphviz
 - [x] FFMPEG
 
@@ -11,18 +10,19 @@
 - [x] Merging dirty ranges
 - [x] AST rehydration
 - [x] CF pass
-- [ ] DD pass
+- [ ] DD pass (WIP needs to use CF edges)
 
-## Compare ^ for 
-- [ ] Statement level updates
-- [ ] Function level updates
-- [ ] Full file reparses
+## Interface
 
-## Look into targeted updates for identifiable (structural) changes like identifier name refactors
+Streamline the internal API. Since the CPG is source aware, all we theoretically need to do is pass the new source to the CPG, and it should be able to handle to full incremental flow. Additionally, since most of the logic is implanted in CPG mutators, we can return metrics from those mutators to get more granular data on where time is being spent.
 
-## Implementation
-- [ ] Finish debuging the control flow pass
-- [ ] Finish the data flow pass
+Some internals can use a bit of love, the incremental update pipeline is a huge 500 line function that can be refactored into smaller, more maintainable and testable pieces (again with metrics returned from each piece).
+
+A bit more configurability (even if it's just at compile time) would be nice. For example, deciding how to tokenise the input for the Meyers Diff, using LCS instead of Meyers, disabling the CF or DD passes, etc.
+
+- [ ] API -> `update(source) -> Metrics`
+- [ ] Return metrics from mutators
+
 
 ## Database
 - [ ] Integrate with a DBMS
