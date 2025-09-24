@@ -164,6 +164,20 @@ impl Cpg {
                 return ord;
             }
 
+            // Then origin node type
+            let a_node_type = self
+                .get_node_by_id(&a.from)
+                .map(|n| n.type_.label())
+                .unwrap_or_default();
+            let b_node_type = self
+                .get_node_by_id(&b.from)
+                .map(|n| n.type_.label())
+                .unwrap_or_default();
+            let ord = a_node_type.cmp(&b_node_type);
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+
             // Then arrival node type
             let a_node_type = self
                 .get_node_by_id(&a.to)
@@ -178,12 +192,6 @@ impl Cpg {
                 return ord;
             }
 
-            let a_children = self.get_outgoing_edges(a.to).len();
-            let b_children = self.get_outgoing_edges(b.to).len();
-            let ord = a_children.cmp(&b_children);
-            if ord != std::cmp::Ordering::Equal {
-                return ord;
-            }
 
             warn!(
                 "[EDGE SORT] Used unstable node id as tie breaker for edges {:?} ({:?}, {:?})->({:?}, {:?}) and {:?} ({:?}, {:?})->({:?}, {:?}).",

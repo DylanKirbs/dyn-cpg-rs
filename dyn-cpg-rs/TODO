@@ -32,3 +32,4 @@ A bit more configurability (even if it's just at compile time) would be nice. Fo
 ## Known Issues
 
 - Control flow pass is not perfect, I can't handle switch statements and break/continue
+- DF pass is independent of CF, so that needs to be addressed still
