@@ -278,10 +278,12 @@ pub mod diff {
             let old_end_point = line_index.point_for_offset(edit.old_end);
             let new_end_point = new_line_index.point_for_offset(edit.new_end);
 
+            let new_end_byte = (edit.old_start + edit.new_end).saturating_sub(edit.new_start);
+
             let ts_edit = tree_sitter::InputEdit {
                 start_byte: edit.old_start,
                 old_end_byte: edit.old_end,
-                new_end_byte: edit.new_end,
+                new_end_byte,
                 start_position: start_point,
                 old_end_position: old_end_point,
                 new_end_position: new_end_point,
