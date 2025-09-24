@@ -1,12 +1,13 @@
 use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
 use crate::{
     cpg::spatial_index::SpatialIndex,
-    diff::SourceEdit,
+    diff::{SourceEdit, incremental_ts_parse},
     languages::{cf_pass, data_dep_pass, post_translate_node, pre_translate_node},
 };
 use std::{
     cmp::{max, min},
     collections::{HashMap, HashSet},
+    time::Instant,
 };
 use tracing::{debug, trace, warn};
 
@@ -46,6 +47,15 @@ enum EditOperation {
     Insert { cst_index: usize },
     Delete { cpg_index: usize },
     Modify { cpg_index: usize, cst_index: usize },
+}
+
+// Metrics for the performance of the CPG update
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalUpdateMetrics {
+    pub ts_old_parse_time_ms: Option<u128>,
+    pub ts_incremental_parse_time_ms: Option<u128>,
+    pub edits: Option<Vec<SourceEdit>>,
+    pub total_time_ms: Option<u128>,
 }
 
 impl Cpg {
@@ -237,7 +247,7 @@ impl Cpg {
         let cst_kind = cst_node.kind();
         let new_type = self.language.map_node_kind(cst_kind);
         let has_structural_type_changes =
-            cpg_node_type.map_or(false, |old_type| old_type != &new_type);
+            cpg_node_type.is_some_and(|old_type| old_type != &new_type);
 
         let metrics = UpdateMetrics {
             children_change_percentage,
@@ -267,11 +277,7 @@ impl Cpg {
                 // Consider nodes that start before our range and could be parents
                 if node_start <= start_byte {
                     // Calculate how much the node would need to be extended to contain the range
-                    let extension_needed = if end_byte > node_end {
-                        end_byte - node_end
-                    } else {
-                        0
-                    };
+                    let extension_needed = end_byte.saturating_sub(node_end);
 
                     candidates.push((node_id, node_start, node_end, extension_needed, &node.type_));
                 }
@@ -406,7 +412,7 @@ impl Cpg {
             .find(|e| e.type_ == EdgeType::SyntaxChild)
             .map(|e| e.from);
 
-        let is_root_node = self.root.map_or(false, |root| root == cpg_node);
+        let is_root_node = self.root == Some(cpg_node);
 
         // 2. Preserve sibling relationships
         // Find nodes that point to us (left siblings) and nodes we point to (right siblings)
@@ -638,8 +644,8 @@ impl Cpg {
                     let mut found_match = false;
 
                     // Look for the CST kind in remaining CPG children
-                    for look_cpg in (cpg_idx + 1)..cpg_len {
-                        let look_node = self.get_node_by_id(&cpg_children[look_cpg]).unwrap();
+                    for child_id in cpg_children.iter().take(cpg_len).skip(cpg_idx + 1) {
+                        let look_node = self.get_node_by_id(child_id).unwrap();
                         let look_kind = look_node
                             .properties
                             .get("raw_kind")
@@ -804,20 +810,45 @@ impl Cpg {
     /// Incrementally update the CPG from the CST edits
     pub fn incremental_update(
         &mut self,
-        edits: Vec<SourceEdit>,
-        changed_ranges: impl ExactSizeIterator<Item = tree_sitter::Range>,
-        new_tree: &tree_sitter::Tree,
+        parser: &mut tree_sitter::Parser,
         new_source: Vec<u8>,
-    ) {
+    ) -> Result<IncrementalUpdateMetrics, CpgError> {
+        let mut metrics = IncrementalUpdateMetrics::default();
+        let full_incr_start = Instant::now();
+
+        let old_src = self.get_source().clone();
+        self.set_source(new_source);
+
+        debug!(
+            "[INCREMENTAL UPDATE] [PARSE PARSE EDITS] Parsing old source of length {}",
+            old_src.len()
+        );
+        let ts_old_parse_start = Instant::now();
+        let mut prev_tree = parser
+            .parse(old_src.clone(), None)
+            .ok_or("Previous source parse failed")
+            .map_err(|s| CpgError::UpdateError(s.to_string()))?;
+        metrics.ts_old_parse_time_ms = Some(ts_old_parse_start.elapsed().as_millis());
+
+        debug!(
+            "[INCREMENTAL UPDATE] [PARSE EDITS] Incrementally parsing new source of length {}",
+            self.get_source().len()
+        );
+        let ts_incremental_start = Instant::now();
+        let (edits, new_tree) =
+            incremental_ts_parse(parser, &old_src, self.get_source(), &mut prev_tree)
+                .map_err(|e| CpgError::UpdateError(e.to_string()))?;
+        metrics.ts_incremental_parse_time_ms = Some(ts_incremental_start.elapsed().as_millis());
+        metrics.edits = Some(edits.clone());
+
+        let changed_ranges = prev_tree.changed_ranges(&new_tree);
         let changed_ranges = changed_ranges.collect::<Vec<_>>();
 
         debug!(
-            "[INCREMENTAL UPDATE] [PARSE EDITS] Update with {} edits and {} changed ranges",
+            "[INCREMENTAL UPDATE] [PARSE EDITS] Found {} edits and {} changed ranges",
             edits.len(),
             changed_ranges.len()
         );
-
-        self.set_source(new_source);
 
         let source_len = self.get_source().len();
         let root_node = new_tree.root_node();
@@ -1107,7 +1138,7 @@ impl Cpg {
                 continue;
             }
             // Pair to CST node in the new tree (special-case root)
-            let cst_node_opt = if self.root.map_or(false, |root| root == *node_id) {
+            let cst_node_opt = if self.root == Some(*node_id) {
                 Some(new_tree.root_node())
             } else {
                 new_tree
@@ -1306,7 +1337,7 @@ impl Cpg {
             let node_span = self.spatial_index.get_node_span(*id);
             if let Some((start, end)) = node_span {
                 // Special case: if this is the root node, use the root of the new tree
-                let cst_node = if self.root.map_or(false, |root| root == *id) {
+                let cst_node = if self.root == Some(*id) {
                     trace!(
                         "[INCREMENTAL UPDATE] [CST PAIRING] Using new tree root for CPG root node {:?}",
                         id
@@ -1417,8 +1448,7 @@ impl Cpg {
                 id, should_rebuild, metrics
             );
 
-            let new_id;
-            if should_rebuild {
+            let new_id = if should_rebuild {
                 trace!(
                     "[INCREMENTAL UPDATE] [REBUILD] [FULL] Rebuilding subtree for node {:?} ({}% children changed, {} ops, depth {})",
                     id,
@@ -1427,7 +1457,7 @@ impl Cpg {
                     metrics.subtree_depth
                 );
                 self.clean_analysis_edges(*id);
-                new_id = self.rebuild_subtree(*id, cst_node);
+                self.rebuild_subtree(*id, cst_node)
             } else {
                 trace!(
                     "[INCREMENTAL UPDATE] [REBUILD] [SURGICAL] Updating node {:?} ({}% children changed, {} ops, depth {})",
@@ -1440,8 +1470,8 @@ impl Cpg {
                 // recompute them deterministically afterwards.
                 self.clean_analysis_edges(*id);
                 self.update_in_place_pairwise(*id, cst_node);
-                new_id = *id;
-            }
+                *id
+            };
 
             let structure = crate::languages::get_container_parent(self, new_id);
             if !updated_structures.contains(&structure) {
@@ -1487,11 +1517,15 @@ impl Cpg {
             }
         }
         debug!("[INCREMENTAL UPDATE] Update complete");
+
+        metrics.total_time_ms = Some(full_incr_start.elapsed().as_millis());
+
+        Ok(metrics)
     }
 
     /// Pairwise walk of CPG and CST, updating only changed nodes in place.
     /// This assumes the CPG and CST are structurally similar except for edits.
-    pub fn update_in_place_pairwise(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) {
+    fn update_in_place_pairwise(&mut self, cpg_node: NodeId, cst_node: &tree_sitter::Node) {
         let lang = self.get_language().clone();
 
         // Get current node state
@@ -1562,10 +1596,8 @@ impl Cpg {
         let final_children = self.ordered_syntax_children(cpg_node);
         let mut cst_cursor = cst_node.walk();
         if cst_cursor.goto_first_child() {
-            let mut cst_child_index = 0;
             for &child_id in &final_children {
-                if cst_child_index < cst_children.len() {
-                    let cst_child = &cst_children[cst_child_index];
+                for cst_child in &cst_children {
                     // Only recurse if this child still exists and matches
                     let child_cpg_node = self.get_node_by_id(&child_id);
                     if let Some(cpg_child) = child_cpg_node {
@@ -1592,7 +1624,6 @@ impl Cpg {
                         }
                     }
                 }
-                cst_child_index += 1;
             }
         }
 
@@ -1625,13 +1656,13 @@ impl Cpg {
         let mut edges_to_remove: HashSet<super::EdgeId> = HashSet::new();
 
         if let Some(out_set) = self.outgoing.remove(&root) {
-            edges_to_remove.extend(out_set.into_iter());
+            edges_to_remove.extend(out_set);
         }
         if let Some(in_set) = self.incoming.remove(&root) {
-            edges_to_remove.extend(in_set.into_iter());
+            edges_to_remove.extend(in_set);
         }
 
-        // Remove each edge and update adjacency lists of neighbor nodes
+        // Remove each edge and update adjacency lists of neighbour nodes
         for edge_id in edges_to_remove {
             if let Some(edge) = self.edges.remove(edge_id) {
                 if edge.from != root {

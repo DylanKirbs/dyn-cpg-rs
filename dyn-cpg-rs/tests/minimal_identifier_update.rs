@@ -1,4 +1,4 @@
-use dyn_cpg_rs::diff::incremental_parse;
+use dyn_cpg_rs::diff::incremental_ts_parse;
 use dyn_cpg_rs::languages::RegisteredLanguage;
 
 /// Minimal test to isolate the identifier name update issue
@@ -67,7 +67,7 @@ fn test_identifier_name_update_isolated() {
     // Do incremental parsing
     let mut old_tree_copy = old_tree.clone();
     let (edits, new_tree) =
-        incremental_parse(&mut parser, old_source, new_source, &mut old_tree_copy)
+        incremental_ts_parse(&mut parser, old_source, new_source, &mut old_tree_copy)
             .expect("Incremental parse should succeed");
 
     println!("\n=== INCREMENTAL UPDATE ===");
@@ -77,12 +77,9 @@ fn test_identifier_name_update_isolated() {
     println!("Changed ranges: {:?}", changed_ranges);
 
     // Apply incremental update
-    incremental_cpg.incremental_update(
-        edits,
-        changed_ranges.into_iter(),
-        &new_tree,
-        new_source.to_vec(),
-    );
+    incremental_cpg
+        .incremental_update(&mut parser, new_source.to_vec())
+        .expect("Incremental update should succeed");
 
     println!("\n=== POST-UPDATE CPG ANALYSIS ===");
     if let Some(root_id) = incremental_cpg.get_root() {

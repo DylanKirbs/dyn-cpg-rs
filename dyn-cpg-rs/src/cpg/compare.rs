@@ -86,8 +86,8 @@ pub enum FunctionComparisonResult {
     Mismatch {
         /// The name of the function
         function_name: String,
-        left_cpg: Cpg,
-        right_cpg: Cpg,
+        left_cpg: Box<Cpg>,
+        right_cpg: Box<Cpg>,
         mismatches: Vec<(Option<NodeId>, Option<NodeId>, String)>,
         l_root: NodeId,
         r_root: NodeId,
@@ -167,6 +167,8 @@ fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> 
 
 // --- CPG Comparison Implementation --- //
 
+pub type RootMismatches = (Option<NodeId>, Option<NodeId>, String);
+
 impl Cpg {
     /// Compare two CPGs for semantic equality
     /// Returns a detailed comparison result indicating structural differences and function-level mismatches
@@ -221,8 +223,8 @@ impl Cpg {
                             only_in_right: vec![],
                             function_mismatches: vec![FunctionComparisonResult::Mismatch {
                                 function_name: "root".to_string(),
-                                left_cpg: self.clone(),
-                                right_cpg: other.clone(),
+                                left_cpg: Box::new(self.clone()),
+                                right_cpg: Box::new(other.clone()),
                                 mismatches,
                                 l_root,
                                 r_root,
@@ -274,8 +276,8 @@ impl Cpg {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
                                 mismatches,
-                                left_cpg: self.clone(),
-                                right_cpg: other.clone(),
+                                left_cpg: Box::new(self.clone()),
+                                right_cpg: Box::new(other.clone()),
                                 l_root: *left_func_id,
                                 r_root: *right_func_id,
                             });
@@ -340,7 +342,7 @@ impl Cpg {
         l_root: NodeId,
         r_root: NodeId,
         visited: &mut HashSet<(NodeId, NodeId)>,
-    ) -> Result<Vec<(Option<NodeId>, Option<NodeId>, String)>, CpgError> {
+    ) -> Result<Vec<RootMismatches>, CpgError> {
         // Avoid re-comparing the same pair of nodes
         if !visited.insert((l_root, r_root)) {
             return Ok(vec![]);

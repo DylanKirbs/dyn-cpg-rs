@@ -418,8 +418,7 @@ pub fn post_translate_node(
         NodeType::Identifier { .. } => {
             if cpg
                 .get_node_by_id(&cpg_node_id)
-                .map(|n| n.properties.get("name"))
-                .flatten()
+                .and_then(|n| n.properties.get("name"))
                 .is_none()
             {
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();

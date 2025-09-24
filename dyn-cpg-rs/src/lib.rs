@@ -255,7 +255,7 @@ pub mod diff {
         edits
     }
 
-    pub fn incremental_parse(
+    pub fn incremental_ts_parse(
         parser: &mut Parser,
         old_src: &[u8],
         new_src: &[u8],
@@ -283,7 +283,7 @@ pub mod diff {
             let ts_edit = tree_sitter::InputEdit {
                 start_byte: edit.old_start,
                 old_end_byte: edit.old_end,
-                new_end_byte: new_end_byte,
+                new_end_byte,
                 start_position: start_point,
                 old_end_position: old_end_point,
                 new_end_position: new_end_point,

@@ -42,6 +42,7 @@ pub enum CpgError {
     MissingField(String),
     ConversionError(String),
     QueryExecutionError(String),
+    UpdateError(String),
 }
 
 // --- Traversal Aid for Language Agnosticism --- //

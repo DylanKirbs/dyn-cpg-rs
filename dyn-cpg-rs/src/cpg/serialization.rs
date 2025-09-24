@@ -135,7 +135,7 @@ impl DotSerializer {
         self.buf.push_str("}\n");
     }
 
-    fn into_string(&mut self) -> String {
+    fn write(&mut self) -> String {
         self.buf.clone()
     }
 }
@@ -153,7 +153,7 @@ impl CpgSerializer<String> for DotSerializer {
             ))?;
         }
         self.finish(cpg);
-        Ok(self.into_string())
+        Ok(self.write())
     }
 }
 
@@ -292,7 +292,7 @@ impl SexpSerializer {
         self.buf.push_str(")\n");
     }
 
-    fn into_string(&mut self) -> String {
+    fn write(&mut self) -> String {
         self.buf.clone()
     }
 }
@@ -314,7 +314,7 @@ impl CpgSerializer<String> for SexpSerializer {
             ))?;
         }
         self.finish(cpg);
-        Ok(self.into_string())
+        Ok(self.write())
     }
 }
 
