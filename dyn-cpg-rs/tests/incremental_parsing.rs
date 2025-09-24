@@ -1505,3 +1505,47 @@ proptest! {
         );
     }
 }
+
+/// MRE test for the property accumulation bug in surgical updates  
+#[test]
+fn test_mre_property_accumulation_bug() {
+    dyn_cpg_rs::logging::init();
+    debug!("Testing property accumulation bug in surgical updates");
+
+    let lang: RegisteredLanguage = "c".parse().expect("Failed to parse language");
+    let mut parser = lang.get_parser().expect("Failed to get parser for C");
+
+    // Start with a simple declaration
+    let source1 = b"int x = 5;".to_vec();
+    // Update to a different variable name and value
+    let source2 = b"int y = 10;".to_vec();
+
+    // Parse initial source
+    let tree = parser
+        .parse(source1.clone(), None)
+        .expect("Failed to parse initial source");
+
+    let mut cpg = lang
+        .cst_to_cpg(tree.clone(), source1.clone())
+        .expect("Failed to create initial CPG");
+
+    // Apply incremental update
+    cpg.incremental_update(&mut parser, source2.clone())
+        .expect("Incremental update failed");
+
+    // Create reference CPG from final source
+    let ref_tree = parser
+        .parse(source2.clone(), None)
+        .expect("Failed to parse reference source");
+    let reference_cpg = lang
+        .cst_to_cpg(ref_tree, source2.clone())
+        .expect("Failed to create reference CPG");
+
+    // Verify that properties match exactly
+    let diff = cpg.compare(&reference_cpg).expect("Failed to compare CPGs");
+    assert!(
+        matches!(diff, DetailedComparisonResult::Equivalent),
+        "Incremental CPG should not have accumulated properties from previous updates: {}",
+        diff
+    );
+}

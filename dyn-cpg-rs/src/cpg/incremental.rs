@@ -711,6 +711,8 @@ impl Cpg {
                         // Update the node properties, span, and apply post-translation logic
                         let new_type = self.get_language().map_node_kind(cst_child.kind());
                         if let Some(node) = self.get_node_by_id_mut(&cpg_id) {
+                            // Clear properties first to avoid accumulating stale properties
+                            node.properties.clear();
                             node.properties
                                 .insert("raw_kind".to_string(), cst_child.kind().to_string());
                             node.type_ = new_type.clone();
@@ -1535,7 +1537,6 @@ impl Cpg {
         }
 
         let current_type = cpg_node_ref.unwrap().type_.clone();
-        let current_properties = cpg_node_ref.unwrap().properties.clone();
         let current_span = self.spatial_index.get_node_span(cpg_node);
 
         let cst_kind = cst_node.kind();
@@ -1555,20 +1556,11 @@ impl Cpg {
             self.spatial_index.edit(cpg_node, cst_start, cst_end);
         }
 
-        // Only update raw_kind if it actually changed
-        let new_raw_kind = cst_kind.to_string();
-        let current_raw_kind = current_properties.get("raw_kind");
-        if current_raw_kind != Some(&new_raw_kind) {
-            if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
-                node.properties.insert("raw_kind".to_string(), new_raw_kind);
-
-                // Preserve semantic properties that language analysis added
-                for (key, value) in current_properties {
-                    if key != "raw_kind" && !node.properties.contains_key(&key) {
-                        node.properties.insert(key, value);
-                    }
-                }
-            }
+        // Always clear and reset properties to avoid accumulating stale properties
+        // The post-translation step will recompute all semantic properties correctly
+        if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
+            node.properties.clear();
+            node.properties.insert("raw_kind".to_string(), cst_kind.to_string());
         }
 
         // Update children with smarter matching (by kind and span)
