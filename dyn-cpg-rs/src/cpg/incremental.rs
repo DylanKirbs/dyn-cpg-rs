@@ -640,31 +640,12 @@ impl Cpg {
                     cpg_idx += 1;
                     cst_idx += 1;
                 } else {
-                    // Look ahead to see if we can find a match
-                    let mut found_match = false;
-
-                    // Look for the CST kind in remaining CPG children
-                    for child_id in cpg_children.iter().take(cpg_len).skip(cpg_idx + 1) {
-                        let look_node = self.get_node_by_id(child_id).unwrap();
-                        let look_kind = look_node
-                            .properties
-                            .get("raw_kind")
-                            .cloned()
-                            .unwrap_or_else(|| look_node.type_.to_string());
-                        if look_kind == cst_kind {
-                            // Found match ahead - delete current CPG child
-                            operations.push(EditOperation::Delete { cpg_index: cpg_idx });
-                            cpg_idx += 1;
-                            found_match = true;
-                            break;
-                        }
-                    }
-
-                    if !found_match {
-                        // No match found - insert CST child
-                        operations.push(EditOperation::Insert { cst_index: cst_idx });
-                        cst_idx += 1;
-                    }
+                    operations.push(EditOperation::Modify {
+                        cpg_index: cpg_idx,
+                        cst_index: cst_idx,
+                    });
+                    cpg_idx += 1;
+                    cst_idx += 1;
                 }
             }
         }
@@ -1500,6 +1481,25 @@ impl Cpg {
                 );
             }
         }
+        // If we have no updated functions but updated structural containers,
+        // we need to find all functions within those containers and update them
+        if updated_functions.is_empty() && !updated_structures.is_empty() {
+            for structure in &updated_structures {
+                if let Some(node) = self.get_node_by_id(structure) {
+                    if matches!(node.type_, NodeType::TranslationUnit) {
+                        // For TranslationUnit, find all functions within it
+                        if let Ok(functions) = self.get_top_level_functions(*structure) {
+                            for (_, function_id) in functions {
+                                if !updated_functions.contains(&function_id) {
+                                    updated_functions.push(function_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         debug!(
             "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for updated functions: {:?}",
             updated_functions
@@ -1593,36 +1593,67 @@ impl Cpg {
 
         self.apply_edit_operations(cpg_node, &cpg_children, &cst_children, operations);
 
+        // After applying operations, match children in order (not nested loops!)
         let final_children = self.ordered_syntax_children(cpg_node);
         let mut cst_cursor = cst_node.walk();
+        let mut final_cst_children = Vec::new();
         if cst_cursor.goto_first_child() {
-            for &child_id in &final_children {
-                for cst_child in &cst_children {
-                    // Only recurse if this child still exists and matches
-                    let child_cpg_node = self.get_node_by_id(&child_id);
-                    if let Some(cpg_child) = child_cpg_node {
-                        let cpg_kind = cpg_child
-                            .properties
-                            .get("raw_kind")
-                            .cloned()
-                            .unwrap_or_else(|| cpg_child.type_.to_string());
-                        let cst_kind = cst_child.kind().to_string();
+            loop {
+                final_cst_children.push(cst_cursor.node());
+                if !cst_cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
 
-                        if cpg_kind == cst_kind {
-                            self.update_in_place_pairwise(child_id, cst_child);
+        // Match children by position - both lists should be aligned after apply_edit_operations
+        let min_len = std::cmp::min(final_children.len(), final_cst_children.len());
+        for i in 0..min_len {
+            let child_id = final_children[i];
+            let cst_child = &final_cst_children[i];
 
-                            // Re-run post-translation for the child node to update its semantic properties
-                            let child_type = self.get_node_by_id(&child_id).unwrap().type_.clone();
-                            crate::languages::post_translate_node(
-                                self, child_type, child_id, cst_child,
-                            );
-                        } else {
-                            debug!(
-                                "[SURGICAL UPDATE] Skipping child {:?} - kind mismatch: cpg={}, cst={}",
-                                child_id, cpg_kind, cst_kind
-                            );
-                        }
+            // Only recurse if this child still exists and matches
+            if let Some(cpg_child) = self.get_node_by_id(&child_id) {
+                let cpg_kind = cpg_child
+                    .properties
+                    .get("raw_kind")
+                    .cloned()
+                    .unwrap_or_else(|| cpg_child.type_.to_string());
+                let cst_kind = cst_child.kind().to_string();
+
+                if cpg_kind == cst_kind {
+                    self.update_in_place_pairwise(child_id, cst_child);
+
+                    // Re-run post-translation for the child node to update its semantic properties
+                    let child_type = self.get_node_by_id(&child_id).unwrap().type_.clone();
+                    crate::languages::post_translate_node(self, child_type, child_id, cst_child);
+                } else {
+                    debug!(
+                        "[SURGICAL UPDATE] Child {:?} at position {}: kind mismatch: cpg={}, cst={}. Replacing node.",
+                        child_id, i, cpg_kind, cst_kind
+                    );
+
+                    // Handle node type changes by replacing the child node
+                    let lang = self.get_language().clone();
+                    let new_type = lang.map_node_kind(cst_child.kind());
+                    let span = (cst_child.start_byte(), cst_child.end_byte());
+
+                    // Update the existing node with the new type and properties
+                    if let Some(node) = self.get_node_by_id_mut(&child_id) {
+                        node.type_ = new_type.clone();
+                        node.properties.clear();
+                        node.properties
+                            .insert("raw_kind".to_string(), cst_child.kind().to_string());
                     }
+
+                    // Update spatial index
+                    self.spatial_index.edit(child_id, span.0, span.1);
+
+                    // Re-run post-translation to update semantic properties for the new node type
+                    crate::languages::post_translate_node(self, new_type, child_id, cst_child);
+
+                    // Recursively update children if this node has any
+                    self.update_in_place_pairwise(child_id, cst_child);
                 }
             }
         }
