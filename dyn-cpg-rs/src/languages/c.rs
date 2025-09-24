@@ -14,7 +14,7 @@ fn map_node_kind(_: &C, node_kind: &'static str) -> NodeType {
         "translation_unit" => NodeType::TranslationUnit,
 
         "function_definition" => NodeType::Function {
-            name_traversal: desc_trav![1, 0],
+            name_traversals: vec![desc_trav![1, 0, 0], desc_trav![1, 0]],
         },
 
         "identifier" => NodeType::Identifier {

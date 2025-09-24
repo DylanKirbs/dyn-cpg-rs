@@ -202,7 +202,7 @@ mod tests {
         let n1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav![],
+                    name_traversals: vec![desc_trav![]],
                 },
                 Some("main".to_string()),
             ),
@@ -273,7 +273,7 @@ mod tests {
         let node_id1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav![],
+                    name_traversals: vec![desc_trav![]],
                 },
                 Some("main".to_string()),
             ),
@@ -337,7 +337,7 @@ mod tests {
         let node_id2 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav![],
+                    name_traversals: vec![desc_trav![]],
                 },
                 Some("main".to_string()),
             ),
@@ -361,7 +361,7 @@ mod tests {
         let large_node = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav![],
+                    name_traversals: vec![desc_trav![]],
                 },
                 Some("main".to_string()),
             ),
@@ -399,7 +399,7 @@ mod tests {
         let node1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav![],
+                    name_traversals: vec![desc_trav![]],
                 },
                 Some("main".to_string()),
             ),

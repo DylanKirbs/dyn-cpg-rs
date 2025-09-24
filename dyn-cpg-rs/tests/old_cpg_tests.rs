@@ -135,7 +135,7 @@ fn test_multiple_incremental_updates() {
     let root = cpg.add_node(create_test_node(NodeType::TranslationUnit), 0, 100);
     let func = cpg.add_node(
         create_test_node(NodeType::Function {
-            name_traversal: desc_trav![],
+            name_traversals: vec![desc_trav![]],
         }),
         10,
         90,
@@ -156,7 +156,7 @@ fn test_multiple_incremental_updates() {
     // Add it back with a different name
     let new_func = cpg.add_node(
         create_test_node(NodeType::Function {
-            name_traversal: desc_trav![],
+            name_traversals: vec![desc_trav![]],
         }),
         10,
         90,
@@ -188,7 +188,7 @@ fn test_concurrent_modifications() {
     for i in 0..5 {
         let func = cpg.add_node(
             create_test_node(NodeType::Function {
-                name_traversal: desc_trav![],
+                name_traversals: vec![desc_trav![]],
             }),
             i * 200,
             (i + 1) * 200 - 1,
@@ -212,7 +212,7 @@ fn test_concurrent_modifications() {
     // Add a new function
     let new_func = cpg.add_node(
         create_test_node(NodeType::Function {
-            name_traversal: desc_trav![],
+            name_traversals: vec![desc_trav![]],
         }),
         1001,
         1100,

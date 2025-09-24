@@ -248,7 +248,7 @@ mod tests {
         let node_id1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("Test_func".to_string()),
             ),
@@ -292,7 +292,7 @@ mod tests {
         let node1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("test".to_string()),
             ),
@@ -315,7 +315,7 @@ mod tests {
         let root = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -369,7 +369,7 @@ mod tests {
         let root = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -430,7 +430,7 @@ mod tests {
         let node1 = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -495,7 +495,7 @@ mod tests {
         let parent = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -550,7 +550,7 @@ mod tests {
         let parent = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -570,7 +570,7 @@ mod tests {
         let node = cpg.add_node(
             create_test_node(
                 NodeType::Function {
-                    name_traversal: desc_trav!(None),
+                    name_traversals: vec![desc_trav!(None)],
                 },
                 Some("main".to_string()),
             ),
@@ -778,7 +778,7 @@ mod tests {
         let mut cpg = create_test_cpg();
         let parent = cpg.add_node(
             create_test_node(NodeType::Function {
-                name_traversal: desc_trav!(None),
+                name_traversals: vec![desc_trav!(None)],
             },
             Some("test_func".to_string()),
         ),

@@ -23,7 +23,7 @@ pub enum NodeType {
 
     /// A function definition or declaration
     Function {
-        name_traversal: DescendantTraversal,
+        name_traversals: Vec<DescendantTraversal>,
     },
 
     /// An internal node used to connect all return statements within a function.

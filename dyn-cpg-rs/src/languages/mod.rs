@@ -264,27 +264,39 @@ pub fn post_translate_node(
     );
     match type_ {
         // Functions get their names from their name_traversal & a special return node
-        NodeType::Function { name_traversal } => {
-            let id_node = name_traversal.get_descendent(cpg, &cpg_node_id);
-            if let Some(id_node) = id_node {
-                let name = cpg.get_node_source(&id_node);
+        NodeType::Function { name_traversals } => {
+            let mut found_name = false;
+            for name_traversal in name_traversals {
+                let id_node = name_traversal.get_descendent(cpg, &cpg_node_id);
+                if let Some(id_node) = id_node {
+                    let name = cpg.get_node_source(&id_node);
 
-                cpg.get_node_by_id_mut(&cpg_node_id)
-                    .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
+                    if name == "*" {
+                        continue;
+                    }
 
-                trace!(
-                    "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
-                    cst_node.kind(),
-                    name
-                );
-            } else {
+                    cpg.get_node_by_id_mut(&cpg_node_id)
+                        .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
+
+                    trace!(
+                        "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
+                        cst_node.kind(),
+                        name
+                    );
+
+                    found_name = true;
+                    break;
+                }
+            }
+            if !found_name {
                 warn!(
                     "[POST TRANSLATE NODE] Function name traversal failed for node {:?}, attempting fallback",
                     cpg_node_id
                 );
 
-                let children = cpg.ordered_syntax_children(cpg_node_id);
-                for child in children {
+                // This is quite naive and just finds the first Indentifier descentant of the function
+                let descendants = cpg.post_dfs_ordered_syntax_descendants(cpg_node_id);
+                for child in descendants {
                     if let Some(child_node) = cpg.get_node_by_id(&child) {
                         if matches!(child_node.type_, NodeType::Identifier { .. }) {
                             let name = cpg.get_node_source(&child);
