@@ -858,8 +858,8 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
     let all_nodes = cpg.post_dfs_ordered_syntax_descendants(subtree_root);
 
     // Map from variable name to last write node id
-    use std::collections::HashMap;
-    let mut last_write: HashMap<String, NodeId> = HashMap::new();
+    use std::collections::BTreeMap;
+    let mut last_write: BTreeMap<String, NodeId> = BTreeMap::new();
 
     // TODO: Make this actually consider control flow (i.e. when branches exists, dependence should not go from the one branch into the other)
     // TODO: CFFunctionReturn is DDep on all nodes with CFEdges that flow into it

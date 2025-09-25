@@ -1,7 +1,7 @@
 use crate::cpg::spatial_index::SpatialIndex;
 
 use super::{Cpg, EdgeId, NodeId};
-use std::collections::{HashMap, HashSet};
+
 use strum_macros::Display;
 use tracing::warn;
 
@@ -211,8 +211,8 @@ impl Cpg {
         }
 
         let mut child_nodes = Vec::new();
-        let mut sibling_map = HashMap::new();
-        let mut has_incoming_sibling = HashSet::new();
+        let mut sibling_map = std::collections::BTreeMap::new();
+        let mut has_incoming_sibling = std::collections::BTreeSet::new();
 
         for edge in outgoing_edges {
             if edge.type_ == EdgeType::SyntaxChild {

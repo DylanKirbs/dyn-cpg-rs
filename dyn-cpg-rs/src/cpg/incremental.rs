@@ -5,31 +5,10 @@ use crate::{
 };
 use std::{
     cmp::{max, min},
-    collections::{HashMap, HashSet},
     time::Instant,
 };
 use tracing::{debug, trace, warn};
 
-/// Configuration for incremental update thresholds
-#[derive(Debug, Clone)]
-pub struct UpdateThresholds {
-    /// If more than this percentage of children change, rebuild instead of surgical update
-    pub max_children_change_percentage: f32,
-    /// If subtree depth exceeds this, rebuild instead of surgical update  
-    pub max_surgical_depth: usize,
-    /// If number of operations exceeds this, rebuild instead of surgical update
-    pub max_operations_count: usize,
-}
-
-impl Default for UpdateThresholds {
-    fn default() -> Self {
-        Self {
-            max_children_change_percentage: 1.0,
-            max_surgical_depth: 10,
-            max_operations_count: 8,
-        }
-    }
-}
 /// Metrics for deciding between surgical update vs full rebuild
 #[derive(Debug)]
 #[allow(dead_code)] // Allow unused fields for debugging
@@ -206,12 +185,57 @@ impl Cpg {
         operations
     }
 
+    /// Check if the edit operations contain changes that surgical update can't handle
+    fn has_unsupported_operations(
+        &self,
+        operations: &[EditOperation],
+        cpg_children: &[NodeId],
+        cst_children: &[tree_sitter::Node],
+    ) -> bool {
+        // Count different operation types
+        let mut insert_count = 0;
+        let mut delete_count = 0;
+        let mut modify_count = 0;
+
+        for op in operations {
+            match op {
+                EditOperation::Insert { .. } => insert_count += 1,
+                EditOperation::Delete { .. } => delete_count += 1,
+                EditOperation::Modify { .. } => modify_count += 1,
+            }
+        }
+
+        let original_size = cpg_children.len();
+        let new_size = cst_children.len();
+
+        if original_size == 0 {
+            return insert_count > 0;
+        }
+
+        if insert_count == 0 && delete_count == 0 && modify_count > 0 {
+            return false;
+        }
+
+        // If the total structure size hasn't changed much, prefer surgical updates
+        let size_change_ratio =
+            ((new_size as f32 - original_size as f32).abs()) / original_size as f32;
+        if size_change_ratio < 0.3 {
+            // Less than 30% size change
+            return false;
+        }
+
+        // If we have more inserts/deletes than the original structure size,
+        // it's likely a major restructuring that needs rebuilding
+        let total_structural_changes = insert_count + delete_count;
+        let change_ratio = total_structural_changes as f32 / original_size as f32;
+        change_ratio > 0.6
+    }
+
     /// Decide whether to use surgical update or full rebuild
     fn should_rebuild(
         &self,
         cpg_node: NodeId,
         cst_node: &tree_sitter::Node,
-        thresholds: &UpdateThresholds,
     ) -> (bool, UpdateMetrics) {
         let cpg_children = self.ordered_syntax_children(cpg_node);
         let mut cst_children = Vec::new();
@@ -226,9 +250,8 @@ impl Cpg {
         }
 
         // Calculate metrics
-        let operations_count = self
-            .calculate_edit_operations(&cpg_children, &cst_children)
-            .len();
+        let operations = self.calculate_edit_operations(&cpg_children, &cst_children);
+        let operations_count = operations.len();
         let children_change_percentage = if cpg_children.is_empty() {
             if cst_children.is_empty() { 0.0 } else { 1.0 }
         } else {
@@ -244,6 +267,10 @@ impl Cpg {
         let has_structural_type_changes =
             cpg_node_type.is_some_and(|old_type| old_type != &new_type);
 
+        // New logic: Check if we have operations that surgical update can't handle
+        let has_unsupported_operations =
+            self.has_unsupported_operations(&operations, &cpg_children, &cst_children);
+
         let metrics = UpdateMetrics {
             children_change_percentage,
             subtree_depth,
@@ -251,11 +278,9 @@ impl Cpg {
             has_structural_type_changes,
         };
 
-        // Decision logic using weighted scoring
-        let should_rebuild = children_change_percentage > thresholds.max_children_change_percentage
-            || subtree_depth > thresholds.max_surgical_depth
-            || operations_count > thresholds.max_operations_count
-            || has_structural_type_changes;
+        let should_rebuild = has_structural_type_changes
+            || has_unsupported_operations
+            || children_change_percentage > 0.9;
 
         (should_rebuild, metrics)
     }
@@ -462,58 +487,22 @@ impl Cpg {
                     }
                 };
 
+                // Recursively handle grandchildren first if they exist
+                let final_child_id = if child_cst_node.child_count() > 0 {
+                    self.rebuild_subtree(child_id, &child_cst_node)
+                } else {
+                    child_id
+                };
+
+                // Now create the parent-child edge with the final child ID
                 self.add_edge(crate::cpg::Edge {
                     from: new_node_id,
-                    to: child_id,
+                    to: final_child_id,
                     type_: EdgeType::SyntaxChild,
                 });
 
-                children.push(child_id);
-                child_info.push((child_id, child_type, child_cst_node));
-
-                // Recursively handle grandchildren if they exist
-                if child_cst_node.child_count() > 0 {
-                    // Update child_id to the new ID returned by recursive rebuild
-                    let new_child_id = self.rebuild_subtree(child_id, &child_cst_node);
-                    // Update our children list and edge if needed
-                    if new_child_id != child_id {
-                        // Find and remove the old edge
-                        let edge_ids_to_remove: Vec<_> = self
-                            .outgoing
-                            .get(&new_node_id)
-                            .map(|edge_ids| {
-                                edge_ids
-                                    .iter()
-                                    .filter(|&&edge_id| {
-                                        if let Some(edge) = self.edges.get(edge_id) {
-                                            edge.to == child_id
-                                                && edge.type_ == EdgeType::SyntaxChild
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                    .copied()
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                        for edge_id in edge_ids_to_remove {
-                            self.remove_edge(edge_id);
-                        }
-
-                        self.add_edge(crate::cpg::Edge {
-                            from: new_node_id,
-                            to: new_child_id,
-                            type_: EdgeType::SyntaxChild,
-                        });
-
-                        // Update the child in our children list and info
-                        if let Some(last_idx) = children.len().checked_sub(1) {
-                            children[last_idx] = new_child_id;
-                            child_info[last_idx].0 = new_child_id;
-                        }
-                    }
-                }
+                children.push(final_child_id);
+                child_info.push((final_child_id, child_type, child_cst_node));
 
                 if !cst_cursor.goto_next_sibling() {
                     break;
@@ -731,7 +720,7 @@ impl Cpg {
             });
 
             // Build set for quick membership tests
-            let children_set: std::collections::HashSet<_> = children.iter().copied().collect();
+            let children_set: std::collections::BTreeSet<_> = children.iter().copied().collect();
 
             // Remove existing SyntaxSibling edges among these children
             // Collect edge ids to remove first to avoid borrow conflicts
@@ -825,7 +814,7 @@ impl Cpg {
             );
         }
 
-        let mut dirty_nodes = HashMap::new();
+        let mut dirty_nodes = std::collections::BTreeMap::new();
         debug!(
             "[INCREMENTAL UPDATE] [PARSE EDITS] TS Changed ranges: {:?}",
             changed_ranges.clone()
@@ -975,7 +964,7 @@ impl Cpg {
         );
 
         // Track orphaned parent nodes separately to ensure they get processed
-        let mut orphaned_parent_nodes = std::collections::HashSet::new();
+        let mut orphaned_parent_nodes = std::collections::BTreeSet::new();
 
         // For each merged range, find the appropriate node that contains it
         let containing_nodes_with_ranges: Vec<(NodeId, (usize, usize, usize, usize))> = merged_ranges
@@ -1085,25 +1074,14 @@ impl Cpg {
             })
             .collect();
 
-        // First attempt: try to surgically update nodes that can be updated in-place
-        // If a node can't be surgically updated, collect it as a rebuild candidate and
-        // proceed to merge/expand those ranges as before.
-        let thresholds = UpdateThresholds::default();
-
         let mut rebuild_candidates: Vec<(NodeId, (usize, usize, usize, usize))> = Vec::new();
-        // Surgical candidates will be applied after we compute merged rebuild ranges
-        // to avoid mutating spatial_index before pairing merged ranges to containers.
         let mut early_surgical_candidates: Vec<(NodeId, tree_sitter::Node)> = Vec::new();
-        let mut early_surgical_ids: HashSet<NodeId> = HashSet::new();
-        // Track structures/functions updated by surgical updates so we don't
-        // double-work them later.
+        let mut early_surgical_ids: std::collections::BTreeSet<NodeId> =
+            std::collections::BTreeSet::new();
         let mut updated_structures: Vec<NodeId> = Vec::new();
         let mut updated_functions: Vec<NodeId> = Vec::new();
 
         for (node_id, range) in &containing_nodes_with_ranges {
-            // If this node was identified as an orphaned parent for a changed range,
-            // prefer a full rebuild — orphaned parents usually indicate newly added
-            // structure that surgical updates may not handle correctly.
             if orphaned_parent_nodes.contains(node_id) {
                 rebuild_candidates.push((*node_id, *range));
                 continue;
@@ -1118,8 +1096,7 @@ impl Cpg {
             };
 
             if let Some(cst_node) = cst_node_opt {
-                let (should_rebuild, metrics) =
-                    self.should_rebuild(*node_id, &cst_node, &thresholds);
+                let (should_rebuild, metrics) = self.should_rebuild(*node_id, &cst_node);
                 trace!(
                     "[INCREMENTAL UPDATE] [EARLY DECIDE] Node {:?}: should_rebuild={}, metrics={:?}",
                     node_id, should_rebuild, metrics
@@ -1304,7 +1281,17 @@ impl Cpg {
 
         // To avoid borrow checker issues, collect update info first
         let mut update_plan = Vec::new();
+        let mut processed_nodes = std::collections::BTreeSet::new();
         for (id, _pos) in &containing_nodes_with_ranges {
+            // Skip nodes already in the update plan to prevent double rebuilds
+            if processed_nodes.contains(id) {
+                trace!(
+                    "[INCREMENTAL UPDATE] [CST PAIRING] Skipping duplicate node {:?} in update plan",
+                    id
+                );
+                continue;
+            }
+            processed_nodes.insert(*id);
             let node_span = self.spatial_index.get_node_span(*id);
             if let Some((start, end)) = node_span {
                 debug!(
@@ -1464,7 +1451,7 @@ impl Cpg {
             }
         }
         for (id, cst_node) in &update_plan {
-            let (should_rebuild, metrics) = self.should_rebuild(*id, cst_node, &thresholds);
+            let (should_rebuild, metrics) = self.should_rebuild(*id, cst_node);
             trace!(
                 "[INCREMENTAL UPDATE] [REBUILD] [DECIDE] Node {:?}: should_rebuild={}, metrics={:?}",
                 id, should_rebuild, metrics
@@ -1521,7 +1508,7 @@ impl Cpg {
         // Instead of recomputing control flow for each updated structure,
         // we need to recompute it for the containing functions to ensure
         // function-level control flow edges (like ControlFlowEpsilon) are properly maintained
-        let mut functions_for_cf_recompute = HashSet::new();
+        let mut functions_for_cf_recompute = std::collections::BTreeSet::new();
 
         debug!(
             "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Finding functions containing updated structures: {:?}",
@@ -1556,39 +1543,36 @@ impl Cpg {
                 );
             }
         }
-        // If we have no updated functions but updated structural containers,
-        // we need to find all functions within those containers and update them
+
         if updated_functions.is_empty() && !updated_structures.is_empty() {
-            for structure in &updated_structures {
-                if let Some(node) = self.get_node_by_id(structure) {
-                    if matches!(node.type_, NodeType::TranslationUnit) {
-                        // For TranslationUnit, find all functions within it
-                        if let Ok(functions) = self.get_top_level_functions(*structure) {
-                            for (_, function_id) in functions {
-                                if !updated_functions.contains(&function_id) {
-                                    updated_functions.push(function_id);
-                                }
-                            }
-                        }
-                    }
+            debug!(
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] No updated functions, but have updated structures: {:?}. Recomputing data dependence for the whole translation unit.",
+                updated_structures
+            );
+            if let Some(root) = self.get_root() {
+                if let Err(e) = data_dep_pass(self, root) {
+                    warn!(
+                        "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute data dependence for translation unit {:?}: {}",
+                        root, e
+                    );
                 }
             }
-        }
-
-        debug!(
-            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for updated functions: {:?}",
-            updated_functions
-        );
-        for function in &updated_functions {
-            trace!(
-                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on {:?}",
-                function
+        } else {
+            debug!(
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for updated functions: {:?}",
+                updated_functions
             );
-            if let Err(e) = data_dep_pass(self, *function) {
-                warn!(
-                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute data dependence for node {:?}: {}",
-                    function, e
+            for function in &updated_functions {
+                trace!(
+                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on {:?}",
+                    function
                 );
+                if let Err(e) = data_dep_pass(self, *function) {
+                    warn!(
+                        "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute data dependence for node {:?}: {}",
+                        function, e
+                    );
+                }
             }
         }
         debug!("[INCREMENTAL UPDATE] Update complete");
@@ -1742,7 +1726,8 @@ impl Cpg {
 
         // Collect edge ids directly from adjacency sets instead of scanning the whole edges map.
         // This avoids iterating self.edges and the expensive ::next calls on large maps.
-        let mut edges_to_remove: HashSet<super::EdgeId> = HashSet::new();
+        let mut edges_to_remove: std::collections::BTreeSet<super::EdgeId> =
+            std::collections::BTreeSet::new();
 
         if let Some(out_set) = self.outgoing.remove(&root) {
             edges_to_remove.extend(out_set);
