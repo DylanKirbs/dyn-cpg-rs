@@ -194,6 +194,14 @@ impl Cpg {
 
 #[cfg(test)]
 mod tests {
+
+    use crate::cpg::{
+        DescendantTraversal, IdenType, NodeType,
+        spatial_index::SpatialIndex,
+        tests::{create_test_cpg, create_test_node},
+    };
+    use crate::desc_trav;
+
     #[test]
     fn test_spatial_index_incremental_update_simulation() {
         // Simulate a pipeline: add nodes, "edit" (remove and add), and check index consistency
@@ -261,11 +269,6 @@ mod tests {
             );
         }
     }
-
-    use crate::cpg::spatial_index::SpatialIndex;
-    use crate::cpg::tests::{create_test_cpg, create_test_node};
-    use crate::cpg::{DescendantTraversal, IdenType};
-    use crate::{cpg::NodeType, desc_trav};
 
     #[test]
     fn test_spatial_index_basic() {

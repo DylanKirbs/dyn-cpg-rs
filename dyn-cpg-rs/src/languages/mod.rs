@@ -871,11 +871,13 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
             None => continue,
         };
         // Check for variable read
-        trace!(
-            "[DATA DEPENDENCE] Node {:?} reads vars: {}",
-            curr_node_id,
-            node.df_reads.join(", ")
-        );
+        if !node.df_reads.is_empty() {
+            trace!(
+                "[DATA DEPENDENCE] Node {:?} reads vars: {}",
+                curr_node_id,
+                node.df_reads.join(", ")
+            );
+        }
         for var in node.df_reads.iter() {
             if let Some(&last_written_id) = last_write.get(var) {
                 add_data_dep_edge(
@@ -888,11 +890,13 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
         }
 
         // Check for variable write (assignment)
-        trace!(
-            "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
-            curr_node_id,
-            node.df_writes.join(", ")
-        );
+        if !node.df_writes.is_empty() {
+            trace!(
+                "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
+                curr_node_id,
+                node.df_writes.join(", ")
+            );
+        }
         for v in node.df_writes.iter() {
             last_write.insert(v.to_string(), curr_node_id);
         }

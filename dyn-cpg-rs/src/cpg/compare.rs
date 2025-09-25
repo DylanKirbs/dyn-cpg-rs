@@ -356,14 +356,24 @@ impl Cpg {
 
         let mut mismatches = Vec::new();
 
-        if l_edges.len() != r_edges.len() {
+        // Group up edges by type
+        let type_counts = |edges: &Vec<&super::edge::Edge>| {
+            let mut counts = HashMap::new();
+            for edge in edges {
+                *counts.entry(edge.type_.clone()).or_insert(0) += 1;
+            }
+            counts
+        };
+        let l_type_counts = type_counts(&l_edges);
+        let r_type_counts = type_counts(&r_edges);
+
+        if l_type_counts != r_type_counts {
             mismatches.push((
                 Some(l_root),
                 Some(r_root),
                 format!(
-                    "Outgoing edge count mismatch: #left = {}, #right = {}",
-                    l_edges.len(),
-                    r_edges.len()
+                    "Outgoing edge type/count mismatch: left = {:?}, right = {:?}",
+                    l_type_counts, r_type_counts
                 ),
             ));
             return Ok(mismatches);
@@ -417,7 +427,13 @@ impl Cpg {
             //     diff_output.push(format!("{}{}", sign, change.value().trim_end()));
             // }
 
-            details.push(format!("Mismatch - {}:\n{}", detail, diff.unified_diff()));
+            details.push(format!(
+                "Mismatch ({:?} vs {:?}) - {}:\n{}",
+                left_node_opt,
+                right_node_opt,
+                detail,
+                diff.unified_diff()
+            ));
         }
 
         details.join("\n")

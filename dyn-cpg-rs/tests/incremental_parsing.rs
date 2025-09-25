@@ -38,7 +38,7 @@ fn test_incremental_reparse() {
 
     // Create CPG from original tree BEFORE incremental parsing
     let start = std::time::Instant::now();
-    let mut cpg = lang
+    let mut incr_cpg = lang
         .cst_to_cpg(old_tree.clone(), old_src.clone())
         .expect("Failed to convert old tree to CPG");
     debug!(
@@ -66,12 +66,13 @@ fn test_incremental_reparse() {
     assert!(changed_ranges.len() != 0, "No changed ranges found");
 
     // Store metrics before incremental update
-    let nodes_before = cpg.node_count();
-    let edges_before = cpg.edge_count();
+    let nodes_before = incr_cpg.node_count();
+    let edges_before = incr_cpg.edge_count();
 
     // Perform the incremental update
     let start = std::time::Instant::now();
-    cpg.incremental_update(&mut parser, new_src.clone())
+    incr_cpg
+        .incremental_update(&mut parser, new_src.clone())
         .expect("Incremental update failed");
     debug!(
         "Incremental CPG update took {} ms",
@@ -80,7 +81,7 @@ fn test_incremental_reparse() {
 
     // Compute the reference CPG from scratch
     let start = std::time::Instant::now();
-    let new_cpg = lang
+    let ref_cpg = lang
         .cst_to_cpg(new_tree, new_src)
         .expect("Failed to convert new tree to CPG");
     debug!(
@@ -89,29 +90,35 @@ fn test_incremental_reparse() {
     );
 
     // Compare the incrementally updated CPG with the reference CPG
-    let diff = cpg.compare(&new_cpg).expect("Failed to compare CPGs");
+    let diff = incr_cpg.compare(&ref_cpg).expect("Failed to compare CPGs");
     match diff {
         DetailedComparisonResult::Equivalent => {}
         _ => panic!(
-            "CPGs should be semantically equivalent, but found differences: {}",
+            "CPGs should be semantically equivalent, but found differences (left=incr, right=ref): {}",
             diff
         ),
     }
 
     // Verify the graph is still internally consistent
-    assert!(cpg.node_count() > 0, "CPG should have nodes after update");
-    assert!(cpg.edge_count() > 0, "CPG should have edges after update");
     assert!(
-        cpg.get_root().is_some(),
+        incr_cpg.node_count() > 0,
+        "CPG should have nodes after update"
+    );
+    assert!(
+        incr_cpg.edge_count() > 0,
+        "CPG should have edges after update"
+    );
+    assert!(
+        incr_cpg.get_root().is_some(),
         "CPG should have a root after update"
     );
 
     debug!(
         "Incremental update test passed: nodes {} -> {}, edges {} -> {}",
         nodes_before,
-        cpg.node_count(),
+        incr_cpg.node_count(),
         edges_before,
-        cpg.edge_count()
+        incr_cpg.edge_count()
     );
 }
 

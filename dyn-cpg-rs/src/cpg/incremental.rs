@@ -1,6 +1,5 @@
-use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
+use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType, spatial_index::SpatialIndex};
 use crate::{
-    cpg::{Node, spatial_index::SpatialIndex},
     diff::{SourceEdit, incremental_ts_parse},
     languages::{cf_pass, data_dep_pass, post_translate_node, pre_translate_node},
 };
@@ -26,7 +25,7 @@ impl Default for UpdateThresholds {
     fn default() -> Self {
         Self {
             max_children_change_percentage: 1.0,
-            max_surgical_depth: 6,
+            max_surgical_depth: 10,
             max_operations_count: 8,
         }
     }
@@ -1519,19 +1518,41 @@ impl Cpg {
             }
         }
 
+        // Instead of recomputing control flow for each updated structure,
+        // we need to recompute it for the containing functions to ensure
+        // function-level control flow edges (like ControlFlowEpsilon) are properly maintained
+        let mut functions_for_cf_recompute = HashSet::new();
+
         debug!(
-            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing control flow for updated structures: {:?}",
+            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Finding functions containing updated structures: {:?}",
             updated_structures
         );
+
         for structure in &updated_structures {
+            if let Some(containing_function) =
+                crate::languages::get_containing_function(self, *structure)
+            {
+                functions_for_cf_recompute.insert(containing_function);
+            } else {
+                // If no containing function (e.g., top-level structure), run cf_pass on the structure itself
+                functions_for_cf_recompute.insert(*structure);
+            }
+        }
+
+        debug!(
+            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing control flow for functions: {:?}",
+            functions_for_cf_recompute
+        );
+
+        for function in &functions_for_cf_recompute {
             trace!(
-                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running cf_pass on {:?}",
-                structure
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running cf_pass on function {:?}",
+                function
             );
-            if let Err(e) = cf_pass(self, *structure) {
+            if let Err(e) = cf_pass(self, *function) {
                 warn!(
-                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute control flow for node {:?}: {}",
-                    structure, e
+                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Failed to recompute control flow for function {:?}: {}",
+                    function, e
                 );
             }
         }
