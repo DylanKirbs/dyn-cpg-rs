@@ -77,14 +77,8 @@ impl DotSerializer {
             canon,
             node.type_.label(),
             pos,
-            node.properties
-                .get("raw_kind")
-                .map(String::as_str)
-                .unwrap_or("unknown"),
-            node.properties
-                .get("name")
-                .map(String::as_str)
-                .unwrap_or(""),
+            node.raw_type,
+            node.name.as_ref().unwrap_or(&"Unnamed".to_string()),
             id_str,
         )
         .replace('"', "\\\"");
@@ -207,18 +201,16 @@ impl SexpSerializer {
         )?;
 
         if self.include_common_props {
-            let name = node.properties.get("name").map(String::as_str);
-            let kind = node.properties.get("raw_kind").map(String::as_str);
-            match (name, kind) {
-                (Some(n), Some(k)) => write!(
+            let name = node.name.as_ref();
+            let kind = node.raw_type.as_str();
+            match name {
+                Some(n) => write!(
                     self.buf,
                     " :name \"{}\" :kind \"{}\"",
                     escape_sexp(n),
-                    escape_sexp(k)
+                    escape_sexp(kind)
                 ),
-                (Some(n), None) => write!(self.buf, " :name \"{}\"", escape_sexp(n)),
-                (None, Some(k)) => write!(self.buf, " :kind \"{}\"", escape_sexp(k)),
-                (None, None) => Ok(()),
+                None => write!(self.buf, " :kind \"{}\"", escape_sexp(kind)),
             }?;
         }
 

@@ -1,5 +1,4 @@
 use super::{DescendantTraversal, NodeId};
-use std::collections::HashMap;
 use strum_macros::Display;
 
 #[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
@@ -10,8 +9,12 @@ pub enum IdenType {
     UNKNOWN,
 }
 
-#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Display, Default, PartialEq, Eq, Hash)]
 pub enum NodeType {
+    /// Unknown node type (this is the default, but should not be present in a finished CPG)
+    #[default]
+    Unknown,
+
     /// Language-implementation specific nodes
     LanguageImplementation(String),
 
@@ -73,20 +76,37 @@ pub enum NodeType {
     Return,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A node in the Code Property Graph (CPG)
+#[derive(Debug, Clone, Default)]
 pub struct Node {
+    /// The readable name of the node (if it has one)
+    pub name: Option<String>,
+
+    /// The "raw" Tree-Sitter type of the node
+    pub raw_type: String,
+
+    /// Type of the node
     pub type_: NodeType,
-    pub properties: HashMap<String, String>, // As little as possible should be stored here
+
+    /// The offset of the node from it's left sibling's end (or it's parent's start if no left sibling)
+    pub offset: usize,
+
+    /// Size of the node in bytes (width in bytes)
+    pub size: usize,
+
+    /// DF Reads
+    pub df_reads: Vec<String>,
+    /// DF Writes
+    pub df_writes: Vec<String>,
 }
 
-impl Node {
-    pub fn update_type(&mut self, type_: NodeType) -> Option<()> {
-        if self.type_ != type_ {
-            self.type_ = type_;
-            Some(())
-        } else {
-            None
-        }
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.raw_type == other.raw_type
+            && self.type_ == other.type_
+            && self.offset == other.offset
+            && self.size == other.size
     }
 }
 
@@ -125,6 +145,7 @@ impl NodeType {
             NodeType::Block => "Block".to_string(),
             NodeType::Call => "Call".to_string(),
             NodeType::Return => "Return".to_string(),
+            NodeType::Unknown => "UNKNOWN".to_string(),
         }
     }
 }

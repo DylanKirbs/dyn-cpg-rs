@@ -36,7 +36,7 @@ fn test_identifier_name_update_isolated() {
         all_nodes.push(root_id); // Include root itself
         for node_id in &all_nodes {
             if let Some(node) = incremental_cpg.get_node_by_id(node_id) {
-                if let Some(name) = node.properties.get("name") {
+                if let Some(name) = node.name.as_ref() {
                     println!("Node {:?}: type={:?}, name={:?}", node_id, node.type_, name);
                 }
             }
@@ -57,7 +57,7 @@ fn test_identifier_name_update_isolated() {
         all_nodes.push(root_id); // Include root itself
         for node_id in &all_nodes {
             if let Some(node) = reference_cpg.get_node_by_id(node_id) {
-                if let Some(name) = node.properties.get("name") {
+                if let Some(name) = node.name.as_ref() {
                     println!("Node {:?}: type={:?}, name={:?}", node_id, node.type_, name);
                 }
             }
@@ -87,7 +87,7 @@ fn test_identifier_name_update_isolated() {
         all_nodes.push(root_id); // Include root itself
         for node_id in &all_nodes {
             if let Some(node) = incremental_cpg.get_node_by_id(node_id) {
-                if let Some(name) = node.properties.get("name") {
+                if let Some(name) = node.name.as_ref() {
                     let source_text = incremental_cpg.get_node_source(node_id);
                     println!(
                         "Node {:?}: type={:?}, name={:?}, source_text={:?}",
@@ -109,7 +109,7 @@ fn test_identifier_name_update_isolated() {
                         node.type_,
                         dyn_cpg_rs::cpg::node::NodeType::Identifier { .. }
                     ) {
-                        if let Some(name) = node.properties.get("name") {
+                        if let Some(name) = node.name.as_ref() {
                             // Look for the identifier that's likely the function name
                             if name != "return" {
                                 // Filter out non-function identifiers

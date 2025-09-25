@@ -148,17 +148,6 @@ impl<'a> std::fmt::Display for FunctionComparisonResult<'a> {
     }
 }
 
-// --- Helper Functions --- //
-
-fn to_sorted_vec(properties: &HashMap<String, String>) -> Vec<(String, String)> {
-    let mut vec: Vec<_> = properties
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    vec.sort_by(|a, b| a.0.cmp(&b.0));
-    vec
-}
-
 // --- CPG Comparison Implementation --- //
 
 pub type RootMismatches = (Option<NodeId>, Option<NodeId>, String);
@@ -318,9 +307,8 @@ impl Cpg {
                 if let NodeType::Function { .. } = node.type_ {
                     // Try to get the function name from properties
                     let name = node
-                        .properties
-                        .get("name")
-                        .cloned()
+                        .name
+                        .clone()
                         .unwrap_or_else(|| format!("unnamed_function_{:?}", edge.to));
 
                     functions.insert(name, edge.to);
@@ -357,8 +345,8 @@ impl Cpg {
                 Some(l_root),
                 Some(r_root),
                 format!(
-                    "Node properties or type differ: left = {} {:?}, right = {} {:?}",
-                    l_node.type_, l_node.properties, r_node.type_, r_node.properties
+                    "Nodes properties differ: left = {:?}, right ={:?}",
+                    l_node, r_node
                 ),
             )]);
         }
@@ -366,78 +354,35 @@ impl Cpg {
         let l_edges = self.get_deterministic_sorted_outgoing_edges(l_root);
         let r_edges = other.get_deterministic_sorted_outgoing_edges(r_root);
 
-        let mut grouped_left: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
-        let mut grouped_right: HashMap<(_, Vec<(_, _)>), Vec<_>> = HashMap::new();
-
-        for e in l_edges.iter() {
-            grouped_left
-                .entry((&e.type_, to_sorted_vec(&e.properties)))
-                .or_default()
-                .push(e);
-        }
-        for e in r_edges.iter() {
-            grouped_right
-                .entry((&e.type_, to_sorted_vec(&e.properties)))
-                .or_default()
-                .push(e);
-        }
-
         let mut mismatches = Vec::new();
-        for ((edge_type, props), left_group) in &grouped_left {
-            let right_group = grouped_right.get(&(*edge_type, props.clone()));
-            match right_group {
-                Some(rg) => {
-                    if **edge_type == EdgeType::SyntaxChild {
-                        let ordered_left = self.ordered_syntax_children(l_root);
-                        let ordered_right = other.ordered_syntax_children(r_root);
 
-                        if ordered_left.len() != ordered_right.len() {
-                            mismatches.push((
-                                Some(l_root),
-                                Some(r_root),
-                                format!(
-                                    "Ordered SyntaxChild count mismatch: #left = {}, #right = {}",
-                                    ordered_left.len(),
-                                    ordered_right.len()
-                                ),
-                            ));
-                            return Ok(mismatches);
-                        }
+        if l_edges.len() != r_edges.len() {
+            mismatches.push((
+                Some(l_root),
+                Some(r_root),
+                format!(
+                    "Outgoing edge count mismatch: #left = {}, #right = {}",
+                    l_edges.len(),
+                    r_edges.len()
+                ),
+            ));
+            return Ok(mismatches);
+        }
 
-                        for (lc, rc) in ordered_left.iter().zip(ordered_right.iter()) {
-                            mismatches.extend(self.compare_subtrees(other, *lc, *rc, visited)?);
-                        }
-                    } else {
-                        if left_group.len() != rg.len() {
-                            mismatches.push((Some(l_root), Some(r_root), format!(
-                                "Edge count mismatch for type {:?} with props {:?}: #left = {}, #right = {}",
-                                edge_type,
-                                props,
-                                left_group.len(),
-                                rg.len()
-                            )));
-                            return Ok(mismatches);
-                        }
-
-                        for (l_edge, r_edge) in left_group.iter().zip(rg.iter()) {
-                            mismatches.extend(
-                                self.compare_subtrees(other, l_edge.to, r_edge.to, visited)?,
-                            );
-                        }
-                    }
-                }
-                None => {
-                    mismatches.push((
-                        Some(l_root),
-                        Some(r_root),
-                        format!(
-                            "Missing edge group in right CPG: type {:?} with props {:?}",
-                            edge_type, props
-                        ),
-                    ));
-                    return Ok(mismatches);
-                }
+        for (l_edge, r_edge) in l_edges.iter().zip(r_edges.iter()) {
+            if l_edge.type_ != r_edge.type_ {
+                mismatches.push((
+                    Some(l_root),
+                    Some(r_root),
+                    format!(
+                        "Edge mismatch: left = {:?}, right = {:?}",
+                        l_edge.type_, r_edge.type_
+                    ),
+                ));
+                return Ok(mismatches);
             }
+
+            mismatches.extend(self.compare_subtrees(other, l_edge.to, r_edge.to, visited)?);
         }
 
         Ok(mismatches)
@@ -502,7 +447,6 @@ mod tests {
         },
         desc_trav,
     };
-    use std::collections::HashMap;
 
     #[test]
     fn test_compare_equivalent_cpgs() {
@@ -527,7 +471,6 @@ mod tests {
                 from: root,
                 to: func,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
             });
         }
 
@@ -556,7 +499,6 @@ mod tests {
             from: root1,
             to: func1,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
 
         // CPG2 has function "test"
@@ -575,7 +517,6 @@ mod tests {
             from: root2,
             to: func2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
 
         let result = cpg1.compare(&cpg2).expect("Comparison failed");
@@ -637,19 +578,16 @@ mod tests {
                 from: root,
                 to: child2,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
             });
             cpg.add_edge(Edge {
                 from: root,
                 to: child1,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
             });
             cpg.add_edge(Edge {
                 from: root,
                 to: child3,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
             });
 
             // No sibling edges - this creates ambiguity about which child comes first

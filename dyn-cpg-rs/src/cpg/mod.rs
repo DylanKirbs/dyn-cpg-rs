@@ -204,16 +204,10 @@ mod tests {
     }
 
     pub fn create_test_node(node_type: NodeType, name: Option<String>) -> Node {
-        Node {
-            type_: node_type.clone(),
-            properties: {
-                let mut prop = HashMap::new();
-                if let Some(n) = name {
-                    prop.insert("name".to_string(), n.clone());
-                }
-                prop
-            },
-        }
+        let mut n = Node::default();
+        n.type_ = node_type;
+        n.name = name;
+        n
     }
 
     // --- Basic functionality tests --- //
@@ -265,7 +259,6 @@ mod tests {
             from: node_id1,
             to: node_id2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         };
 
         let edge_id = cpg.add_edge(edge.clone());
@@ -333,13 +326,11 @@ mod tests {
             from: root,
             to: child1,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: root,
             to: child2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
 
         let initial_node_count = cpg.nodes.len();
@@ -388,19 +379,16 @@ mod tests {
             from: root,
             to: child1,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: child1,
             to: grandchild,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: root,
             to: child2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
 
         cpg.remove_subtree(child1)
@@ -449,19 +437,16 @@ mod tests {
             from: node1,
             to: node2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         let edge2 = cpg.add_edge(Edge {
             from: node2,
             to: node3,
             type_: EdgeType::ControlFlowTrue,
-            properties: HashMap::new(),
         });
         let edge3 = cpg.add_edge(Edge {
             from: node1,
             to: node3,
             type_: EdgeType::PDData("x".to_string()),
-            properties: HashMap::new(),
         });
 
         // Remove node2, which should clean up associated edges
@@ -506,19 +491,16 @@ mod tests {
             from: parent,
             to: child1,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: parent,
             to: child2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: parent,
             to: child3,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         });
 
         // Add sibling edges to establish order
@@ -526,13 +508,11 @@ mod tests {
             from: child1,
             to: child2,
             type_: EdgeType::SyntaxSibling,
-            properties: HashMap::new(),
         });
         cpg.add_edge(Edge {
             from: child2,
             to: child3,
             type_: EdgeType::SyntaxSibling,
-            properties: HashMap::new(),
         });
 
         let ordered = cpg.ordered_syntax_children(parent);
@@ -667,7 +647,7 @@ mod tests {
                     from: node_ids[*from_idx],
                     to: node_ids[*to_idx],
                     type_: EdgeType::SyntaxChild,
-                    properties: HashMap::new(),
+
                 };
                 cpg.add_edge(edge);
             }
@@ -737,7 +717,7 @@ mod tests {
                     from: node_ids[i - 1],
                     to: node_ids[i],
                     type_: EdgeType::SyntaxChild,
-                    properties: HashMap::new(),
+
                 });
             }
         }
@@ -795,7 +775,7 @@ mod tests {
                 from: parent,
                 to: child,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
+
             });
         }
 
@@ -805,7 +785,7 @@ mod tests {
                 from: children[i],
                 to: children[i + 1],
                 type_: EdgeType::SyntaxSibling,
-                properties: HashMap::new(),
+
             });
         }
 

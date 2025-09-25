@@ -1,6 +1,6 @@
 use super::{Cpg, CpgError, NodeId, edge::EdgeType, node::NodeType};
 use crate::{
-    cpg::spatial_index::SpatialIndex,
+    cpg::{Node, spatial_index::SpatialIndex},
     diff::{SourceEdit, incremental_ts_parse},
     languages::{cf_pass, data_dep_pass, post_translate_node, pre_translate_node},
 };
@@ -174,11 +174,7 @@ impl Cpg {
                 let cst_node = cst_children[j - 1];
 
                 if let Some(cpg_node) = self.get_node_by_id(&cpg_node_id) {
-                    let cpg_kind = cpg_node
-                        .properties
-                        .get("raw_kind")
-                        .cloned()
-                        .unwrap_or_else(|| cpg_node.type_.to_string());
+                    let cpg_kind = cpg_node.raw_type.as_str();
                     let cst_kind = cst_node.kind().to_string();
 
                     let current_span = self.spatial_index.get_node_span(cpg_node_id);
@@ -471,7 +467,6 @@ impl Cpg {
                     from: new_node_id,
                     to: child_id,
                     type_: EdgeType::SyntaxChild,
-                    properties: std::collections::HashMap::new(),
                 });
 
                 children.push(child_id);
@@ -511,7 +506,6 @@ impl Cpg {
                             from: new_node_id,
                             to: new_child_id,
                             type_: EdgeType::SyntaxChild,
-                            properties: std::collections::HashMap::new(),
                         });
 
                         // Update the child in our children list and info
@@ -533,7 +527,6 @@ impl Cpg {
                     from: children[i],
                     to: children[i + 1],
                     type_: EdgeType::SyntaxSibling,
-                    properties: std::collections::HashMap::new(),
                 });
             }
 
@@ -556,7 +549,6 @@ impl Cpg {
                 from: parent,
                 to: new_node_id,
                 type_: EdgeType::SyntaxChild,
-                properties: std::collections::HashMap::new(),
             });
             trace!("[REBUILD] Parent edge added successfully");
         } else if is_root_node {
@@ -574,7 +566,6 @@ impl Cpg {
                 from: left,
                 to: new_node_id,
                 type_: EdgeType::SyntaxSibling,
-                properties: std::collections::HashMap::new(),
             });
         }
 
@@ -587,7 +578,6 @@ impl Cpg {
                 from: new_node_id,
                 to: right,
                 type_: EdgeType::SyntaxSibling,
-                properties: std::collections::HashMap::new(),
             });
         }
 
@@ -624,11 +614,7 @@ impl Cpg {
             } else {
                 // Both exist - check if they match
                 let cpg_node = self.get_node_by_id(&cpg_children[cpg_idx]).unwrap();
-                let cpg_kind = cpg_node
-                    .properties
-                    .get("raw_kind")
-                    .cloned()
-                    .unwrap_or_else(|| cpg_node.type_.to_string());
+                let cpg_kind = cpg_node.raw_type.as_str();
                 let cst_kind = cst_children[cst_idx].kind().to_string();
 
                 if cpg_kind == cst_kind {
@@ -687,7 +673,6 @@ impl Cpg {
                         from: parent,
                         to: id,
                         type_: EdgeType::SyntaxChild,
-                        properties: std::collections::HashMap::new(),
                     });
 
                     // Record post translation info
@@ -711,10 +696,8 @@ impl Cpg {
                         // Update the node properties, span, and apply post-translation logic
                         let new_type = self.get_language().map_node_kind(cst_child.kind());
                         if let Some(node) = self.get_node_by_id_mut(&cpg_id) {
-                            // Clear properties first to avoid accumulating stale properties
-                            node.properties.clear();
-                            node.properties
-                                .insert("raw_kind".to_string(), cst_child.kind().to_string());
+                            // NOTE: We may need to clean up some of the previous properties
+                            node.raw_type = cst_child.kind().to_string();
                             node.type_ = new_type.clone();
                         }
                         self.spatial_index.edit(
@@ -777,7 +760,6 @@ impl Cpg {
                     from: children[i],
                     to: children[i + 1],
                     type_: EdgeType::SyntaxSibling,
-                    properties: std::collections::HashMap::new(),
                 });
             }
         }
@@ -1626,12 +1608,9 @@ impl Cpg {
             self.spatial_index.edit(cpg_node, cst_start, cst_end);
         }
 
-        // Always clear and reset properties to avoid accumulating stale properties
         // The post-translation step will recompute all semantic properties correctly
         if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
-            node.properties.clear();
-            node.properties
-                .insert("raw_kind".to_string(), cst_kind.to_string());
+            node.raw_type = cst_kind.to_string();
         }
 
         // Update children with smarter matching (by kind and span)
@@ -1677,11 +1656,7 @@ impl Cpg {
 
             // Only recurse if this child still exists and matches
             if let Some(cpg_child) = self.get_node_by_id(&child_id) {
-                let cpg_kind = cpg_child
-                    .properties
-                    .get("raw_kind")
-                    .cloned()
-                    .unwrap_or_else(|| cpg_child.type_.to_string());
+                let cpg_kind = cpg_child.raw_type.clone();
                 let cst_kind = cst_child.kind().to_string();
 
                 if cpg_kind == cst_kind {
@@ -1703,10 +1678,9 @@ impl Cpg {
 
                     // Update the existing node with the new type and properties
                     if let Some(node) = self.get_node_by_id_mut(&child_id) {
+                        // NOTE: We may need to clean up some of the previous properties
                         node.type_ = new_type.clone();
-                        node.properties.clear();
-                        node.properties
-                            .insert("raw_kind".to_string(), cst_child.kind().to_string());
+                        node.raw_type = cst_kind.to_string();
                     }
 
                     // Update spatial index

@@ -1,7 +1,6 @@
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
 use crate::cpg::{Cpg, Edge, EdgeType, IdenType, Node, NodeId, NodeType};
-use std::collections::HashMap;
 use tracing::{debug, trace, warn};
 mod c;
 use c::C;
@@ -182,7 +181,6 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
                 from: cpg_node_id,
                 to: child_id,
                 type_: EdgeType::SyntaxChild,
-                properties: HashMap::new(),
             });
 
             // Edge from left sibling to current
@@ -191,7 +189,6 @@ pub fn translate(cpg: &mut Cpg, cursor: &mut tree_sitter::TreeCursor) -> Result<
                     from: *left_id,
                     to: child_id,
                     type_: EdgeType::SyntaxSibling,
-                    properties: HashMap::new(),
                 });
             }
 
@@ -228,13 +225,11 @@ pub fn pre_translate_node(
 
     let type_ = cpg.get_language().clone().map_node_kind(cst_node.kind());
 
-    let mut cpg_node = Node {
+    let cpg_node = Node {
         type_: type_.clone(),
-        properties: HashMap::new(),
+        raw_type: cst_node.kind().to_string(),
+        ..Default::default()
     };
-    cpg_node
-        .properties
-        .insert("raw_kind".to_string(), cst_node.kind().to_string());
 
     let cpg_node_id = cpg.add_node(cpg_node, cst_node.start_byte(), cst_node.end_byte());
 
@@ -275,8 +270,9 @@ pub fn post_translate_node(
                         continue;
                     }
 
-                    cpg.get_node_by_id_mut(&cpg_node_id)
-                        .and_then(|f| f.properties.insert("name".to_string(), name.clone()));
+                    if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
+                        n.name = Some(name.clone());
+                    }
 
                     trace!(
                         "[POST TRANSLATE NODE] Function node name found: {:?} {:?}",
@@ -300,9 +296,9 @@ pub fn post_translate_node(
                     if let Some(child_node) = cpg.get_node_by_id(&child) {
                         if matches!(child_node.type_, NodeType::Identifier { .. }) {
                             let name = cpg.get_node_source(&child);
-                            cpg.get_node_by_id_mut(&cpg_node_id).and_then(|f| {
-                                f.properties.insert("name".to_string(), name.clone())
-                            });
+                            if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
+                                n.name = Some(name.clone());
+                            }
 
                             trace!(
                                 "[POST TRANSLATE NODE] Function node name found via fallback: {:?} {:?}",
@@ -327,7 +323,7 @@ pub fn post_translate_node(
                     let fn_end = cpg.add_node(
                         Node {
                             type_: NodeType::FunctionReturn,
-                            properties: HashMap::new(),
+                            ..Default::default()
                         },
                         s,
                         e,
@@ -337,7 +333,6 @@ pub fn post_translate_node(
                         from: cpg_node_id,
                         to: fn_end,
                         type_: EdgeType::ControlFlowFunctionReturn,
-                        properties: HashMap::new(),
                     });
                 }
             }
@@ -359,38 +354,14 @@ pub fn post_translate_node(
                     if let NodeType::Identifier { type_: iden_type } = child_node.type_.clone() {
                         match iden_type {
                             IdenType::WRITE => {
-                                assigned.push(
-                                    child_node
-                                        .properties
-                                        .get("name")
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                );
+                                assigned.push(child_node.name.clone().unwrap_or_default());
                             }
                             IdenType::READ => {
-                                read.push(
-                                    child_node
-                                        .properties
-                                        .get("name")
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                );
+                                read.push(child_node.name.clone().unwrap_or_default());
                             }
                             IdenType::UNKNOWN => {
-                                assigned.push(
-                                    child_node
-                                        .properties
-                                        .get("name")
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                );
-                                read.push(
-                                    child_node
-                                        .properties
-                                        .get("name")
-                                        .cloned()
-                                        .unwrap_or_default(),
-                                );
+                                assigned.push(child_node.name.clone().unwrap_or_default());
+                                read.push(child_node.name.clone().unwrap_or_default());
                             }
                         }
                     }
@@ -405,11 +376,10 @@ pub fn post_translate_node(
 
             if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
                 if !assigned.is_empty() {
-                    n.properties
-                        .insert("assigned_vars".to_string(), assigned.join(","));
+                    n.df_writes = assigned;
                 }
                 if !read.is_empty() {
-                    n.properties.insert("read_vars".to_string(), read.join(","));
+                    n.df_reads = read;
                 }
             }
         }
@@ -418,7 +388,7 @@ pub fn post_translate_node(
         NodeType::Identifier { .. } => {
             if cpg
                 .get_node_by_id(&cpg_node_id)
-                .and_then(|n| n.properties.get("name"))
+                .and_then(|n| n.name.clone())
                 .is_none()
             {
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
@@ -430,15 +400,14 @@ pub fn post_translate_node(
                 );
 
                 if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
-                    n.properties.insert("name".to_string(), iden_name);
+                    n.name = Some(iden_name);
                 }
             } else {
                 // Force update the name during incremental updates
                 let iden_name = cpg.get_node_source(&cpg_node_id).clone();
                 let current_name = cpg
                     .get_node_by_id(&cpg_node_id)
-                    .and_then(|n| n.properties.get("name"))
-                    .cloned()
+                    .and_then(|n| n.name.clone())
                     .unwrap_or_default();
 
                 trace!(
@@ -450,7 +419,7 @@ pub fn post_translate_node(
 
                 if current_name != iden_name {
                     if let Some(n) = cpg.get_node_by_id_mut(&cpg_node_id) {
-                        n.properties.insert("name".to_string(), iden_name);
+                        n.name = Some(iden_name);
                     }
                 }
             }
@@ -501,7 +470,6 @@ fn add_control_flow_edge(
         from,
         to,
         type_: edge_type,
-        properties: HashMap::new(),
     });
 
     Ok(())
@@ -542,7 +510,6 @@ fn add_data_dep_edge(
         from,
         to,
         type_: edge_type,
-        properties: HashMap::new(),
     });
 
     Ok(())
@@ -904,34 +871,32 @@ pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> 
             None => continue,
         };
         // Check for variable read
-        if let Some(vars) = node.properties.get("read_vars") {
-            trace!(
-                "[DATA DEPENDENCE] Node {:?} reads vars: {}",
-                curr_node_id, vars
-            );
-            for var in vars.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                if let Some(&last_written_id) = last_write.get(var) {
-                    add_data_dep_edge(
-                        cpg,
-                        last_written_id,
-                        curr_node_id,
-                        EdgeType::PDData(var.to_string()),
-                    )?;
-                }
+        trace!(
+            "[DATA DEPENDENCE] Node {:?} reads vars: {}",
+            curr_node_id,
+            node.df_reads.join(", ")
+        );
+        for var in node.df_reads.iter() {
+            if let Some(&last_written_id) = last_write.get(var) {
+                add_data_dep_edge(
+                    cpg,
+                    last_written_id,
+                    curr_node_id,
+                    EdgeType::PDData(var.to_string()),
+                )?;
             }
         }
+
         // Check for variable write (assignment)
-        if let Some(vars) = node.properties.get("assigned_vars") {
-            trace!(
-                "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
-                curr_node_id, vars
-            );
-            for v in vars.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                last_write.insert(v.to_string(), curr_node_id);
-            }
+        trace!(
+            "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
+            curr_node_id,
+            node.df_writes.join(", ")
+        );
+        for v in node.df_writes.iter() {
+            last_write.insert(v.to_string(), curr_node_id);
         }
     }
-
     debug!("[DATA DEPENDENCE] Data dependence pass completed");
 
     Ok(())

@@ -30,7 +30,6 @@ pub struct Edge {
     pub from: NodeId,
     pub to: NodeId,
     pub type_: EdgeType,
-    pub properties: HashMap<String, String>, // As little as possible should be stored here
 }
 
 // --- CPG --- ///
@@ -384,13 +383,11 @@ mod tests {
             from: node1,
             to: node2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         };
         let edge2 = Edge {
             from: node1,
             to: node3,
             type_: EdgeType::ControlFlowTrue,
-            properties: HashMap::new(),
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
@@ -441,13 +438,11 @@ mod tests {
             from: node1,
             to: node2,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         };
         let edge2 = Edge {
             from: node3,
             to: node2,
             type_: EdgeType::ControlFlowTrue,
-            properties: HashMap::new(),
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
@@ -492,13 +487,11 @@ mod tests {
             from: node1,
             to: node2,
             type_: EdgeType::SyntaxChild,
-            properties: edge_props.clone(),
         };
         let edge2 = Edge {
             from: node2,
             to: node3,
             type_: EdgeType::SyntaxChild,
-            properties: HashMap::new(),
         };
         cpg.add_edge(edge1);
         cpg.add_edge(edge2);
@@ -512,6 +505,5 @@ mod tests {
         // Query specific edge
         let specific = EdgeQuery::new().from(&node1).to(&node2).query(&cpg);
         assert_eq!(specific.len(), 1);
-        assert_eq!(specific[0].properties, edge_props);
     }
 }

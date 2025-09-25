@@ -1028,11 +1028,7 @@ fn debug_print_function_names(
     let node = cpg.get_node_by_id(&node_id);
     if let Some(node) = node {
         if let dyn_cpg_rs::cpg::node::NodeType::Function { .. } = &node.type_ {
-            let name = node
-                .properties
-                .get("name")
-                .cloned()
-                .unwrap_or_else(|| "NO_NAME".to_string());
+            let name = node.name.clone().unwrap_or_else(|| "NO_NAME".to_string());
             let span = cpg.get_node_offsets_by_id(&node_id);
             let source = cpg.get_node_source(&node_id);
             println!(
