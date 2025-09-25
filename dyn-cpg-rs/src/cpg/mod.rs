@@ -21,12 +21,6 @@ pub use node::*;
 mod spatial_index;
 use spatial_index::{BTreeIndex, SpatialIndex};
 
-#[derive(Debug, Clone, Display, PartialEq, Eq, Hash)]
-pub enum ListenerType {
-    Unknown,
-    // TODO: Figure out what we need here
-}
-
 // --- SlotMap Key Types --- //
 
 new_key_type! {

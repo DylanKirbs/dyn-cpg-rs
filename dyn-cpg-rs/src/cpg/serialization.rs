@@ -320,7 +320,7 @@ impl CpgSerializer<String> for SexpSerializer {
 
 // --- Neo4j --- //
 
-// TODO
+// TODO implement a Neo4j serializer
 
 // --- CPG --- //
 

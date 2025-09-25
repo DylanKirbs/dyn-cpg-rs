@@ -1,6 +1,6 @@
 use crate::cpg::spatial_index::SpatialIndex;
 
-use super::{Cpg, EdgeId, ListenerType, NodeId};
+use super::{Cpg, EdgeId, NodeId};
 use std::collections::{HashMap, HashSet};
 use strum_macros::Display;
 use tracing::warn;
@@ -23,9 +23,6 @@ pub enum EdgeType {
     PDControlTrue,
     PDControlFalse,
     PDData(String), // Identifier for data dependencies
-
-    // Listener
-    Listener(ListenerType),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -269,7 +266,6 @@ impl EdgeType {
             EdgeType::PDControlTrue => "cyan",
             EdgeType::PDControlFalse => "magenta",
             EdgeType::PDData(_) => "brown",
-            EdgeType::Listener(_) => "gray",
         }
     }
 
