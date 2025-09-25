@@ -11,6 +11,68 @@ use std::{
 };
 use tracing::{debug, trace, warn};
 
+/// Translate a span from old coordinates to new coordinates based on a series of edits
+fn translate_span_through_edits(
+    old_start: usize,
+    old_end: usize,
+    edits: &[SourceEdit],
+) -> (usize, usize) {
+    // First, collect all edits that affect this span based on ORIGINAL positions
+    let mut relevant_edits = Vec::new();
+    for edit in edits {
+        if edit.old_start < old_end || edit.old_end <= old_start {
+            relevant_edits.push(edit.clone());
+        }
+    }
+
+    // Sort edits by their original position to apply them in order
+    relevant_edits.sort_by_key(|e| e.old_start);
+
+    let mut new_start = old_start;
+    let mut new_end = old_end;
+
+    // Apply each relevant edit to translate the coordinates
+    for edit in relevant_edits.iter() {
+        // If the edit is completely before our original span, adjust both coordinates
+        if edit.old_end <= old_start {
+            let delta = (edit.new_end as isize) - (edit.old_end as isize);
+            new_start = (new_start as isize + delta).max(0) as usize;
+            new_end = (new_end as isize + delta).max(0) as usize;
+        }
+        // If the edit intersects with our original span
+        else if edit.old_start < old_end && edit.old_end > old_start {
+            // Calculate how the edit affects the span boundaries
+            if edit.old_start <= old_start {
+                // Edit starts before or at our span start
+                if edit.old_end >= old_end {
+                    // Edit completely contains our original span
+                    new_start = edit.new_start;
+                    new_end = edit.new_end;
+                } else {
+                    // Edit overlaps the start of our span
+                    new_start = edit.new_end;
+                    let remaining_original_length = old_end - edit.old_end;
+                    new_end = new_start + remaining_original_length;
+                }
+            } else {
+                // Edit starts within our original span
+                if edit.old_end >= old_end {
+                    // Edit extends beyond our original span end - truncate our span
+                    new_end = new_start + (edit.old_start - old_start);
+                } else {
+                    // Edit is completely within our original span - expand to include the edit
+                    let prefix_length = edit.old_start - old_start;
+                    let suffix_length = old_end - edit.old_end;
+                    let new_edit_length = edit.new_end - edit.new_start;
+                    new_end = new_start + prefix_length + new_edit_length + suffix_length;
+                }
+            }
+        }
+    }
+
+    (new_start, new_end)
+}
+
 /// Configuration for incremental update thresholds
 #[derive(Debug, Clone)]
 pub struct UpdateThresholds {
@@ -883,6 +945,13 @@ impl Cpg {
                 if let Some(parent_node_id) =
                     self.find_parent_node_for_range(range.start_byte, range.end_byte)
                 {
+                    if let Some(node) = self.get_node_by_id(&parent_node_id) {
+                        trace!(
+                            "[INCREMENTAL UPDATE] [PARSE EDITS] Parent node type: {:?}",
+                            node.type_
+                        );
+                    }
+
                     debug!(
                         "[INCREMENTAL UPDATE] [PARSE EDITS] Found parent node {:?} for orphaned range {:?}",
                         parent_node_id, range
@@ -909,6 +978,7 @@ impl Cpg {
             "[INCREMENTAL UPDATE] [PARSE EDITS] Textual edits: {:?}",
             edits
         );
+        let edits_for_translation = edits.clone();
         for edit in edits {
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
@@ -1318,7 +1388,19 @@ impl Cpg {
         let mut update_plan = Vec::new();
         for (id, _pos) in &containing_nodes_with_ranges {
             let node_span = self.spatial_index.get_node_span(*id);
-            if let Some((start, end)) = node_span {
+            if let Some((old_start, old_end)) = node_span {
+                debug!(
+                    "[INCREMENTAL UPDATE] [CST PAIRING] CPG node {:?} has old span ({}, {})",
+                    id, old_start, old_end
+                );
+
+                // Translate old coordinates to new coordinates based on edits
+                let (start, end) =
+                    translate_span_through_edits(old_start, old_end, &edits_for_translation);
+                debug!(
+                    "[INCREMENTAL UPDATE] [CST PAIRING] CPG node {:?} translated span ({}, {})",
+                    id, start, end
+                );
                 // Special case: if this is the root node, use the root of the new tree
                 let cst_node = if self.root == Some(*id) {
                     trace!(
@@ -1327,7 +1409,6 @@ impl Cpg {
                     );
 
                     let root_node = new_tree.root_node();
-                    // Validate that the tree root's ranges are within the new source bounds
                     let source_len = self.get_source().len();
                     if root_node.start_byte() > source_len || root_node.end_byte() > source_len {
                         warn!(
@@ -1343,16 +1424,63 @@ impl Cpg {
                     // Handle case where original span extends beyond new source length
                     let source_len = self.get_source().len();
 
-                    // First try with adjusted end position if original span is too large
-                    let cst_node = if end > source_len {
-                        let adjusted_end = source_len.saturating_sub(1).max(start);
-                        trace!(
-                            "[INCREMENTAL UPDATE] [CST PAIRING] Original span ({}, {}) exceeds source length {}, adjusting to ({}, {})",
-                            start, end, source_len, start, adjusted_end
-                        );
-                        new_tree
+                    // For more precise CST pairing, prefer using the start position to find the node rather than the full range which might be too broad after translation
+                    let cst_node = if start < source_len {
+                        // First try to find the most specific node that starts at this position
+                        let start_node = new_tree
                             .root_node()
-                            .descendant_for_byte_range(start, adjusted_end)
+                            .descendant_for_byte_range(start, start + 1);
+
+                        if let Some(node) = start_node {
+                            // If we found a node, walk up the tree to find the most appropriate node that closely matches the expected range
+                            let mut current = node;
+                            let mut best_match = node;
+
+                            // Walk up the tree to find a better match
+                            while let Some(parent) = current.parent() {
+                                // If parent starts at the same position, it might be a better match
+                                if parent.start_byte() == start {
+                                    // Check if the parent's range is closer to our expected range
+                                    let parent_len =
+                                        parent.end_byte().saturating_sub(parent.start_byte());
+                                    let current_len = best_match
+                                        .end_byte()
+                                        .saturating_sub(best_match.start_byte());
+                                    let expected_len = end.saturating_sub(start);
+
+                                    // Prefer the node whose size is closer to the expected size
+                                    if (parent_len as i32 - expected_len as i32).abs()
+                                        < (current_len as i32 - expected_len as i32).abs()
+                                    {
+                                        best_match = parent;
+                                    }
+                                }
+                                current = parent;
+                            }
+
+                            trace!(
+                                "[INCREMENTAL UPDATE] [CST PAIRING] Refined CST pairing for CPG node {:?}: start={}, expected_range=({}, {}), found: kind={}, actual_range=({}, {})",
+                                id,
+                                start,
+                                start,
+                                end,
+                                best_match.kind(),
+                                best_match.start_byte(),
+                                best_match.end_byte()
+                            );
+
+                            Some(best_match)
+                        } else {
+                            // Fallback to range-based search if start position doesn't work
+                            let adjusted_end = if end > source_len {
+                                source_len.saturating_sub(1).max(start)
+                            } else {
+                                end
+                            };
+                            new_tree
+                                .root_node()
+                                .descendant_for_byte_range(start, adjusted_end)
+                        }
                     } else {
                         new_tree.root_node().descendant_for_byte_range(start, end)
                     };
@@ -1439,6 +1567,18 @@ impl Cpg {
                     metrics.operations_count,
                     metrics.subtree_depth
                 );
+
+                trace!(
+                    "[INCREMENTAL UPDATE] [REBUILD] CST node kind: {}",
+                    cst_node.kind()
+                );
+                if let Some(cpg_node) = self.get_node_by_id(id) {
+                    trace!(
+                        "[INCREMENTAL UPDATE] [REBUILD] Original CPG node type: {:?}",
+                        cpg_node.type_
+                    );
+                }
+
                 self.clean_analysis_edges(*id);
                 self.rebuild_subtree(*id, cst_node)
             } else {
@@ -1560,7 +1700,8 @@ impl Cpg {
         // The post-translation step will recompute all semantic properties correctly
         if let Some(node) = self.get_node_by_id_mut(&cpg_node) {
             node.properties.clear();
-            node.properties.insert("raw_kind".to_string(), cst_kind.to_string());
+            node.properties
+                .insert("raw_kind".to_string(), cst_kind.to_string());
         }
 
         // Update children with smarter matching (by kind and span)

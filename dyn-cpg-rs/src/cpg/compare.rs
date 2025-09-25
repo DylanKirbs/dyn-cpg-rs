@@ -6,8 +6,8 @@ use tracing::debug;
 // --- Comparison Results --- //
 
 /// Detailed result of a CPG comparison
-#[derive(Debug, Clone, PartialEq)]
-pub enum DetailedComparisonResult {
+#[derive(Clone, Debug)]
+pub enum DetailedComparisonResult<'a> {
     /// The CPGs are semantically equivalent
     Equivalent,
     /// The CPGs have structural differences
@@ -17,11 +17,34 @@ pub enum DetailedComparisonResult {
         /// Functions present only in the right CPG
         only_in_right: Vec<String>,
         /// Functions that exist in both but have differences
-        function_mismatches: Vec<FunctionComparisonResult>,
+        function_mismatches: Vec<FunctionComparisonResult<'a>>,
     },
 }
 
-impl std::fmt::Display for DetailedComparisonResult {
+impl PartialEq for DetailedComparisonResult<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (DetailedComparisonResult::Equivalent, DetailedComparisonResult::Equivalent) => true,
+            (
+                DetailedComparisonResult::StructuralMismatch {
+                    only_in_left: left1,
+                    only_in_right: right1,
+                    function_mismatches: funcs1,
+                    ..
+                },
+                DetailedComparisonResult::StructuralMismatch {
+                    only_in_left: left2,
+                    only_in_right: right2,
+                    function_mismatches: funcs2,
+                    ..
+                },
+            ) => left1 == left2 && right1 == right2 && funcs1 == funcs2,
+            _ => false,
+        }
+    }
+}
+
+impl<'a> std::fmt::Display for DetailedComparisonResult<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DetailedComparisonResult::Equivalent => write!(f, "CPGs are equivalent"),
@@ -31,6 +54,7 @@ impl std::fmt::Display for DetailedComparisonResult {
                 function_mismatches,
             } => {
                 writeln!(f, "CPGs have structural differences:")?;
+
                 if !only_in_left.is_empty() {
                     writeln!(f, "  Functions only in left: {:?}", only_in_left)?;
                 }
@@ -46,55 +70,25 @@ impl std::fmt::Display for DetailedComparisonResult {
     }
 }
 
-impl DetailedComparisonResult {
-    /// A non-diff string representation of the comparison result
-    pub fn non_diff_string(&self) -> String {
-        match self {
-            DetailedComparisonResult::Equivalent => "CPGs are equivalent".to_string(),
-            DetailedComparisonResult::StructuralMismatch {
-                only_in_left,
-                only_in_right,
-                function_mismatches,
-            } => {
-                let mut parts = vec![];
-                if !only_in_left.is_empty() {
-                    parts.push(format!("Functions only in left: {:?}", only_in_left));
-                }
-                if !only_in_right.is_empty() {
-                    parts.push(format!("Functions only in right: {:?}", only_in_right));
-                }
-                for mismatch in function_mismatches {
-                    match mismatch {
-                        FunctionComparisonResult::Mismatch { function_name, .. } => {
-                            parts.push(format!("Function mismatch: {}", function_name));
-                        }
-                        FunctionComparisonResult::Equivalent => {}
-                    }
-                }
-                format!("CPGs have structural differences: {}", parts.join("; "))
-            }
-        }
-    }
-}
-
 /// Result of comparing a single function between two CPGs
 #[derive(Debug, Clone)]
-pub enum FunctionComparisonResult {
+pub enum FunctionComparisonResult<'a> {
     /// The functions are equivalent
     Equivalent,
     /// The functions differ
     Mismatch {
         /// The name of the function
         function_name: String,
-        left_cpg: Box<Cpg>,
-        right_cpg: Box<Cpg>,
+        /// References to the DetailedComparisonResult's CPGs for context
+        left_cpg: &'a Cpg,
+        right_cpg: &'a Cpg,
         mismatches: Vec<(Option<NodeId>, Option<NodeId>, String)>,
         l_root: NodeId,
         r_root: NodeId,
     },
 }
 
-impl PartialEq for FunctionComparisonResult {
+impl<'a> PartialEq for FunctionComparisonResult<'a> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (FunctionComparisonResult::Equivalent, FunctionComparisonResult::Equivalent) => true,
@@ -111,7 +105,7 @@ impl PartialEq for FunctionComparisonResult {
     }
 }
 
-impl std::fmt::Display for FunctionComparisonResult {
+impl<'a> std::fmt::Display for FunctionComparisonResult<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FunctionComparisonResult::Equivalent => write!(f, "Function is equivalent"),
@@ -172,7 +166,7 @@ pub type RootMismatches = (Option<NodeId>, Option<NodeId>, String);
 impl Cpg {
     /// Compare two CPGs for semantic equality
     /// Returns a detailed comparison result indicating structural differences and function-level mismatches
-    pub fn compare(&self, other: &Cpg) -> Result<DetailedComparisonResult, CpgError> {
+    pub fn compare<'a>(&'a self, other: &'a Cpg) -> Result<DetailedComparisonResult<'a>, CpgError> {
         debug!(
             "[COMPARE] Comparing CPGs: left root = {:?}, right root = {:?}",
             self.get_root(),
@@ -218,18 +212,20 @@ impl Cpg {
                     if mismatches.is_empty() {
                         return Ok(DetailedComparisonResult::Equivalent);
                     } else {
-                        return Ok(DetailedComparisonResult::StructuralMismatch {
-                            only_in_left: vec![],
-                            only_in_right: vec![],
-                            function_mismatches: vec![FunctionComparisonResult::Mismatch {
-                                function_name: "root".to_string(),
-                                left_cpg: Box::new(self.clone()),
-                                right_cpg: Box::new(other.clone()),
-                                mismatches,
-                                l_root,
-                                r_root,
-                            }],
-                        });
+                        return {
+                            Ok(DetailedComparisonResult::StructuralMismatch {
+                                only_in_left: vec![],
+                                only_in_right: vec![],
+                                function_mismatches: vec![FunctionComparisonResult::Mismatch {
+                                    function_name: "root".to_string(),
+                                    left_cpg: self,
+                                    right_cpg: other,
+                                    mismatches,
+                                    l_root,
+                                    r_root,
+                                }],
+                            })
+                        };
                     }
                 }
 
@@ -276,8 +272,8 @@ impl Cpg {
                             function_mismatches.push(FunctionComparisonResult::Mismatch {
                                 function_name: name.clone(),
                                 mismatches,
-                                left_cpg: Box::new(self.clone()),
-                                right_cpg: Box::new(other.clone()),
+                                left_cpg: self,
+                                right_cpg: other,
                                 l_root: *left_func_id,
                                 r_root: *right_func_id,
                             });
