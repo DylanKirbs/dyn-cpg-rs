@@ -11,68 +11,6 @@ use std::{
 };
 use tracing::{debug, trace, warn};
 
-/// Translate a span from old coordinates to new coordinates based on a series of edits
-fn translate_span_through_edits(
-    old_start: usize,
-    old_end: usize,
-    edits: &[SourceEdit],
-) -> (usize, usize) {
-    // First, collect all edits that affect this span based on ORIGINAL positions
-    let mut relevant_edits = Vec::new();
-    for edit in edits {
-        if edit.old_start < old_end || edit.old_end <= old_start {
-            relevant_edits.push(edit.clone());
-        }
-    }
-
-    // Sort edits by their original position to apply them in order
-    relevant_edits.sort_by_key(|e| e.old_start);
-
-    let mut new_start = old_start;
-    let mut new_end = old_end;
-
-    // Apply each relevant edit to translate the coordinates
-    for edit in relevant_edits.iter() {
-        // If the edit is completely before our original span, adjust both coordinates
-        if edit.old_end <= old_start {
-            let delta = (edit.new_end as isize) - (edit.old_end as isize);
-            new_start = (new_start as isize + delta).max(0) as usize;
-            new_end = (new_end as isize + delta).max(0) as usize;
-        }
-        // If the edit intersects with our original span
-        else if edit.old_start < old_end && edit.old_end > old_start {
-            // Calculate how the edit affects the span boundaries
-            if edit.old_start <= old_start {
-                // Edit starts before or at our span start
-                if edit.old_end >= old_end {
-                    // Edit completely contains our original span
-                    new_start = edit.new_start;
-                    new_end = edit.new_end;
-                } else {
-                    // Edit overlaps the start of our span
-                    new_start = edit.new_end;
-                    let remaining_original_length = old_end - edit.old_end;
-                    new_end = new_start + remaining_original_length;
-                }
-            } else {
-                // Edit starts within our original span
-                if edit.old_end >= old_end {
-                    // Edit extends beyond our original span end - truncate our span
-                    new_end = new_start + (edit.old_start - old_start);
-                } else {
-                    // Edit is completely within our original span - expand to include the edit
-                    let prefix_length = edit.old_start - old_start;
-                    let suffix_length = old_end - edit.old_end;
-                    let new_edit_length = edit.new_end - edit.new_start;
-                    new_end = new_start + prefix_length + new_edit_length + suffix_length;
-                }
-            }
-        }
-    }
-
-    (new_start, new_end)
-}
-
 /// Configuration for incremental update thresholds
 #[derive(Debug, Clone)]
 pub struct UpdateThresholds {
@@ -978,7 +916,6 @@ impl Cpg {
             "[INCREMENTAL UPDATE] [PARSE EDITS] Textual edits: {:?}",
             edits
         );
-        let edits_for_translation = edits.clone();
         for edit in edits {
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
@@ -1388,19 +1325,12 @@ impl Cpg {
         let mut update_plan = Vec::new();
         for (id, _pos) in &containing_nodes_with_ranges {
             let node_span = self.spatial_index.get_node_span(*id);
-            if let Some((old_start, old_end)) = node_span {
+            if let Some((start, end)) = node_span {
                 debug!(
-                    "[INCREMENTAL UPDATE] [CST PAIRING] CPG node {:?} has old span ({}, {})",
-                    id, old_start, old_end
-                );
-
-                // Translate old coordinates to new coordinates based on edits
-                let (start, end) =
-                    translate_span_through_edits(old_start, old_end, &edits_for_translation);
-                debug!(
-                    "[INCREMENTAL UPDATE] [CST PAIRING] CPG node {:?} translated span ({}, {})",
+                    "[INCREMENTAL UPDATE] [CST PAIRING] CPG node {:?} has current span ({}, {})",
                     id, start, end
                 );
+
                 // Special case: if this is the root node, use the root of the new tree
                 let cst_node = if self.root == Some(*id) {
                     trace!(
