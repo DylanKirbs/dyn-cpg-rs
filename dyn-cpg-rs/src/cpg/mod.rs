@@ -203,11 +203,12 @@ mod tests {
         Cpg::new("C".parse().expect("Failed to parse language"), Vec::new())
     }
 
-    pub fn create_test_node(node_type: NodeType, name: Option<String>) -> Node {
-        let mut n = Node::default();
-        n.type_ = node_type;
-        n.name = name;
-        n
+    pub fn create_test_node(type_: NodeType, name: Option<String>) -> Node {
+        Node {
+            type_,
+            name,
+            ..Default::default()
+        }
     }
 
     // --- Basic functionality tests --- //

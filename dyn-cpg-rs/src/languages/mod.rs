@@ -760,7 +760,18 @@ fn compute_control_flow_postorder(
             if !statement_children.is_empty() {
                 // Find where execution actually starts (leftmost descendant of first child)
                 let execution_start = find_execution_entry_point(cpg, statement_children[0]);
-                add_control_flow_edge(cpg, node_id, execution_start, EdgeType::ControlFlowEpsilon)?;
+
+                if let Some(start_node) = cpg.get_node_by_id(&execution_start) {
+                    if !matches!(start_node.type_, NodeType::FunctionReturn) {
+                        add_control_flow_edge(
+                            cpg,
+                            node_id,
+                            execution_start,
+                            EdgeType::ControlFlowEpsilon,
+                        )?;
+                    }
+                }
+
                 exits = process_sequential_statements(cpg, &statement_children, Some(node_id))?;
             } else {
                 exits.push(node_id);

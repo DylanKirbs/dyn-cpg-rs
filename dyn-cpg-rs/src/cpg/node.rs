@@ -88,25 +88,24 @@ pub struct Node {
     /// Type of the node
     pub type_: NodeType,
 
+    /// DF Reads
+    pub df_reads: Vec<String>,
+    /// DF Writes
+    pub df_writes: Vec<String>,
+    /*
     /// The offset of the node from it's left sibling's end (or it's parent's start if no left sibling)
     pub offset: usize,
 
     /// Size of the node in bytes (width in bytes)
     pub size: usize,
-
-    /// DF Reads
-    pub df_reads: Vec<String>,
-    /// DF Writes
-    pub df_writes: Vec<String>,
+    */
 }
 
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-            && self.raw_type == other.raw_type
-            && self.type_ == other.type_
-            && self.offset == other.offset
-            && self.size == other.size
+        self.name == other.name && self.raw_type == other.raw_type && self.type_ == other.type_
+        // && self.offset == other.offset
+        // && self.size == other.size
     }
 }
 

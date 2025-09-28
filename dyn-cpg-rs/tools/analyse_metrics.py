@@ -51,6 +51,7 @@ def speedup_ratio(df: pd.DataFrame, output_file: Path):
     ax.set_title("Speedup Ratio by Patch Type")
     ax.legend()
     use_logscale_if_wide(ax, df["speedup"])
+    ax.set_ylim(1 / 25.0, 25.0)
     save_plot(fig, output_file)
 
 

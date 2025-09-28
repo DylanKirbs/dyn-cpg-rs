@@ -37,6 +37,94 @@ pub struct IncrementalUpdateMetrics {
 }
 
 impl Cpg {
+    /// Propagate span changes upward through the syntax tree hierarchy.
+    /// When a node's span changes, its parent containers may need to expand
+    /// their spans to contain the modified child.
+    fn propagate_span_upward(&mut self, node_id: NodeId) {
+        use super::EdgeType;
+
+        // Find the syntax parent of this node
+        let parent_edges: Vec<_> = self
+            .get_incoming_edges(node_id)
+            .into_iter()
+            .filter(|e| e.type_ == EdgeType::SyntaxChild)
+            .cloned()
+            .collect();
+
+        for edge in parent_edges {
+            let parent_id = edge.from;
+
+            // Get all children of the parent to compute its required span
+            let children = self.ordered_syntax_children(parent_id);
+            if children.is_empty() {
+                continue;
+            }
+
+            // Calculate the minimum span that contains all children
+            let mut min_start = usize::MAX;
+            let mut max_end = 0;
+
+            for child_id in &children {
+                if let Some((start, end)) = self.spatial_index.get_node_span(*child_id) {
+                    min_start = min_start.min(start);
+                    max_end = max_end.max(end);
+                }
+            }
+
+            if min_start != usize::MAX && max_end > 0 {
+                // Check if parent needs span update
+                if let Some((parent_start, parent_end)) =
+                    self.spatial_index.get_node_span(parent_id)
+                {
+                    if min_start < parent_start || max_end > parent_end {
+                        // Parent needs to expand to contain all children
+                        let new_start = min_start.min(parent_start);
+                        let new_end = max_end.max(parent_end);
+
+                        self.spatial_index.edit(parent_id, new_start, new_end);
+
+                        // Recursively propagate upward
+                        self.propagate_span_upward(parent_id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Map an old position to a new position accounting for source edits.
+    /// This is critical for CST pairing after text changes have shifted positions.
+    fn map_old_position_to_new(&self, old_pos: usize, edits: &[SourceEdit]) -> usize {
+        let mut new_pos = old_pos;
+
+        // Apply edits in order to compute the new position
+        for edit in edits {
+            if old_pos >= edit.old_end {
+                // Position is after this edit, shift by the difference in edit lengths
+                let old_edit_len = edit.old_end - edit.old_start;
+                let new_edit_len = edit.new_end - edit.new_start;
+                new_pos = new_pos
+                    .saturating_add(new_edit_len)
+                    .saturating_sub(old_edit_len);
+            } else if old_pos >= edit.old_start {
+                // Position is within the edited range
+                // Map proportionally within the new range
+                if edit.old_end > edit.old_start {
+                    let progress =
+                        (old_pos - edit.old_start) as f64 / (edit.old_end - edit.old_start) as f64;
+                    let new_offset = ((edit.new_end - edit.new_start) as f64 * progress) as usize;
+                    new_pos = edit.new_start + new_offset;
+                } else {
+                    // Zero-length old range, map to start of new range
+                    new_pos = edit.new_start;
+                }
+                break; // Position is within this edit, no need to check further edits
+            }
+            // Position is before this edit, no change needed for this edit
+        }
+
+        new_pos
+    }
+
     /// Calculate edit operations needed to transform CPG children to match CST children
     /// Uses Longest Common Subsequence (LCS) algorithm for optimal sequence alignment
     fn calculate_edit_operations(
@@ -366,6 +454,28 @@ impl Cpg {
         }
     }
 
+    /// Find all function nodes within a subtree
+    fn find_all_functions_in_subtree(&self, root: NodeId) -> Vec<NodeId> {
+        let mut functions = Vec::new();
+        
+        fn collect_functions(cpg: &Cpg, node_id: NodeId, functions: &mut Vec<NodeId>) {
+            if let Some(node) = cpg.get_node_by_id(&node_id) {
+                if matches!(node.type_, crate::cpg::NodeType::Function { .. }) {
+                    functions.push(node_id);
+                }
+            }
+            
+            // Recursively check children
+            let children = cpg.ordered_syntax_children(node_id);
+            for child in children {
+                collect_functions(cpg, child, functions);
+            }
+        }
+        
+        collect_functions(self, root, &mut functions);
+        functions
+    }
+
     /// Remove all analysis edges (control flow and data dependence) from a subtree
     /// while preserving structural edges (SyntaxChild and SyntaxSibling)
     fn clean_analysis_edges(&mut self, root: NodeId) {
@@ -415,9 +525,38 @@ impl Cpg {
             to_remove.len(),
             root
         );
+        
+        // Collect FunctionReturn nodes that will become orphaned
+        let mut orphaned_function_returns = Vec::new();
+        for &edge_id in &to_remove {
+            if let Some(edge) = self.edges.get(edge_id) {
+                if edge.type_ == EdgeType::ControlFlowFunctionReturn {
+                    // Check if the target is a FunctionReturn node
+                    if let Some(node) = self.get_node_by_id(&edge.to) {
+                        if matches!(node.type_, NodeType::FunctionReturn) {
+                            orphaned_function_returns.push(edge.to);
+                        }
+                    }
+                }
+            }
+        }
+        
         // Remove collected edges
         for edge_id in to_remove {
             self.remove_edge(edge_id);
+        }
+        
+        // Remove orphaned FunctionReturn nodes
+        for node_id in orphaned_function_returns {
+            // Double check that the node is now truly orphaned (no incoming edges)
+            let incoming_edges = self.get_incoming_edges(node_id);
+            if incoming_edges.is_empty() {
+                debug!(
+                    "[CLEAN ANALYSIS EDGES] Removing orphaned FunctionReturn node {:?}",
+                    node_id
+                );
+                self.remove_subtree(node_id).ok(); // Use ok() to ignore errors
+            }
         }
     }
 
@@ -694,6 +833,9 @@ impl Cpg {
                             cst_child.end_byte(),
                         );
 
+                        // Propagate span changes upward to parent containers
+                        self.propagate_span_upward(cpg_id);
+
                         // Record post translation info
                         updated_node_type = Some(new_type);
                         updated_id = Some(cpg_id);
@@ -886,7 +1028,7 @@ impl Cpg {
             "[INCREMENTAL UPDATE] [PARSE EDITS] Textual edits: {:?}",
             edits
         );
-        for edit in edits {
+        for edit in &edits {
             if let Some(node_id) =
                 self.get_smallest_node_id_containing_range(edit.old_start, edit.old_end)
             {
@@ -1155,6 +1297,12 @@ impl Cpg {
                 "[INCREMENTAL UPDATE] [EARLY SURGICAL APPLY] Applying surgical update for {:?}",
                 node_id
             );
+            
+            // Debug: Check what kind of node this is
+            if let Some(node) = self.get_node_by_id(&node_id) {
+                debug!("[SURGICAL UPDATE] Updating node {:?} of type {:?}", node_id, node.type_);
+            }
+            
             // Clean analysis edges before surgical update to avoid stale PDData/CF edges
             // interfering with post-translation and comparison.
             self.clean_analysis_edges(node_id);
@@ -1164,9 +1312,41 @@ impl Cpg {
             if !updated_structures.contains(&structure) {
                 updated_structures.push(structure);
             }
-            if let Some(function) = crate::languages::get_containing_function(self, node_id) {
+            
+            // Find all functions that need CF recomputation due to this update
+            let mut functions_to_add = Vec::new();
+            
+            // Check if this node itself is a function
+            if let Some(node) = self.get_node_by_id(&node_id) {
+                match &node.type_ {
+                    crate::cpg::NodeType::Function { .. } => {
+                        debug!("[SURGICAL UPDATE] Node {:?} is itself a function", node_id);
+                        functions_to_add.push(node_id);
+                    }
+                    crate::cpg::NodeType::TranslationUnit => {
+                        // If it's a translation unit, find all functions within it
+                        debug!("[SURGICAL UPDATE] Node {:?} is TranslationUnit, finding all functions within", node_id);
+                        let all_functions = self.find_all_functions_in_subtree(node_id);
+                        debug!("[SURGICAL UPDATE] Found functions in TranslationUnit: {:?}", all_functions);
+                        functions_to_add.extend(all_functions);
+                    }
+                    _ => {
+                        // For other node types, check if they're contained within a function
+                        if let Some(function) = crate::languages::get_containing_function(self, node_id) {
+                            debug!("[SURGICAL UPDATE] Found containing function {:?} for node {:?}", function, node_id);
+                            functions_to_add.push(function);
+                        } else {
+                            debug!("[SURGICAL UPDATE] No containing function found for node {:?}", node_id);
+                        }
+                    }
+                }
+            }
+            
+            // Add all found functions to updated_functions
+            for function in functions_to_add {
                 if !updated_functions.contains(&function) {
                     updated_functions.push(function);
+                    debug!("[SURGICAL UPDATE] Added function {:?} to updated_functions", function);
                 }
             }
         }
@@ -1322,12 +1502,16 @@ impl Cpg {
                     // Handle case where original span extends beyond new source length
                     let source_len = self.get_source().len();
 
-                    // For more precise CST pairing, prefer using the start position to find the node rather than the full range which might be too broad after translation
-                    let cst_node = if start < source_len {
-                        // First try to find the most specific node that starts at this position
+                    // Map old positions to new positions using source edits
+                    let mapped_start = self.map_old_position_to_new(start, &edits);
+                    let mapped_end = self.map_old_position_to_new(end, &edits);
+
+                    // For more precise CST pairing, prefer using the mapped start position to find the node rather than the full range which might be too broad after translation
+                    let cst_node = if mapped_start < source_len {
+                        // First try to find the most specific node that starts at this mapped position
                         let start_node = new_tree
                             .root_node()
-                            .descendant_for_byte_range(start, start + 1);
+                            .descendant_for_byte_range(mapped_start, mapped_start + 1);
 
                         if let Some(node) = start_node {
                             // If we found a node, walk up the tree to find the most appropriate node that closely matches the expected range
@@ -1336,15 +1520,15 @@ impl Cpg {
 
                             // Walk up the tree to find a better match
                             while let Some(parent) = current.parent() {
-                                // If parent starts at the same position, it might be a better match
-                                if parent.start_byte() == start {
+                                // If parent starts at the same mapped position, it might be a better match
+                                if parent.start_byte() == mapped_start {
                                     // Check if the parent's range is closer to our expected range
                                     let parent_len =
                                         parent.end_byte().saturating_sub(parent.start_byte());
                                     let current_len = best_match
                                         .end_byte()
                                         .saturating_sub(best_match.start_byte());
-                                    let expected_len = end.saturating_sub(start);
+                                    let expected_len = mapped_end.saturating_sub(mapped_start);
 
                                     // Prefer the node whose size is closer to the expected size
                                     if (parent_len as i32 - expected_len as i32).abs()
@@ -1357,11 +1541,12 @@ impl Cpg {
                             }
 
                             trace!(
-                                "[INCREMENTAL UPDATE] [CST PAIRING] Refined CST pairing for CPG node {:?}: start={}, expected_range=({}, {}), found: kind={}, actual_range=({}, {})",
+                                "[INCREMENTAL UPDATE] [CST PAIRING] Refined CST pairing for CPG node {:?}: old_start={}, mapped_start={}, expected_range=({}, {}), found: kind={}, actual_range=({}, {})",
                                 id,
                                 start,
-                                start,
-                                end,
+                                mapped_start,
+                                mapped_start,
+                                mapped_end,
                                 best_match.kind(),
                                 best_match.start_byte(),
                                 best_match.end_byte()
@@ -1369,18 +1554,20 @@ impl Cpg {
 
                             Some(best_match)
                         } else {
-                            // Fallback to range-based search if start position doesn't work
-                            let adjusted_end = if end > source_len {
-                                source_len.saturating_sub(1).max(start)
+                            // Fallback to range-based search if mapped start position doesn't work
+                            let adjusted_end = if mapped_end > source_len {
+                                source_len.saturating_sub(1).max(mapped_start)
                             } else {
-                                end
+                                mapped_end
                             };
                             new_tree
                                 .root_node()
-                                .descendant_for_byte_range(start, adjusted_end)
+                                .descendant_for_byte_range(mapped_start, adjusted_end)
                         }
                     } else {
-                        new_tree.root_node().descendant_for_byte_range(start, end)
+                        new_tree
+                            .root_node()
+                            .descendant_for_byte_range(mapped_start, mapped_end)
                     };
 
                     if let Some(cst_node) = cst_node {
@@ -1396,8 +1583,10 @@ impl Cpg {
                             if cursor.goto_first_child() {
                                 loop {
                                     let current = cursor.node();
-                                    // Look for nodes that contain our start position
-                                    if current.start_byte() <= start && start < current.end_byte() {
+                                    // Look for nodes that contain our mapped start position
+                                    if current.start_byte() <= mapped_start
+                                        && mapped_start < current.end_byte()
+                                    {
                                         best_match = current;
                                         // Try to go deeper if possible
                                         if cursor.goto_first_child() {
@@ -1498,31 +1687,82 @@ impl Cpg {
             if !updated_structures.contains(&structure) {
                 updated_structures.push(structure);
             }
-            if let Some(function) = crate::languages::get_containing_function(self, new_id) {
+            
+            // Find all functions that need CF recomputation due to this update
+            let mut functions_to_add = Vec::new();
+            
+            // Check if this node itself is a function
+            if let Some(node) = self.get_node_by_id(&new_id) {
+                match &node.type_ {
+                    crate::cpg::NodeType::Function { .. } => {
+                        debug!("[REBUILD UPDATE] Node {:?} is itself a function", new_id);
+                        functions_to_add.push(new_id);
+                    }
+                    crate::cpg::NodeType::TranslationUnit => {
+                        // If it's a translation unit, find all functions within it
+                        debug!("[REBUILD UPDATE] Node {:?} is TranslationUnit, finding all functions within", new_id);
+                        let all_functions = self.find_all_functions_in_subtree(new_id);
+                        debug!("[REBUILD UPDATE] Found functions in TranslationUnit: {:?}", all_functions);
+                        functions_to_add.extend(all_functions);
+                    }
+                    _ => {
+                        // For other node types, check if they're contained within a function
+                        if let Some(function) = crate::languages::get_containing_function(self, new_id) {
+                            debug!("[REBUILD UPDATE] Found containing function {:?} for node {:?}", function, new_id);
+                            functions_to_add.push(function);
+                        } else {
+                            debug!("[REBUILD UPDATE] No containing function found for node {:?}", new_id);
+                        }
+                    }
+                }
+            }
+            
+            // Add all found functions to updated_functions
+            for function in functions_to_add {
                 if !updated_functions.contains(&function) {
                     updated_functions.push(function);
+                    debug!("[REBUILD UPDATE] Added function {:?} to updated_functions", function);
                 }
             }
         }
 
-        // Instead of recomputing control flow for each updated structure,
-        // we need to recompute it for the containing functions to ensure
-        // function-level control flow edges (like ControlFlowEpsilon) are properly maintained
-        let mut functions_for_cf_recompute = std::collections::BTreeSet::new();
+        // After structural updates are complete, use the already-collected functions for analysis updates
+        // Both surgical and rebuild updates have already collected the functions that need recomputation
+        let mut functions_for_cf_recompute: std::collections::BTreeSet<NodeId> = 
+            updated_functions.iter().copied().collect();
+        let mut functions_for_data_dep_recompute: std::collections::BTreeSet<NodeId> = 
+            updated_functions.iter().copied().collect();
 
-        debug!(
-            "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Finding functions containing updated structures: {:?}",
-            updated_structures
-        );
+        debug!("[INCREMENTAL UPDATE] [ANALYSIS EDGES] Updated functions collected: {:?}", updated_functions);
+        debug!("[INCREMENTAL UPDATE] [ANALYSIS EDGES] Using already-collected functions from updated ranges");
 
-        for structure in &updated_structures {
+        // Also add any additional functions from rebuild ranges (in case some weren't caught earlier)
+        for (node_id, (start, end, _, _)) in containing_nodes_with_ranges.iter() {
+            let nodes_in_range = self.spatial_index.get_nodes_within_range(*start, *end);
+            for node_in_range in nodes_in_range {
+                if let Some(function) =
+                    crate::languages::get_containing_function(self, node_in_range)
+                {
+                    functions_for_cf_recompute.insert(function);
+                    functions_for_data_dep_recompute.insert(function);
+                }
+            }
+
+            // Also include the containing node itself and its containing function
+            if let Some(function) = crate::languages::get_containing_function(self, *node_id) {
+                functions_for_cf_recompute.insert(function);
+                functions_for_data_dep_recompute.insert(function);
+            }
+
+            // Check if the node itself is a container that should get control flow
+            let container = crate::languages::get_container_parent(self, *node_id);
             if let Some(containing_function) =
-                crate::languages::get_containing_function(self, *structure)
+                crate::languages::get_containing_function(self, container)
             {
                 functions_for_cf_recompute.insert(containing_function);
             } else {
-                // If no containing function (e.g., top-level structure), run cf_pass on the structure itself
-                functions_for_cf_recompute.insert(*structure);
+                // If no containing function (e.g., top-level structure), run cf_pass on the container itself
+                functions_for_cf_recompute.insert(container);
             }
         }
 
@@ -1532,6 +1772,15 @@ impl Cpg {
         );
 
         for function in &functions_for_cf_recompute {
+            // Validate that the function node still exists before trying to run control flow on it
+            if self.get_node_by_id(function).is_none() {
+                debug!(
+                    "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Skipping stale function node {:?} (node was deleted during update)",
+                    function
+                );
+                continue;
+            }
+
             trace!(
                 "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running cf_pass on function {:?}",
                 function
@@ -1544,10 +1793,9 @@ impl Cpg {
             }
         }
 
-        if updated_functions.is_empty() && !updated_structures.is_empty() {
+        if functions_for_data_dep_recompute.is_empty() {
             debug!(
-                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] No updated functions, but have updated structures: {:?}. Recomputing data dependence for the whole translation unit.",
-                updated_structures
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] No functions need data dependence recomputation, recomputing for the whole translation unit."
             );
             if let Some(root) = self.get_root() {
                 if let Err(e) = data_dep_pass(self, root) {
@@ -1559,10 +1807,10 @@ impl Cpg {
             }
         } else {
             debug!(
-                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for updated functions: {:?}",
-                updated_functions
+                "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Recomputing data dependence for functions: {:?}",
+                functions_for_data_dep_recompute
             );
-            for function in &updated_functions {
+            for function in &functions_for_data_dep_recompute {
                 trace!(
                     "[INCREMENTAL UPDATE] [ANALYSIS EDGES] Running data_dep_pass on {:?}",
                     function
@@ -1611,6 +1859,9 @@ impl Cpg {
         // Only update span if it actually changed
         if current_span != Some((cst_start, cst_end)) {
             self.spatial_index.edit(cpg_node, cst_start, cst_end);
+
+            // Propagate span changes upward to parent containers
+            self.propagate_span_upward(cpg_node);
         }
 
         // The post-translation step will recompute all semantic properties correctly
@@ -1690,6 +1941,9 @@ impl Cpg {
 
                     // Update spatial index
                     self.spatial_index.edit(child_id, span.0, span.1);
+
+                    // Propagate span changes upward to parent containers
+                    self.propagate_span_upward(child_id);
 
                     // Re-run post-translation to update semantic properties for the new node type
                     crate::languages::post_translate_node(self, new_type, child_id, cst_child);
