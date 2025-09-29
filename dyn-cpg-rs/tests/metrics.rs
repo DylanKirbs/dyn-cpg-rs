@@ -585,64 +585,237 @@ fn walk_git_commits(repo_name: &str, file_pattern: &str, max_commits: usize) {
             writeln!(file, "Total duration: {:?}", total_duration).unwrap();
             writeln!(file, "").unwrap();
 
-            // Get the top functions by sample count
-            let mut samples: Vec<_> = report.data.iter().collect();
-            samples.sort_by(|a, b| b.1.cmp(a.1));
+            // Filter samples to only include stacks with relevant crate functions
+            let mut filtered_samples: Vec<_> = report
+                .data
+                .iter()
+                .filter(|(stack, _)| {
+                    // Check if any frame in the stack contains functions from our crate or dependencies
+                    stack.frames.iter().any(|frame| {
+                        frame.iter().any(|sym| {
+                            let name = sym.name();
+                            let filename = sym.filename();
+                            // Include functions from dyn-cpg-rs, tree-sitter, git2, rayon, etc.
+                            name.contains("dyn_cpg_rs") ||
+                            name.contains("tree_sitter") ||
+                            name.contains("git2") ||
+                            name.contains("rayon") ||
+                            name.contains("pprof") ||
+                            filename.contains("dyn-cpg-rs") ||
+                            filename.contains("tree-sitter") ||
+                            filename.contains("git2") ||
+                            filename.contains("rayon") ||
+                            // Also include Rust std functions that are directly called by our code
+                            (name.starts_with("std::") && (
+                                name.contains("parse") ||
+                                name.contains("clone") ||
+                                name.contains("collect") ||
+                                name.contains("HashMap") ||
+                                name.contains("Vec") ||
+                                name.contains("String")
+                            ))
+                        })
+                    })
+                })
+                .collect();
 
-            writeln!(file, "Top functions by sample count:").unwrap();
+            filtered_samples.sort_by(|a, b| b.1.cmp(a.1));
+
             writeln!(
                 file,
-                "{:<60} {:<10} {:<10}",
+                "Top functions by sample count (filtered for relevant crate code):"
+            )
+            .unwrap();
+            writeln!(
+                file,
+                "{:<80} {:<10} {:<10}",
                 "Function", "Samples", "Percentage"
             )
             .unwrap();
-            writeln!(file, "{}", "-".repeat(82)).unwrap();
+            writeln!(file, "{}", "-".repeat(102)).unwrap();
 
-            let total_samples: i64 = samples.iter().map(|(_, count)| **count as i64).sum();
+            let total_samples: i64 = filtered_samples
+                .iter()
+                .map(|(_, count)| **count as i64)
+                .sum();
 
-            for (i, (stack, count)) in samples.iter().take(20).enumerate() {
-                let percentage = (**count as f64 / total_samples as f64) * 100.0;
-                let function_name = format!("stack_{}_frames", stack.frames.len());
-
+            if total_samples == 0 {
                 writeln!(
                     file,
-                    "{:<60} {:<10} {:<10.2}%",
-                    function_name.chars().take(59).collect::<String>(),
-                    count,
-                    percentage
+                    "No relevant crate functions found in profile samples."
                 )
                 .unwrap();
+                writeln!(file, "This might indicate the profiling sample rate is too low or the test ran too quickly.").unwrap();
+            } else {
+                for (i, (stack, count)) in filtered_samples.iter().take(20).enumerate() {
+                    let percentage = (**count as f64 / total_samples as f64) * 100.0;
 
-                if i >= 19 {
-                    break;
+                    // Find the most relevant function name in the stack
+                    let function_name = stack
+                        .frames
+                        .iter()
+                        .filter_map(|frame| {
+                            frame
+                                .iter()
+                                .find(|sym| {
+                                    let name = sym.name();
+                                    name.contains("dyn_cpg_rs")
+                                        || name.contains("tree_sitter")
+                                        || name.contains("git2")
+                                })
+                                .map(|sym| {
+                                    let name = sym.name();
+
+                                    let tmp_fname = format!("{}", sym.filename());
+                                    let fname = tmp_fname.split('/').last().unwrap_or(&tmp_fname);
+
+                                    let meta = format!(" ({}:{})", fname, sym.lineno());
+
+                                    let short_name = if (name.len() + meta.len()) > 70 {
+                                        // Try to extract just the function name from long type signatures
+                                        if let Some(last_colon) = name.rfind("::") {
+                                            let after_colon = &name[last_colon + 2..];
+                                            if (after_colon.len() + meta.len()) < 50 {
+                                                after_colon.to_string()
+                                            } else {
+                                                format!(
+                                                    "...{}",
+                                                    &after_colon[after_colon
+                                                        .len()
+                                                        .saturating_sub(
+                                                            50_usize.saturating_sub(meta.len())
+                                                        )..]
+                                                )
+                                            }
+                                        } else {
+                                            format!(
+                                                "...{}",
+                                                &name[name.len().saturating_sub(
+                                                    70_usize.saturating_sub(meta.len())
+                                                )..]
+                                            )
+                                        }
+                                    } else {
+                                        name.to_string()
+                                    };
+                                    format!("{}{}", short_name, meta)
+                                })
+                        })
+                        .next()
+                        .unwrap_or_else(|| {
+                            // Fallback to the top frame if no specific crate function found
+                            stack
+                                .frames
+                                .last()
+                                .and_then(|frame| frame.first())
+                                .map(|sym| {
+                                    let name = sym.name();
+                                    if name.len() > 70 {
+                                        format!("...{}", &name[name.len() - 70..])
+                                    } else {
+                                        name.to_string()
+                                    }
+                                })
+                                .unwrap_or_else(|| "<unknown>".to_string())
+                        });
+
+                    writeln!(
+                        file,
+                        "{:<80} {:<10} {:<10.2}%",
+                        function_name.chars().take(79).collect::<String>(),
+                        count,
+                        percentage
+                    )
+                    .unwrap();
+
+                    if i >= 19 {
+                        break;
+                    }
                 }
             }
 
             writeln!(file, "").unwrap();
-            writeln!(file, "Function call details (top 10):").unwrap();
-            writeln!(file, "{}", "=".repeat(50)).unwrap();
+            writeln!(
+                file,
+                "Detailed stack traces for relevant functions (top 10):"
+            )
+            .unwrap();
+            writeln!(file, "{}", "=".repeat(70)).unwrap();
 
-            for (i, (stack, count)) in samples.iter().take(10).enumerate() {
+            for (i, (stack, count)) in filtered_samples.iter().take(10).enumerate() {
                 let percentage = (**count as f64 / total_samples as f64) * 100.0;
                 writeln!(file, "{}. Samples: {} ({:.2}%)", i + 1, count, percentage).unwrap();
-                writeln!(file, "   Stack trace:").unwrap();
+                writeln!(file, "   Stack trace (most relevant frames):").unwrap();
 
-                for frame in stack.frames.iter().rev().take(5) {
-                    write!(file, "     -> ").unwrap();
+                // Show frames in reverse order (call stack), but prioritize relevant ones
+                let mut relevant_frames = Vec::new();
+                let mut other_frames = Vec::new();
 
-                    for sym in frame {
-                        write!(
-                            file,
-                            "{{{} {} {}}}",
-                            sym.name(),
-                            sym.filename(),
-                            sym.lineno()
-                        )
-                        .unwrap();
+                for frame in stack.frames.iter().rev() {
+                    let has_relevant_sym = frame.iter().any(|sym| {
+                        let name = sym.name();
+                        let filename = sym.filename();
+                        name.contains("dyn_cpg_rs")
+                            || name.contains("tree_sitter")
+                            || name.contains("git2")
+                            || filename.contains("dyn-cpg-rs")
+                    });
+
+                    if has_relevant_sym {
+                        relevant_frames.push(frame);
+                    } else {
+                        other_frames.push(frame);
                     }
-
-                    writeln!(file, "").unwrap();
                 }
+
+                // Show relevant frames first, then a few other frames for context
+                let frame_context = 5;
+                for frame in relevant_frames.iter().take(frame_context) {
+                    for sym in frame.iter() {
+                        let name = sym.name();
+                        let filename = sym.filename();
+                        let lineno = sym.lineno();
+
+                        // Only show the most relevant symbol per frame
+                        if name.contains("dyn_cpg_rs")
+                            || name.contains("tree_sitter")
+                            || name.contains("git2")
+                        {
+                            writeln!(
+                                file,
+                                "     -> {} ({}:{})",
+                                name,
+                                filename.split('/').last().unwrap_or(&filename),
+                                lineno
+                            )
+                            .unwrap();
+                            break; // Only show one symbol per frame to avoid clutter
+                        }
+                    }
+                }
+
+                // Add a few context frames if we have room
+                if relevant_frames.len() < frame_context {
+                    for frame in other_frames
+                        .iter()
+                        .take(frame_context - relevant_frames.len())
+                    {
+                        if let Some(sym) = frame.first() {
+                            let name = sym.name();
+                            let filename = sym.filename();
+                            let lineno = sym.lineno();
+                            writeln!(
+                                file,
+                                "     -> {} ({}:{})",
+                                name,
+                                filename.split('/').last().unwrap_or(&filename),
+                                lineno
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+
                 writeln!(file, "").unwrap();
             }
 
@@ -679,7 +852,7 @@ fn test_git_history_ffmpeg() {
 #[test]
 fn test_git_history_small() {
     dyn_cpg_rs::logging::init();
-    walk_git_commits("tree-sitter", "", 5);
+    walk_git_commits("tree-sitter", "", 10);
 }
 
 // --- Patch Tests --- //
