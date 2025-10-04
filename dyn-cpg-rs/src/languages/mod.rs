@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 /// This module defines the `Language` trait and provides macros to register languages.
 /// Each language should be defined in its own module and implement the `Language` trait, a macro has been provided to simplify this process.
 use crate::cpg::{Cpg, Edge, EdgeType, IdenType, Node, NodeId, NodeType};
@@ -861,57 +863,160 @@ fn find_execution_entry_point(cpg: &Cpg, node_id: NodeId) -> NodeId {
     }
 }
 
+fn method_data_dep_pass(cpg: &mut Cpg, func: NodeId, subtree_root: NodeId) -> Result<(), String> {
+    let max_visits = 5;
+    let func_return = cpg
+        .get_outgoing_edges(func)
+        .into_iter()
+        .find(|e| e.type_ == EdgeType::ControlFlowFunctionReturn)
+        .map(|e| e.to)
+        .ok_or_else(|| {
+            format!(
+                "[DATA DEPENDENCE] Failed to find function return for function {:?}",
+                func
+            )
+        })?;
+
+    // Maps NodeIds to the Last Write Mapping at that NodeId after processing
+    // Last Write Mapping: variable name -> Set<NodeId> of last write(s) [for diverging control flow]
+    let mut last_writes: HashMap<NodeId, HashMap<String, HashSet<NodeId>>> = HashMap::new();
+    let mut worklist: Vec<NodeId> = vec![subtree_root];
+    let mut visited: HashMap<NodeId, usize> = HashMap::new();
+
+    while let Some(curr_node_id) = worklist.pop() {
+        let count = visited.entry(curr_node_id).or_insert(0);
+        *count += 1;
+        if *count > max_visits {
+            warn!(
+                "[DATA DEPENDENCE] Max visits exceeded for node {:?}, skipping further processing for the node.",
+                curr_node_id
+            );
+            continue;
+        }
+
+        let curr_node = match cpg.get_node_by_id(&curr_node_id) {
+            Some(n) => n.clone(),
+            None => continue,
+        };
+
+        // Merge last writes from all predecessors
+        let mut merged_last_write: HashMap<String, HashSet<NodeId>> = HashMap::new();
+        let predecessors = cpg
+            .get_incoming_edges(curr_node_id)
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e.type_,
+                    EdgeType::ControlFlowEpsilon
+                        | EdgeType::ControlFlowTrue
+                        | EdgeType::ControlFlowFalse
+                )
+            })
+            .map(|e| e.from)
+            .collect::<Vec<_>>();
+
+        for pred in &predecessors {
+            if let Some(pred_last_write) = last_writes.get(pred) {
+                for (var, writes) in pred_last_write {
+                    merged_last_write
+                        .entry(var.clone())
+                        .or_insert_with(HashSet::new)
+                        .extend(writes.iter().cloned());
+                }
+            }
+        }
+
+        // Add data dependence edges for reads
+        for var in &curr_node.df_reads {
+            if let Some(writes) = merged_last_write.get(var) {
+                for &writer in writes {
+                    add_data_dep_edge(
+                        cpg,
+                        writer,
+                        curr_node_id,
+                        EdgeType::PDData(var.to_string()),
+                    )?;
+
+                    // If the current node is a return statement, also connect to the function return
+                    if matches!(curr_node.type_, NodeType::Return) {
+                        add_data_dep_edge(
+                            cpg,
+                            curr_node_id,
+                            func_return,
+                            EdgeType::PDData(var.to_string()),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // Update last writes for assignments
+        let mut updated_last_write = merged_last_write.clone();
+        for var in &curr_node.df_writes {
+            updated_last_write.insert(var.clone(), vec![curr_node_id].into_iter().collect());
+        }
+
+        // Check if last writes have changed
+        let entry = last_writes.entry(curr_node_id).or_insert_with(HashMap::new);
+        if *entry != updated_last_write {
+            *entry = updated_last_write;
+
+            // Add successors to worklist
+            let successors = cpg
+                .get_outgoing_edges(curr_node_id)
+                .into_iter()
+                .filter(|e| {
+                    matches!(
+                        e.type_,
+                        EdgeType::ControlFlowEpsilon
+                            | EdgeType::ControlFlowTrue
+                            | EdgeType::ControlFlowFalse
+                    )
+                })
+                .map(|e| e.to)
+                .collect::<Vec<_>>();
+
+            for succ in successors {
+                if !worklist.contains(&succ) {
+                    worklist.push(succ);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Idempotent computation of the data dependence for a subtree in the CPG.
 /// This pass assumes that the control flow has already been computed.
 pub fn data_dep_pass(cpg: &mut Cpg, subtree_root: NodeId) -> Result<(), String> {
     debug!("[DATA DEPENDENCE] Starting data dependence pass");
 
-    let all_nodes = cpg.post_dfs_ordered_syntax_descendants(subtree_root);
+    if let Some(func) = get_containing_function(cpg, subtree_root) {
+        method_data_dep_pass(cpg, func, subtree_root)?;
+    } else {
+        warn!(
+            "[DATA DEPENDENCE] No containing function found for subtree root {:?}, recalculating for all functions in the subtree",
+            subtree_root
+        );
 
-    // Map from variable name to last write node id
-    use std::collections::BTreeMap;
-    let mut last_write: BTreeMap<String, NodeId> = BTreeMap::new();
+        let functions = cpg
+            .post_dfs_ordered_syntax_descendants(subtree_root)
+            .into_iter()
+            .filter(|&node_id| {
+                if let Some(node) = cpg.get_node_by_id(&node_id) {
+                    matches!(node.type_, NodeType::Function { .. })
+                } else {
+                    false
+                }
+            })
+            .collect::<Vec<_>>();
 
-    // TODO: Make this actually consider control flow (i.e. when branches exists, dependence should not go from the one branch into the other)
-    // TODO: CFFunctionReturn is DDep on all nodes with CFEdges that flow into it
-    // For each node in control flow order, track writes and add edges to reads
-    // This is a naive approach: just walk all nodes in DFS order
-    for &curr_node_id in &all_nodes {
-        let node = match cpg.get_node_by_id(&curr_node_id) {
-            Some(n) => n.clone(),
-            None => continue,
-        };
-        // Check for variable read
-        if !node.df_reads.is_empty() {
-            trace!(
-                "[DATA DEPENDENCE] Node {:?} reads vars: {}",
-                curr_node_id,
-                node.df_reads.join(", ")
-            );
-        }
-        for var in node.df_reads.iter() {
-            if let Some(&last_written_id) = last_write.get(var) {
-                add_data_dep_edge(
-                    cpg,
-                    last_written_id,
-                    curr_node_id,
-                    EdgeType::PDData(var.to_string()),
-                )?;
-            }
-        }
-
-        // Check for variable write (assignment)
-        if !node.df_writes.is_empty() {
-            trace!(
-                "[DATA DEPENDENCE] Node {:?} assigns vars: {}",
-                curr_node_id,
-                node.df_writes.join(", ")
-            );
-        }
-        for v in node.df_writes.iter() {
-            last_write.insert(v.to_string(), curr_node_id);
+        for func in functions {
+            method_data_dep_pass(cpg, func, subtree_root)?;
         }
     }
+
     debug!("[DATA DEPENDENCE] Data dependence pass completed");
 
     Ok(())
