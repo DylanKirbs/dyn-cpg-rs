@@ -927,6 +927,7 @@ fn method_data_dep_pass(cpg: &mut Cpg, func: NodeId, subtree_root: NodeId) -> Re
         }
 
         // Add data dependence edges for reads
+        // TODO: Probably have to look at AST subtree to get all variables read
         for var in &curr_node.df_reads {
             if let Some(writes) = merged_last_write.get(var) {
                 for &writer in writes {
@@ -953,6 +954,7 @@ fn method_data_dep_pass(cpg: &mut Cpg, func: NodeId, subtree_root: NodeId) -> Re
         // Update last writes for assignments
         let mut updated_last_write = merged_last_write.clone();
         for var in &curr_node.df_writes {
+            // TODO: Probably have to look at AST subtree to get all variables written to
             updated_last_write.insert(var.clone(), vec![curr_node_id].into_iter().collect());
         }
 
