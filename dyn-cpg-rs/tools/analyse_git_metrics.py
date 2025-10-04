@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+import matplotlib.colors as mcolors
 
 # --- Config --- #
 
@@ -32,18 +33,19 @@ def save_plot(fig, output_file: Path):
 # --- Analyses --- #
 
 @analysis
-def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path):
-    fig, ax = plt.subplots(figsize=(8, 8))
+def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25):
 
-    sns.scatterplot(
-        x="full_timings_ms",
-        y="incremental_timings_ms",
-        hue="edits_count",
-        palette="viridis",
-        style="same",
-        data=df,
+    df = df.copy()
+    norm = mcolors.Normalize(vmin=df["edits_count"].min(), vmax=hue_cap)
+    cmap = plt.get_cmap("viridis")
+    colors = cmap(norm(df["edits_count"].to_numpy()))
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.scatter(
+        df["full_timings_ms"],
+        df["incremental_timings_ms"],
+        c=colors,
         alpha=0.7,
-        ax=ax,
     )
 
     # Limits
@@ -67,6 +69,10 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path):
     ax.set_ylabel("Incremental Timings (ms, log)")
     ax.grid(True, linestyle=":", linewidth=0.5)
     ax.legend()
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, ax=ax, label="Edits Count (capped at {})".format(hue_cap))
 
     save_plot(fig, output_file)
 
@@ -116,7 +122,7 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
 
 @analysis
 def speedup_ratio(df: pd.DataFrame, output_file: Path):
-    df = df.copy()
+    df = df.copy()[df["edits_count"] < 25]
     df["speedup"] = df["full_timings_ms"] / df["incremental_timings_ms"].replace(
         0, np.nan
     ).replace(0.1, np.nan)
@@ -147,12 +153,44 @@ def speedup_ratio(df: pd.DataFrame, output_file: Path):
     ax.axhspan(0, 1, color="red", alpha=0.1)
 
     ax.set_ylabel("Full / Incremental")
-    ax.set_title("Speedup Ratio by Number of edits")
+    ax.set_title("Speedup Ratio by Number of edits (capped at 25)")
     ax.legend()
     ax.set_yscale("log")
     ax.set_ylim(1 / 50.0, 50.0)
 
     save_plot(fig, output_file)
+
+
+@analysis
+def textual_analysis(df: pd.DataFrame, output_file: Path):
+    results = "Notes:"
+    results += "\n- Consider using a dependency graph to determine what to update."
+    results += "\n\n" + "=" * 80 + "\n"
+
+    times = df.groupby("same")[["full_timings_ms", "incremental_timings_ms"]].mean()
+    results += "Timings by Same\n" + str(times)
+    results += "\n\n" + "=" * 80 + "\n"
+
+    df["speedup"] = df["full_timings_ms"] / df["incremental_timings_ms"]
+    speedup = df.groupby("same")["speedup"].describe()
+    results += "Speedup by Same\n" + str(speedup)
+    results += "\n\n" + "=" * 80 + "\n"
+
+    grouped = df.groupby(pd.cut(df["edits_count"], [0,1,3,10,30,100,500]), observed=True)["speedup"].median()
+    results += "Speedup by Edits\n" + str(grouped)
+    results += "\n\n" + "=" * 80 + "\n"
+
+    bad_perf_small_edits = df.query("speedup < 1 and edits_count < 5")
+    results += "speedup < 1 && edits < 5\n" + str(bad_perf_small_edits)
+    results += "\n\n" + "=" * 80 + "\n"
+
+    df["lines_per_edit"] = df["lines_changed"] / df["edits_count"]
+    results += "Avg lines per edit\n" + str(df["lines_per_edit"].describe())
+    results += "\n\n" + "=" * 80 + "\n"
+
+
+    output_file.with_suffix(".txt").write_text(results)
+
 
 
 # --- Preprocessing --- #
@@ -185,6 +223,7 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         3: "Error"
     }
     df["same"] = df["same"].apply(lambda x: same_map.get(x, "Unknown"))
+    df = df[df["same"] != "New"]
 
     # File info
     df["directory"] = df["file_path"].str.split("/").str[0]
@@ -198,7 +237,6 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_metrics(df: pd.DataFrame, output_dir: Path):
-    df = prepare_dataframe(df)
     for analysis_func in ANALYSES:
         print(f"Running analysis: {analysis_func.__name__} ({len(df)} rows)")
         try:
@@ -218,6 +256,7 @@ def main():
         try:
             df = pd.read_csv(f)
             df["repo"] = f.name
+            df = prepare_dataframe(df)
             all_dfs.append(df)
         except Exception:
             missing += 1
@@ -226,7 +265,9 @@ def main():
 
     # Some simple textual metrics like the average times for each dir
     for df in all_dfs:
-        print(f"Directory: {df['repo'].iloc[0]}\n{df.describe()}")
+        print(f"Directory: {df['repo'].iloc[0]}")
+        for col in df.columns:
+            print(df[col].describe())
 
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
