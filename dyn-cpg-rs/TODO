@@ -33,3 +33,24 @@ A bit more configurability (even if it's just at compile time) would be nice. Fo
 
 - Control flow pass is not perfect, I can't handle switch statements and break/continue
 - DF pass is independent of CF, so that needs to be addressed still
+
+## Writup
+
+
+1. Dependency propagation:
+  - Even a 1-line edit can trigger re-parsing of a large subtree if other nodes depend on it. Visualize this with a dependency graph of parse nodes.
+2. Distribution of speedups:
+  - Plot a histogram/log histogram of speedups.
+  - Highlight cases where incremental parsing is slower, even for small edits.
+3. Correlation analysis:
+  - edits_count, lines_per_edit → speedup
+  - full_nodes or full_edges → incremental time
+
+This will show quantitatively when incremental parsing is beneficial.
+
+Case studies:
+- Pick a few patches with speedup < 1 and dissect them.
+- Explain why incremental parsing failed to outperform full parsing.
+
+Guidelines for incremental parsing:
+From the data, you can derive rough thresholds: e.g., incremental parsing shines for <10 edits, small files, or shallow dependency graphs.
