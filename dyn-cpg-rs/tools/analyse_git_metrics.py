@@ -36,11 +36,14 @@ def save_plot(fig, output_file: Path):
 def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25):
 
     df = df.copy()
+
+    plt.rcParams.update({'font.size': 18})
+    fig, ax = plt.subplots(figsize=(10, 8))
+
     norm = mcolors.Normalize(vmin=df["edits_count"].min(), vmax=hue_cap)
     cmap = plt.get_cmap("viridis")
     colors = cmap(norm(df["edits_count"].to_numpy()))
 
-    fig, ax = plt.subplots(figsize=(8, 8))
     ax.scatter(
         df["full_timings_ms"],
         df["incremental_timings_ms"],
@@ -64,22 +67,24 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25
     ax.set_xlim(lim_min, lim_max)
     ax.set_ylim(lim_min, lim_max)
 
-    ax.set_title("Incremental vs Full Timings (Log-Log) by Edits Count")
-    ax.set_xlabel("Full Timings (ms, log)")
-    ax.set_ylabel("Incremental Timings (ms, log)")
+    ax.set_title("Incremental vs Full Timings by Edits Count")
+    ax.set_xlabel("Full Timings (ms, log10)")
+    ax.set_ylabel("Incremental Timings (ms, log10)")
     ax.grid(True, linestyle=":", linewidth=0.5)
-    ax.legend()
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     fig.colorbar(sm, ax=ax, label="Edits Count (capped at {})".format(hue_cap))
+
+    ax.set_aspect('equal', adjustable='box')
 
     save_plot(fig, output_file)
 
 
 @analysis
 def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
-    fig, ax = plt.subplots(figsize=(8, 8))
+    plt.rcParams.update({'font.size': 18})
+    fig, ax = plt.subplots(figsize=(10, 8))
 
     # Log-transform
     x = np.log10(df["full_timings_ms"].clip(lower=0.1))
@@ -89,13 +94,6 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
     lim_min = min(x.min(), y.min()) * 1.1
     lim_max = max(x.max(), y.max()) * 1.1
 
-    # Highlight top-left: incremental > full
-    x_fill = np.linspace(lim_min, lim_max, 500)
-    ax.fill_betweenx(x_fill, lim_min, x_fill, color="red", alpha=0.2, zorder=0)
-
-    # y=x reference
-    ax.plot([lim_min, lim_max], [lim_min, lim_max], "r--", linewidth=1, label="y=x")
-
     # Bins
     bin_width = 0.2
     lim_min_bin = np.floor(lim_min / bin_width) * bin_width
@@ -103,10 +101,16 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
     bins_edges = np.arange(lim_min_bin, lim_max_bin + bin_width, bin_width)
 
     # 2D histogram
-    hb = ax.hist2d(x, y, bins=[bins_edges, bins_edges], cmap="viridis", cmin=1)
+    hb = ax.hist2d(x, y, bins=[bins_edges, bins_edges], cmap="inferno", cmin=1, zorder=5)
     cbar = fig.colorbar(hb[3], ax=ax)
     cbar.set_label("Number of patches")
 
+    # Highlight top-left: incremental > full
+    x_fill = np.linspace(lim_min, lim_max, 500)
+    ax.fill_betweenx(x_fill, lim_min, x_fill, color="red", alpha=0.2, zorder=0)
+
+    # y=x reference
+    ax.plot([lim_min, lim_max], [lim_min, lim_max], "r--", linewidth=1, label="y=x", zorder=2)
 
     # Labels back in ms scale
     ax.set_xlabel("Full Timings (ms, log10)")
@@ -116,49 +120,12 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
 
     ax.set_xlim(lim_min, lim_max)
     ax.set_ylim(lim_min, lim_max)
+    ax.set_aspect('equal', adjustable='box')
 
     save_plot(fig, output_file)
 
 
-@analysis
-def speedup_ratio(df: pd.DataFrame, output_file: Path):
-    df = df.copy()[df["edits_count"] < 25]
-    df["speedup"] = df["full_timings_ms"] / df["incremental_timings_ms"].replace(
-        0, np.nan
-    ).replace(0.1, np.nan)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    # Violin first (distribution)
-    sns.violinplot(
-        x="edits_count",
-        y="speedup",
-        data=df,
-        ax=ax,
-        inner=None,
-        cut=0
-    )
-    # Box on top (central tendency)
-    sns.boxplot(
-        x="edits_count",
-        y="speedup",
-        data=df,
-        ax=ax,
-        showcaps=False,
-        boxprops={"facecolor": "none"},
-        showfliers=False,
-        whiskerprops={"linewidth": 0},
-    )
-
-    ax.axhline(1, color="red", linestyle="--", label="No Speedup")
-    ax.axhspan(0, 1, color="red", alpha=0.1)
-
-    ax.set_ylabel("Full / Incremental")
-    ax.set_title("Speedup Ratio by Number of edits (capped at 25)")
-    ax.legend()
-    ax.set_yscale("log")
-    ax.set_ylim(1 / 50.0, 50.0)
-
-    save_plot(fig, output_file)
 
 
 @analysis
@@ -190,6 +157,87 @@ def textual_analysis(df: pd.DataFrame, output_file: Path):
 
 
     output_file.with_suffix(".txt").write_text(results)
+
+
+@analysis
+def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
+    plt.rcParams.update({'font.size': 18})
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    sns.scatterplot(
+        data=df,
+        x="file_size_bytes",
+        y="full_timings_ms",
+        label="Full",
+        alpha=0.7,
+        ax=ax
+    )
+    sns.scatterplot(
+        data=df,
+        x="file_size_bytes",
+        y="incremental_timings_ms",
+        label="Incremental",
+        alpha=0.7,
+        ax=ax
+    )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("File Size (bytes, log)")
+    ax.set_ylabel("Time (ms, log)")
+    ax.set_title("Timing vs File Size")
+    ax.grid(True, linestyle=":", linewidth=0.5)
+    ax.legend()
+    save_plot(fig, output_file)
+
+    log_size = np.log10(df["file_size_bytes"].replace(0, np.nan))
+    log_full = np.log10(df["full_timings_ms"].replace(0, np.nan))
+    log_incr = np.log10(df["incremental_timings_ms"].replace(0, np.nan))
+
+    corr_full = log_size.corr(log_full)
+    corr_incr = log_size.corr(log_incr)
+
+    print(f"Correlation (log–log):")
+    print(f"  File size ↔ Full timings:         {corr_full:.3f}")
+    print(f"  File size ↔ Incremental timings:  {corr_incr:.3f}")
+
+
+
+@analysis
+def edits_vs_timings_by_type(df: pd.DataFrame, output_file: Path):
+    # Simple categorization: 0 = no edits, 1-5 = small, >5 = large
+    df = df.copy()
+    df["edit_size"] = pd.cut(df["lines_changed"], bins=[-1, 0, 5, 50, np.inf],
+                             labels=["None","Small","Medium","Large"])
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.boxplot(x="edit_size", y="incremental_timings_ms", data=df, ax=ax)
+    sns.boxplot(x="edit_size", y="full_timings_ms", data=df, ax=ax,
+                boxprops={"facecolor": "none"}, showcaps=False, showfliers=False)
+
+    ax.set_yscale("log")
+    ax.set_xlabel("Edit Size (LOC)")
+    ax.set_ylabel("Time (ms, log)")
+    ax.set_title("Timing vs Edit Size")
+    save_plot(fig, output_file)
+
+
+
+@analysis
+def speedup_vs_lines_changed(df: pd.DataFrame, output_file: Path):
+    df = df.copy()
+    df["speedup"] = df["full_timings_ms"] / df["incremental_timings_ms"].replace(0, np.nan)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.scatterplot(x="lines_changed", y="speedup", alpha=0.7, data=df, ax=ax)
+    ax.axhline(1, color="red", linestyle="--", label="No Speedup")
+    ax.set_yscale("log")
+    ax.set_xscale("log")
+    ax.set_xlabel("Lines Changed (log)")
+    ax.set_ylabel("Speedup (Full / Incremental, log)")
+    ax.set_title("Speedup vs Lines Changed")
+    ax.legend()
+    save_plot(fig, output_file)
 
 
 
