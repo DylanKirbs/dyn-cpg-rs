@@ -16,7 +16,7 @@ pub mod logging {
 }
 
 pub mod diff {
-    use similar::{Algorithm, DiffOp, capture_diff_slices};
+    use similar::{capture_diff_slices, Algorithm, DiffOp};
     use tracing::{debug, trace};
     use tree_sitter::{Parser, Point, Tree};
 
@@ -57,7 +57,7 @@ pub mod diff {
 
     fn source_edits(old: &[u8], new: &[u8]) -> Vec<SourceEdit> {
         // Helper: split s into alternating runs of whitespace / non-whitespace and record byte offsets.
-        fn tokenize_with_offsets(s: &str) -> (Vec<&str>, Vec<usize>) {
+        fn tokenise_with_offsets(s: &str) -> (Vec<&str>, Vec<usize>) {
             let mut tokens = Vec::new();
             let mut offsets = Vec::new();
             let mut seg_start = 0usize;
@@ -109,10 +109,10 @@ pub mod diff {
             }
         }
 
-        // Try UTF-8 tokenized (word-aware) diff first.
+        // Try UTF-8 tokenised (word-aware) diff first.
         if let (Ok(old_s), Ok(new_s)) = (std::str::from_utf8(old), std::str::from_utf8(new)) {
-            let (old_tokens, old_offsets) = tokenize_with_offsets(old_s);
-            let (new_tokens, new_offsets) = tokenize_with_offsets(new_s);
+            let (old_tokens, old_offsets) = tokenise_with_offsets(old_s);
+            let (new_tokens, new_offsets) = tokenise_with_offsets(new_s);
 
             let diff_ops = capture_diff_slices(Algorithm::Myers, &old_tokens, &new_tokens);
             let mut edits = Vec::new();
