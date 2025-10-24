@@ -1,9 +1,29 @@
+#!/usr/bin/env python3
+
+from cProfile import label
 from typing import Callable, List
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+from matplotlib.ticker import LogLocator
+
+import matplotlib
+
+matplotlib.use("pgf")
+matplotlib.rcParams.update(
+    {
+        "pgf.texsystem": "pdflatex",
+        "font.family": "serif",
+        "image.composite_image": False,
+        "text.usetex": True,
+        "pgf.rcfonts": False,
+        "font.size": 11,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.05,
+    }
+)
 
 # --- Config --- #
 
@@ -23,15 +43,8 @@ def analysis(func):
 
 def save_plot(fig, output_file: Path):
     fig.tight_layout()
-    fig.savefig(output_file.with_suffix(".pdf"))
-    # fig.savefig(output_file.with_suffix(".png"), dpi=150)
+    fig.savefig(output_file.with_suffix(".pgf"), bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
-
-
-def use_logscale_if_wide(ax, column: pd.Series):
-    finite_vals = column.replace([np.inf, -np.inf], np.nan).dropna()
-    if not finite_vals.empty and finite_vals.max() / max(finite_vals.min(), 1e-9) > 10:
-        ax.set_yscale("log")
 
 
 # --- Analyses --- #
@@ -43,14 +56,19 @@ def speedup_ratio(df: pd.DataFrame, output_file: Path):
         0, np.nan
     )
 
+    order = sorted(df["patch_type"].dropna().unique())
+
     fig, ax = plt.subplots(figsize=(12, 6))
-    sns.boxplot(x="patch_type", y="speedup", data=df, ax=ax)
+    fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
+    sns.boxplot(x="patch_type", y="speedup", data=df, ax=ax, order=order)
     ax.axhline(1, color="red", linestyle="--", label="No Speedup")
     ax.axhspan(0, 1, color="red", alpha=0.1)
+
+    ax.set_xlabel("Patch Type")
     ax.set_ylabel("Full / Incremental")
-    ax.set_title("Speedup Ratio by Patch Type")
+
     ax.legend()
-    use_logscale_if_wide(ax, df["speedup"])
+    ax.set_yscale("log")
     ax.set_ylim(1 / 25.0, 25.0)
     save_plot(fig, output_file)
 
@@ -66,6 +84,7 @@ def cumulative_timings(df: pd.DataFrame, output_file: Path):
     ].cumsum()
 
     fig, ax = plt.subplots(figsize=(10, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 10) * 6)
     for directory, sub in df_sorted.groupby("directory"):
         ax.plot(sub["patch_index"], sub["cumulative_full"], label=f"{directory} full")
         ax.plot(
@@ -75,13 +94,9 @@ def cumulative_timings(df: pd.DataFrame, output_file: Path):
             linestyle="--",
         )
 
-    ax.set_title("Cumulative Timings over Patch Sequence")
     ax.set_xlabel("Patch Index")
     ax.set_ylabel("Cumulative Time (ms)")
-    use_logscale_if_wide(
-        ax,
-        pd.concat([df_sorted["cumulative_full"], df_sorted["cumulative_incremental"]]),
-    )
+    ax.set_yscale("log")
     ax.legend()
     save_plot(fig, output_file)
 
@@ -96,16 +111,19 @@ def directory_means(df: pd.DataFrame, output_file: Path):
     agg = agg.melt(id_vars="directory", var_name="timing_type", value_name="ms")
 
     fig, ax = plt.subplots(figsize=(10, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 10) * 6)
     sns.barplot(x="directory", y="ms", hue="timing_type", data=agg, ax=ax)
-    ax.set_title("Average Timings per Directory")
+
     ax.set_ylabel("Time (ms)")
-    use_logscale_if_wide(ax, agg["ms"])
+    ax.set_xlabel("Directory")
+    ax.set_yscale("log")
     save_plot(fig, output_file)
 
 
 @analysis
 def edits_vs_timing(df: pd.DataFrame, output_file: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 10) * 6)
 
     # Define markers based on same value
     markers = {0: "x", 1: "o"}
@@ -135,12 +153,9 @@ def edits_vs_timing(df: pd.DataFrame, output_file: Path):
         ax=ax,
     )
 
-    ax.set_title("Timings vs Edits Count")
     ax.set_xlabel("Edits Count")
     ax.set_ylabel("Time (ms)")
-    use_logscale_if_wide(
-        ax, pd.concat([df["full_timings_ms"], df["incremental_timings_ms"]])
-    )
+    ax.set_xscale("log")
     ax.legend()
     save_plot(fig, output_file)
 
@@ -148,26 +163,81 @@ def edits_vs_timing(df: pd.DataFrame, output_file: Path):
 @analysis
 def patch_type_timings(df: pd.DataFrame, output_file: Path):
     order = sorted(df["patch_type"].dropna().unique())
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
 
-    for ax, col, title in zip(
-        axes, ["full_timings_ms", "incremental_timings_ms"], ["Full", "Incremental"]
-    ):
-        sns.violinplot(x="patch_type", y=col, data=df, ax=ax, order=order, inner=None)
-        sns.boxplot(
-            x="patch_type",
-            y=col,
-            data=df,
-            ax=ax,
-            order=order,
-            showcaps=False,
-            boxprops={"facecolor": "none"},
-            showfliers=False,
-            whiskerprops={"linewidth": 0},
-        )
-        ax.set_title(f"{title} Timings by Patch Type")
-        ax.set_xlabel("Patch Type")
-        ax.set_ylabel("Time (ms)")
+    # remove Refactor from order due to extreme outliers
+    if "Refactor" in order:
+        order.remove("Refactor")
+
+    # Prepare data in long format for grouped plotting
+    df_filtered = df[df["patch_type"].isin(order)].copy()
+    df_long = df_filtered.melt(
+        id_vars=["patch_type"],
+        value_vars=["full_timings_ms", "incremental_timings_ms"],
+        var_name="timing_type",
+        value_name="time_ms",
+    )
+    df_long["timing_type"] = df_long["timing_type"].map(
+        {"full_timings_ms": "Full", "incremental_timings_ms": "Incremental"}
+    )
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 9) * 6)
+
+    # Create grouped box plot with different colors
+    sns.boxplot(
+        x="patch_type",
+        y="time_ms",
+        hue="timing_type",
+        data=df_long,
+        ax=ax,
+        order=order,
+    )
+
+    ax.set_xlabel("Patch Type")
+    ax.set_ylabel("Time (ms)")
+
+    # Disable legend
+    ax.legend().remove()
+
+    save_plot(fig, output_file)
+
+
+@analysis
+def rename_local_timings(df: pd.DataFrame, output_file: Path):
+    df_rl = df[df["patch_type"] == "Refactor"].copy()
+
+    if df_rl.empty:
+        print("No Refactor data found, skipping rename_local_timings")
+        return
+
+    # Prepare data in long format for grouped plotting
+    df_long = df_rl.melt(
+        id_vars=["patch_type"],
+        value_vars=["full_timings_ms", "incremental_timings_ms"],
+        var_name="timing_type",
+        value_name="time_ms",
+    )
+    df_long["timing_type"] = df_long["timing_type"].map(
+        {"full_timings_ms": "Full", "incremental_timings_ms": "Incremental"}
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    fig.set_size_inches(w=5.9, h=(5.9 / 8) * 4)
+
+    # Create grouped box plot with different colors
+    sns.boxplot(
+        x="patch_type",
+        y="time_ms",
+        hue="timing_type",
+        data=df_long,
+        ax=ax,
+    )
+
+    ax.set_xlabel("Refactor Patch Type")
+    ax.set_ylabel("Time (ms)")
+
+    # Disable legend
+    ax.legend().remove()
 
     save_plot(fig, output_file)
 
@@ -175,6 +245,7 @@ def patch_type_timings(df: pd.DataFrame, output_file: Path):
 @analysis
 def incremental_vs_full(df: pd.DataFrame, output_file: Path):
     fig, ax = plt.subplots(figsize=(8, 8))
+    fig.set_size_inches(w=5.9 / 2, h=5.9 / 2)
     sns.scatterplot(
         x="full_timings_ms",
         y="incremental_timings_ms",
@@ -193,7 +264,6 @@ def incremental_vs_full(df: pd.DataFrame, output_file: Path):
     ax.set_xlim(lims)  # type: ignore
     ax.set_ylim(lims)  # type: ignore
 
-    ax.set_title("Incremental vs Full Timings")
     ax.set_xlabel("Full Timings (ms)")
     ax.set_ylabel("Incremental Timings (ms)")
     ax.set_aspect("equal", "box")
@@ -230,8 +300,9 @@ def prop_same_by_patch_type(df: pd.DataFrame, output_file: Path):
 
     # plot stacked bar of proportions
     fig, ax = plt.subplots(figsize=(12, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
     proportions.plot(kind="bar", stacked=True, ax=ax)
-    ax.set_title("Proportion of Same vs Different CPGs by Patch Type")
+
     ax.set_ylabel("Proportion")
     ax.set_xlabel("Patch Type")
     ax.set_ylim(0, 1)
@@ -260,11 +331,22 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     ).clip(lower=0.1)
 
     df["patch_type"] = df["patch_name"].str.split("_", n=2).str[1]
+
+    pt_map = {
+        "add-comment": "Insert",
+        "insert-decl": "Insert",
+        "delete-stmt": "Delete",
+        "modify-num-lit": "Modify",
+        "rename-local": "Refactor",
+    }
+    df["patch_type"] = df["patch_type"].map(pt_map).fillna(df["patch_type"])
+
     df["patch_index"] = pd.to_numeric(
         df["patch_name"].str.split("_", n=1).str[0], errors="coerce"
     )
     df = df.dropna(subset=["patch_index"])
     df["patch_index"] = df["patch_index"].astype(int)
+
     return df.sort_values(["patch_index", "patch_type"])
 
 

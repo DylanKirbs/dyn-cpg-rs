@@ -1,0 +1,10 @@
+patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed
+001_delete-stmt_fn-'msm_free_diff_result'-delete-from-b1023.patch,1,186,15,0,5265,11680,5265,11682,3
+002_insert-decl_fn-'msm_diff'-insert-at-288390.patch,1,187,20,0,5272,11695,5272,11688,3
+003_rename-local_fn-'compare_char_seq'-rename-'prev_b'-to-'new_prev_b_234063'.patch,2,182,20,0,5272,11695,5260,11666,2
+004_modify-num-lit_0-to-5.patch,1,180,55,1,5272,11695,5272,11695,1
+005_add-comment_fn-'msm_free_diff_result'.patch,1,179,145,0,5273,11697,5183,11505,2
+006_delete-stmt_fn-'msm_proc_raw_diffs'-delete-from-b19688.patch,1,186,65,0,5264,11673,5264,11680,2
+007_insert-decl_fn-'msm_free_diff_result'-insert-at-619177.patch,1,183,16,0,5271,11688,5271,11684,3
+008_rename-local_fn-'msm_proc_raw_diffs'-rename-'start_a'-to-'new_start_a_33336'.patch,43,181,439,0,5271,11685,5325,12084,34
+009_modify-num-lit_0-to-0.patch,0,181,9,1,5271,11685,5271,11685,0

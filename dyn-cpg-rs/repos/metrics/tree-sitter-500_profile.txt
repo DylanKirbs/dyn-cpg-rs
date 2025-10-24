@@ -1,0 +1,84 @@
+Performance Profile for tree-sitter (500 commits, 57 files processed)
+Total duration: 387.823748761s
+
+Top functions by sample count (filtered for relevant crate code):
+Function                                                                         Samples    Percentage
+------------------------------------------------------------------------------------------------------
+get_node_span (spatial_index.rs:123)                                             111        0.13      %
+get_node_span (spatial_index.rs:123)                                             83         0.09      %
+get_node_span (spatial_index.rs:123)                                             81         0.09      %
+git2::tree::TreeEntry::to_object (call.rs:13)                                    80         0.09      %
+get_node_span (spatial_index.rs:123)                                             79         0.09      %
+get_node_span (spatial_index.rs:123)                                             79         0.09      %
+get_node_span (spatial_index.rs:123)                                             71         0.08      %
+get_node_span (spatial_index.rs:123)                                             65         0.07      %
+get_node_span (spatial_index.rs:123)                                             61         0.07      %
+get_node_span (spatial_index.rs:123)                                             61         0.07      %
+get_node_span (spatial_index.rs:123)                                             58         0.07      %
+get_node_span (spatial_index.rs:123)                                             58         0.07      %
+get_node_span (spatial_index.rs:123)                                             57         0.07      %
+get_node_span (spatial_index.rs:123)                                             56         0.06      %
+get_node_span (spatial_index.rs:123)                                             54         0.06      %
+tree_sitter::Parser::parse_with_options (lib.rs:920)                             50         0.06      %
+get_node_span (spatial_index.rs:123)                                             48         0.05      %
+get_node_span (spatial_index.rs:123)                                             47         0.05      %
+get_node_span (spatial_index.rs:123)                                             47         0.05      %
+get_node_span (spatial_index.rs:123)                                             44         0.05      %
+
+Detailed stack traces for relevant functions (top 10):
+======================================================================
+1. Samples: 111 (0.13%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+2. Samples: 83 (0.09%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+3. Samples: 81 (0.09%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+4. Samples: 80 (0.09%)
+   Stack trace (most relevant frames):
+     -> metrics::test_git_history_tree_sitter::{{closure}} (metrics.rs:840)
+     -> metrics::test_git_history_tree_sitter (metrics.rs:842)
+     -> git2::tree::Tree::walk (call.rs:13)
+     -> git2::tree::treewalk_cb (tree.rs:218)
+
+5. Samples: 79 (0.09%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+6. Samples: 79 (0.09%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+7. Samples: 71 (0.08%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+8. Samples: 65 (0.07%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+
+9. Samples: 61 (0.07%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::cpg::compare::<impl dyn_cpg_rs::cpg::Cpg>::compare_subtrees (compare.rs:395)
+     -> dyn_cpg_rs::cpg::compare::<impl dyn_cpg_rs::cpg::Cpg>::compare_subtrees (compare.rs:395)
+     -> dyn_cpg_rs::cpg::compare::<impl dyn_cpg_rs::cpg::Cpg>::compare_subtrees (compare.rs:395)
+     -> dyn_cpg_rs::cpg::compare::<impl dyn_cpg_rs::cpg::Cpg>::compare_subtrees (compare.rs:395)
+     -> dyn_cpg_rs::cpg::compare::<impl dyn_cpg_rs::cpg::Cpg>::compare_subtrees (compare.rs:395)
+
+10. Samples: 61 (0.07%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:120)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:143)
+

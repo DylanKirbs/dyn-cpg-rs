@@ -8,6 +8,7 @@ import seaborn as sns
 from pathlib import Path
 import matplotlib.colors as mcolors
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation
+from scipy import stats
 
 import matplotlib
 
@@ -96,7 +97,6 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25
         LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=10)
     )
 
-    # ax.set_title("Incremental vs Full Timings by Edits Count")
     ax.set_xlabel("Full Timings (ms)")
     ax.set_ylabel("Incremental Timings (ms)")
     ax.grid(True, linestyle=":", linewidth=0.5, which="major")
@@ -163,7 +163,6 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
     # Labels back in ms scale
     ax.set_xlabel("Full Timings (ms)")
     ax.set_ylabel("Incremental Timings (ms)")
-    # ax.set_title("Heatmap of Incremental vs Full Timings")
 
     from matplotlib.ticker import FuncFormatter, MultipleLocator, FixedLocator
 
@@ -229,6 +228,61 @@ def textual_analysis(df: pd.DataFrame, output_file: Path):
 
     output_file.with_suffix(".txt").write_text(results)
 
+    # Statistical comparison of full vs incremental timings
+    print(f"\nStatistical comparison (Full vs Incremental):")
+
+    # Use only rows where both timings are valid
+    valid_mask = ~(
+        np.isnan(df["full_timings_ms"]) | np.isnan(df["incremental_timings_ms"])
+    )
+    full_times = df.loc[valid_mask, "full_timings_ms"]
+    incr_times = df.loc[valid_mask, "incremental_timings_ms"]
+
+    if len(full_times) > 1:
+        # Paired t-test (assumes normal distribution of differences)
+        t_stat, t_pvalue = stats.ttest_rel(full_times, incr_times)
+        print(f"  Paired t-test (May be biased due to Heteroscedasticity):")
+        print(f"    t-statistic: {t_stat:.4f}, p-value: {t_pvalue:.4e}")
+
+        # Wilcoxon signed-rank test (non-parametric, better for skewed data)
+        w_stat, w_pvalue = stats.wilcoxon(full_times, incr_times)
+        print(f"  Wilcoxon signed-rank test (Unbiased by Heteroscedasticity):")
+        print(f"    W-statistic: {w_stat:.4f}, p-value: {w_pvalue:.4e}")
+
+        # Effect size (Cohen's d)
+        mean_diff = np.mean(full_times - incr_times)
+        pooled_std = np.sqrt((np.var(full_times) + np.var(incr_times)) / 2)
+        cohens_d = mean_diff / pooled_std if pooled_std > 0 else 0
+        print(f"  Effect size (Cohen's d): {cohens_d:.4f}")
+        print(f"    Interpretation: ", end="")
+        if abs(cohens_d) < 0.2:
+            print("negligible")
+        elif abs(cohens_d) < 0.5:
+            print("small")
+        elif abs(cohens_d) < 0.8:
+            print("medium")
+        else:
+            print("large")
+
+        # Speedup ratio analysis
+        speedup = full_times / incr_times.replace(0, np.nan)
+        speedup = speedup[~np.isnan(speedup)]
+        print(f"  Speedup ratio (Full/Incremental):")
+        print(f"    Mean: {np.mean(speedup):.4f}")
+        print(f"    Median: {np.median(speedup):.4f}")
+        print(f"    Std: {np.std(speedup):.4f}")
+        print(
+            f"    Q1-Q3: [{np.percentile(speedup, 25):.4f}, {np.percentile(speedup, 75):.4f}]"
+        )
+        faster_count = np.sum(speedup > 1)
+        slower_count = np.sum(speedup < 1)
+        print(
+            f"    Full faster: {faster_count}/{len(speedup)} ({100*faster_count/len(speedup):.1f}%)"
+        )
+        print(
+            f"    Incremental faster: {slower_count}/{len(speedup)} ({100*slower_count/len(speedup):.1f}%)"
+        )
+
 
 @analysis
 def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
@@ -252,6 +306,105 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
         ax=ax,
     )
 
+    # Compute log-transformed data for correlation and regression
+    log_size = np.log10(df["file_size_bytes"].replace(0, np.nan))
+    log_full = np.log10(df["full_timings_ms"].replace(0, np.nan))
+    log_incr = np.log10(df["incremental_timings_ms"].replace(0, np.nan))
+
+    # Remove NaN values for regression
+    mask_full = ~(np.isnan(log_size) | np.isnan(log_full))
+    mask_incr = ~(np.isnan(log_size) | np.isnan(log_incr))
+
+    # Fit lines: log(y) = slope * log(x) + intercept
+    slope_full = slope_incr = None
+    if mask_full.sum() > 1:
+        slope_full, intercept_full = np.polyfit(
+            log_size[mask_full], log_full[mask_full], 1
+        )
+
+        # Compute residuals for heteroscedasticity-aware confidence interval
+        log_x_full = log_size[mask_full]
+        log_y_full = log_full[mask_full]
+        y_pred_full = slope_full * log_x_full + intercept_full
+        residuals_full = log_y_full - y_pred_full
+
+        x_fit = np.logspace(
+            np.log10(df["file_size_bytes"].min()),
+            np.log10(df["file_size_bytes"].max()),
+            100,
+        )
+        log_x_fit = np.log10(x_fit)
+        y_fit_full = 10 ** (slope_full * log_x_fit + intercept_full)
+
+        # Local weighted standard error using nearby residuals
+        ci_full = []
+        for x_val in log_x_fit:
+            # Weight residuals by distance to this x value
+            distances = np.abs(log_x_full - x_val)
+            weights = np.exp(-distances / 0.5)  # Bandwidth of 0.5 in log space
+            weights /= weights.sum()
+            local_variance = np.sum(weights * residuals_full**2)
+            local_se = np.sqrt(local_variance)
+            ci_full.append(1.96 * local_se)
+
+        ci_full = np.array(ci_full)
+        y_upper_full = 10 ** (slope_full * log_x_fit + intercept_full + ci_full)
+        y_lower_full = 10 ** (slope_full * log_x_fit + intercept_full - ci_full)
+
+        ax.plot(
+            x_fit,
+            y_fit_full,
+            "--",
+            linewidth=2,
+            label=f"Full fit ($\\propto$ size$^{{{slope_full:.2f}}}$)",
+            zorder=10,
+        )
+        ax.fill_between(x_fit, y_lower_full, y_upper_full, alpha=0.2, zorder=5)
+
+    if mask_incr.sum() > 1:
+        slope_incr, intercept_incr = np.polyfit(
+            log_size[mask_incr], log_incr[mask_incr], 1
+        )
+
+        # Compute residuals for heteroscedasticity-aware confidence interval
+        log_x_incr = log_size[mask_incr]
+        log_y_incr = log_incr[mask_incr]
+        y_pred_incr = slope_incr * log_x_incr + intercept_incr
+        residuals_incr = log_y_incr - y_pred_incr
+
+        x_fit = np.logspace(
+            np.log10(df["file_size_bytes"].min()),
+            np.log10(df["file_size_bytes"].max()),
+            100,
+        )
+        log_x_fit = np.log10(x_fit)
+        y_fit_incr = 10 ** (slope_incr * log_x_fit + intercept_incr)
+
+        # Local weighted standard error using nearby residuals to capture heteroscedasticity
+        ci_incr = []
+        for x_val in log_x_fit:
+            # Weight residuals by distance to this x value
+            distances = np.abs(log_x_incr - x_val)
+            weights = np.exp(-distances / 0.5)  # Bandwidth of 0.5 in log space
+            weights /= weights.sum()
+            local_variance = np.sum(weights * residuals_incr**2)
+            local_se = np.sqrt(local_variance)
+            ci_incr.append(1.96 * local_se)
+
+        ci_incr = np.array(ci_incr)
+        y_upper_incr = 10 ** (slope_incr * log_x_fit + intercept_incr + ci_incr)
+        y_lower_incr = 10 ** (slope_incr * log_x_fit + intercept_incr - ci_incr)
+
+        ax.plot(
+            x_fit,
+            y_fit_incr,
+            "--",
+            linewidth=2,
+            label=f"Incremental fit ($\\propto$ size$^{{{slope_incr:.2f}}}$)",
+            zorder=10,
+        )
+        ax.fill_between(x_fit, y_lower_incr, y_upper_incr, alpha=0.2, zorder=5)
+
     ax.set_xscale("log")
     ax.set_yscale("log")
 
@@ -267,21 +420,88 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
 
     ax.set_xlabel("File Size (bytes, log)")
     ax.set_ylabel("Time (ms, log)")
-    ax.set_title("Update time vs File Size")
+
     ax.grid(True, linestyle=":", linewidth=0.5, which="major")
     ax.legend()
     save_plot(fig, output_file)
 
-    log_size = np.log10(df["file_size_bytes"].replace(0, np.nan))
-    log_full = np.log10(df["full_timings_ms"].replace(0, np.nan))
-    log_incr = np.log10(df["incremental_timings_ms"].replace(0, np.nan))
+    corr_full = (
+        np.corrcoef(log_size[mask_full], log_full[mask_full])[0, 1]
+        if mask_full.sum() > 1
+        else np.nan
+    )
+    corr_incr = (
+        np.corrcoef(log_size[mask_incr], log_incr[mask_incr])[0, 1]
+        if mask_incr.sum() > 1
+        else np.nan
+    )
 
-    corr_full = log_size.corr(log_full)
-    corr_incr = log_size.corr(log_incr)
+    print(f"Correlation (log-log):")
+    print(f"  File size ↔ Full timings:         {corr_full:.6f}")
+    print(f"  File size ↔ Incremental timings:  {corr_incr:.6f}")
+    if slope_full is not None:
+        print(f"  Full timing scaling exponent:     {slope_full:.6f}")
+    if slope_incr is not None:
+        print(f"  Incremental timing scaling exponent: {slope_incr:.6f}")
 
-    print(f"Correlation (log–log):")
-    print(f"  File size ↔ Full timings:         {corr_full:.3f}")
-    print(f"  File size ↔ Incremental timings:  {corr_incr:.3f}")
+    # Compute heteroscedasticity measures
+    print(f"\nHeteroscedasticity analysis:")
+
+    # For full timings
+    if mask_full.sum() > 10:
+        # Compute residuals
+        log_x_full = log_size[mask_full]
+        log_y_full = log_full[mask_full]
+        y_pred_full = slope_full * log_x_full + intercept_full
+        residuals_full = log_y_full - y_pred_full
+
+        # Breusch-Pagan test: regress squared residuals on log_x
+        bp_slope, bp_intercept = np.polyfit(log_x_full, residuals_full**2, 1)
+        bp_pred = bp_slope * log_x_full + bp_intercept
+        ss_total = np.sum((residuals_full**2 - np.mean(residuals_full**2)) ** 2)
+        ss_resid = np.sum((residuals_full**2 - bp_pred) ** 2)
+        r_squared = 1 - (ss_resid / ss_total) if ss_total > 0 else 0
+        bp_statistic = len(log_x_full) * r_squared
+        bp_pvalue = 1 - stats.chi2.cdf(bp_statistic, 1)
+
+        # Variance ratio: upper 25% vs lower 25% of x values
+        sorted_idx = np.argsort(log_x_full)
+        n_quartile = len(log_x_full) // 4
+        lower_var = np.var(residuals_full[sorted_idx[:n_quartile]])
+        upper_var = np.var(residuals_full[sorted_idx[-n_quartile:]])
+        var_ratio_full = upper_var / lower_var if lower_var > 0 else np.nan
+
+        print(f"  Full timings:")
+        print(f"    Breusch-Pagan statistic: {bp_statistic:.4f} (p={bp_pvalue:.4e})")
+        print(f"    Variance ratio (Q4/Q1):  {var_ratio_full:.4f}")
+
+    # For incremental timings
+    if mask_incr.sum() > 10:
+        # Compute residuals
+        log_x_incr = log_size[mask_incr]
+        log_y_incr = log_incr[mask_incr]
+        y_pred_incr = slope_incr * log_x_incr + intercept_incr
+        residuals_incr = log_y_incr - y_pred_incr
+
+        # Breusch-Pagan test
+        bp_slope, bp_intercept = np.polyfit(log_x_incr, residuals_incr**2, 1)
+        bp_pred = bp_slope * log_x_incr + bp_intercept
+        ss_total = np.sum((residuals_incr**2 - np.mean(residuals_incr**2)) ** 2)
+        ss_resid = np.sum((residuals_incr**2 - bp_pred) ** 2)
+        r_squared = 1 - (ss_resid / ss_total) if ss_total > 0 else 0
+        bp_statistic = len(log_x_incr) * r_squared
+        bp_pvalue = 1 - stats.chi2.cdf(bp_statistic, 1)
+
+        # Variance ratio
+        sorted_idx = np.argsort(log_x_incr)
+        n_quartile = len(log_x_incr) // 4
+        lower_var = np.var(residuals_incr[sorted_idx[:n_quartile]])
+        upper_var = np.var(residuals_incr[sorted_idx[-n_quartile:]])
+        var_ratio_incr = upper_var / lower_var if lower_var > 0 else np.nan
+
+        print(f"  Incremental timings:")
+        print(f"    Breusch-Pagan statistic: {bp_statistic:.4f} (p={bp_pvalue:.4e})")
+        print(f"    Variance ratio (Q4/Q1):  {var_ratio_incr:.4f}")
 
 
 @analysis
@@ -295,6 +515,7 @@ def edits_vs_timings_by_type(df: pd.DataFrame, output_file: Path):
     )
 
     fig, ax = plt.subplots(figsize=(12, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
     sns.boxplot(x="edit_size", y="incremental_timings_ms", data=df, ax=ax)
     sns.boxplot(
         x="edit_size",
@@ -316,7 +537,7 @@ def edits_vs_timings_by_type(df: pd.DataFrame, output_file: Path):
 
     ax.set_xlabel("Edit Size (LOC)")
     ax.set_ylabel("Time (ms, log)")
-    ax.set_title("Timing vs Edit Size")
+
     save_plot(fig, output_file)
 
 
@@ -328,6 +549,7 @@ def speedup_vs_lines_changed(df: pd.DataFrame, output_file: Path):
     )
 
     fig, ax = plt.subplots(figsize=(12, 6))
+    fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
     sns.scatterplot(x="lines_changed", y="speedup", alpha=0.7, data=df, ax=ax)
     ax.axhline(1, color="red", linestyle="--", label="No Speedup")
     ax.set_yscale("log")
@@ -345,7 +567,7 @@ def speedup_vs_lines_changed(df: pd.DataFrame, output_file: Path):
 
     ax.set_xlabel("Lines Changed (log)")
     ax.set_ylabel("Speedup (Full / Incremental, log)")
-    ax.set_title("Speedup vs Lines Changed")
+
     ax.legend()
     save_plot(fig, output_file)
 
