@@ -600,7 +600,7 @@ def summary_table(df: pd.DataFrame, output_file: Path):
             "P75": np.percentile(s, 75),
             "P90": np.percentile(s, 90),
             "Mean": s.mean(),
-            "Std Dev": s.std(),
+            "Std. Dev": s.std(),
         }
 
     summary_metrics = {
@@ -613,7 +613,7 @@ def summary_table(df: pd.DataFrame, output_file: Path):
 
     # Build DataFrame
     summary_df = pd.DataFrame(summary_metrics).T[
-        ["P10", "P25", "P50", "P75", "P90", "Mean", "Std Dev"]
+        ["P10", "P25", "P50", "P75", "P90", "Mean", "Std. Dev"]
     ]
 
     # summary_df.index.name = "Metric"
@@ -634,7 +634,7 @@ def summary_table(df: pd.DataFrame, output_file: Path):
         columns={
             col: f"\\textbf{{{col}}}"
             for col in summary_df.columns
-            if col in ("Mean", "Std Dev")
+            if col in ("Mean", "Std. Dev")
         },
         inplace=True,
     )
