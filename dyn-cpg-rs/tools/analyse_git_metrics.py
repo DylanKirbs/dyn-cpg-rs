@@ -418,8 +418,8 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
         LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=10)
     )
 
-    ax.set_xlabel("File Size (bytes, log)")
-    ax.set_ylabel("Time (ms, log)")
+    ax.set_xlabel("File Size (bytes)")
+    ax.set_ylabel("Time (ms)")
 
     ax.grid(True, linestyle=":", linewidth=0.5, which="major")
     ax.legend()
@@ -536,7 +536,7 @@ def edits_vs_timings_by_type(df: pd.DataFrame, output_file: Path):
     )
 
     ax.set_xlabel("Edit Size (LOC)")
-    ax.set_ylabel("Time (ms, log)")
+    ax.set_ylabel("Time (ms)")
 
     save_plot(fig, output_file)
 
@@ -566,10 +566,98 @@ def speedup_vs_lines_changed(df: pd.DataFrame, output_file: Path):
     )
 
     ax.set_xlabel("Lines Changed (log)")
-    ax.set_ylabel("Speedup (Full / Incremental, log)")
+    ax.set_ylabel("Speedup (Full / Incremental)")
 
     ax.legend()
     save_plot(fig, output_file)
+
+
+@analysis
+def summary_table(df: pd.DataFrame, output_file: Path):
+    df = df.copy()
+    df["speedup"] = df["full_timings_ms"] / df["incremental_timings_ms"].replace(
+        0, np.nan
+    )
+
+    # Compute summary statistics
+    summary_general = {
+        "Number of samples": len(df),
+        "Fraction Faster Incremental": (df["speedup"] > 1).mean(),
+        "Correlation Full vs Size": df[["file_size_bytes", "full_timings_ms"]]
+        .corr()
+        .iloc[0, 1],
+        "Correlation Incr vs Size": df[["file_size_bytes", "incremental_timings_ms"]]
+        .corr()
+        .iloc[0, 1],
+    }
+
+    def describe(series):
+        s = series.dropna()
+        return {
+            "P10": np.percentile(s, 10),
+            "P25": np.percentile(s, 25),
+            "P50": np.percentile(s, 50),
+            "P75": np.percentile(s, 75),
+            "P90": np.percentile(s, 90),
+            "Mean": s.mean(),
+            "Std Dev": s.std(),
+        }
+
+    summary_metrics = {
+        "Speedup (Full/Incremental)": describe(df["speedup"]),
+        "Full Time (ms)": describe(df["full_timings_ms"]),
+        "Incremental Time (ms)": describe(df["incremental_timings_ms"]),
+        "File Size (bytes)": describe(df["file_size_bytes"]),
+        "Edits Count": describe(df["edits_count"]),
+    }
+
+    # Build DataFrame
+    summary_df = pd.DataFrame(summary_metrics).T[
+        ["P10", "P25", "P50", "P75", "P90", "Mean", "Std Dev"]
+    ]
+
+    # summary_df.index.name = "Metric"
+
+    # Add general metrics as a header section
+    general_df = pd.DataFrame(summary_general, index=["Value"]).T
+    general_df.index.name = "General Metric"
+
+    summary_df.rename(
+        columns={
+            col: f"\\boldmath\\textbf{{$P_{{{col[1:]}}}$}}\\unboldmath"
+            for col in summary_df.columns
+            if col.startswith("P")
+        },
+        inplace=True,
+    )
+    summary_df.rename(
+        columns={
+            col: f"\\textbf{{{col}}}"
+            for col in summary_df.columns
+            if col in ("Mean", "Std Dev")
+        },
+        inplace=True,
+    )
+
+    # Export
+    summary_df.to_csv(output_file.with_suffix(".csv"))
+    summary_df.to_latex(
+        output_file.with_suffix(".tex"),
+        float_format=lambda x: f"{x:.2f}",
+        column_format="@{}l" + "r" * len(summary_df.columns) + "@{}",
+    )
+
+    general_df.to_csv(output_file.with_name(output_file.stem + "_general.csv"))
+    general_df.to_latex(
+        output_file.with_name(output_file.stem + "_general.tex"), float_format="%.3f"
+    )
+
+    # Print summaries
+    print("\n=== General Metrics ===")
+    print(general_df.round(3))
+
+    print("\n=== Distribution Summary ===")
+    print(summary_df.round(3))
 
 
 # --- Preprocessing --- #
