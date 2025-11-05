@@ -45,6 +45,7 @@ def analysis(func):
 
 def save_plot(fig, output_file: Path):
     fig.tight_layout()
+    fig.patch.set_alpha(0.0)
     fig.savefig(output_file.with_suffix(".pgf"), bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 

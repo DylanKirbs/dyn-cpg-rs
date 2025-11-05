@@ -28,50 +28,50 @@ Name: speedup, dtype: float64
 
 ================================================================================
 speedup < 1 && edits < 5
-                                           patch_name  edits_count  full_timings_ms  incremental_timings_ms       same  ...                 repo  patch_id  directory  extension   speedup
-2                      ce93d8fd_lib_src__wasm_store.c            1            438.0                   527.0       Same  ...  tree-sitter-500.csv  ce93d8fd        lib          c  0.831120
-3                        c5ee0ac0_lib_src__language.c            1             60.0                   205.0  Different  ...  tree-sitter-500.csv  c5ee0ac0        lib          c  0.292683
-4                        abafa073_lib_src__language.c            1             60.0                   207.0  Different  ...  tree-sitter-500.csv  abafa073        lib          c  0.289855
-5                        74481399_lib_src__language.c            1             61.0                   212.0  Different  ...  tree-sitter-500.csv  74481399        lib          c  0.287736
-9                            5b5cf5a5_lib_src__node.c            1            212.0                   566.0  Different  ...  tree-sitter-500.csv  5b5cf5a5        lib          c  0.374558
-10                           8c802da1_lib_src__node.c            2            210.0                  1649.0  Different  ...  tree-sitter-500.csv  8c802da1        lib          c  0.127350
-13                       201b41cf_lib_src__language.c            2             69.0                   175.0  Different  ...  tree-sitter-500.csv  201b41cf        lib          c  0.394286
-17                       19482834_lib_src__language.c            1             76.0                   195.0  Different  ...  tree-sitter-500.csv  19482834        lib          c  0.389744
-19                    28d5272e_lib_src_wasm__stdlib.c            2             20.0                    67.0       Same  ...  tree-sitter-500.csv  28d5272e        lib          c  0.298507
-21                           344a88c4_lib_src__node.c            1            203.0                  1324.0  Different  ...  tree-sitter-500.csv  344a88c4        lib          c  0.153323
-23                        9365586c_lib_src__subtree.c            3            364.0                  1483.0  Different  ...  tree-sitter-500.csv  9365586c        lib          c  0.245448
-24                          6e88672d_lib_src__lexer.c            1            135.0                   685.0  Different  ...  tree-sitter-500.csv  6e88672d        lib          c  0.197080
-30                          066fd77d_lib_src__stack.c            2            320.0                  1550.0  Different  ...  tree-sitter-500.csv  066fd77d        lib          c  0.206452
-39                      ffd97795_lib_dotgen__class2.c            4             86.0                   530.0  Different  ...     graphviz-500.csv  ffd97795        lib          c  0.162264
-46                        ffd97795_lib_dotgen__rank.c            3            369.0                  3115.0  Different  ...     graphviz-500.csv  ffd97795        lib          c  0.118459
-55          d58ff218_plugin_quartz__gvrender_quartz.c            3            165.0                   489.0  Different  ...     graphviz-500.csv  d58ff218     plugin          c  0.337423
-56      8ccf6efe_plugin_quartz__gvtextlayout_quartz.c            2             30.0                   133.0  Different  ...     graphviz-500.csv  8ccf6efe     plugin          c  0.225564
-63         24d516ae_plugin_pango__gvloadimage_pango.c            2             71.0                    85.0  Different  ...     graphviz-500.csv  24d516ae     plugin          c  0.835294
-64         5b52c396_plugin_pango__gvloadimage_pango.c            2             69.0                    87.0  Different  ...     graphviz-500.csv  5b52c396     plugin          c  0.793103
-67         feaa8409_plugin_pango__gvloadimage_pango.c            2             73.0                   102.0  Different  ...     graphviz-500.csv  feaa8409     plugin          c  0.715686
-68         acb085d9_plugin_pango__gvloadimage_pango.c            3             72.0                    97.0  Different  ...     graphviz-500.csv  acb085d9     plugin          c  0.742268
-69         7a882bbe_plugin_pango__gvloadimage_pango.c            2             72.0                    91.0  Different  ...     graphviz-500.csv  7a882bbe     plugin          c  0.791209
-76                      b2dd120f_lib_common__output.c            3            201.0                   669.0  Different  ...     graphviz-500.csv  b2dd120f        lib          c  0.300448
-80                       4ca5259a_lib_gvpr__compile.c            3            753.0                  2128.0  Different  ...     graphviz-500.csv  4ca5259a        lib          c  0.353853
-83                       5feb593c_lib_gvpr__actions.c            2            242.0                   627.0  Different  ...     graphviz-500.csv  5feb593c        lib          c  0.385965
-97                     dbcd2467_lib_glcomp__glutils.c            4            186.0                   610.0  Different  ...     graphviz-500.csv  dbcd2467        lib          c  0.304918
-105                    aa625430_lib_glcomp__glutils.c            2            186.0                   582.0  Different  ...     graphviz-500.csv  aa625430        lib          c  0.319588
-107                    0f038ce2_lib_glcomp__glutils.c            2            188.0                   607.0  Different  ...     graphviz-500.csv  0f038ce2        lib          c  0.309720
-115               ccf1ae32_cmd_smyrna_gui__glcompui.c            2            175.0                   582.0  Different  ...     graphviz-500.csv  ccf1ae32        cmd          c  0.300687
-119                877c40b6_lib_glcomp__glcompmouse.c            2             11.0                    55.0  Different  ...     graphviz-500.csv  877c40b6        lib          c  0.200000
-139                   ea36e9aa_cmd_smyrna__viewport.c            1            244.0                   308.0  Different  ...     graphviz-500.csv  ea36e9aa        cmd          c  0.792208
-140                   88037e23_cmd_smyrna__viewport.c            1            238.0                   252.0  Different  ...     graphviz-500.csv  88037e23        cmd          c  0.944444
-141                   3f398e74_cmd_smyrna__viewport.c            1            240.0                   243.0  Different  ...     graphviz-500.csv  3f398e74        cmd          c  0.987654
-142                   655ada37_cmd_smyrna__viewport.c            1            234.0                   264.0  Different  ...     graphviz-500.csv  655ada37        cmd          c  0.886364
-143             f4f51f7e_cmd_smyrna__viewportcamera.c            1             10.0                    11.0  Different  ...     graphviz-500.csv  f4f51f7e        cmd          c  0.909091
-148                     24efc128_lib_dotgen__class1.c            3             32.0                    52.0  Different  ...     graphviz-500.csv  24efc128        lib          c  0.615385
-167                         ab188d55_lib_common__ns.c            4            506.0                  5097.0  Different  ...     graphviz-500.csv  ab188d55        lib          c  0.099274
-168  c08620c8_lib_edgepaint__node_distinct_coloring.c            4            117.0                   272.0  Different  ...     graphviz-500.csv  c08620c8        lib          c  0.430147
-169                   5a54870f_lib_common__routespl.c            3            603.0                  1561.0  Different  ...     graphviz-500.csv  5a54870f        lib          c  0.386291
-172  4a13d151_lib_edgepaint__node_distinct_coloring.c            4            115.0                   237.0  Different  ...     graphviz-500.csv  4a13d151        lib          c  0.485232
-174  9e69df11_lib_edgepaint__node_distinct_coloring.c            4            115.0                   238.0  Different  ...     graphviz-500.csv  9e69df11        lib          c  0.483193
-199                  0ed97827_lib_glcomp__glcompset.c            4            114.0                   407.0  Different  ...     graphviz-500.csv  0ed97827        lib          c  0.280098
-206                       3a036f15_lib_cgraph__attr.c            4            252.0                  1872.0  Different  ...     graphviz-500.csv  3a036f15        lib          c  0.134615
+                                           patch_name  edits_count  full_timings_ms  incremental_timings_ms  ...  patch_id  directory  extension   speedup
+2                      ce93d8fd_lib_src__wasm_store.c            1            438.0                   527.0  ...  ce93d8fd        lib          c  0.831120
+3                        c5ee0ac0_lib_src__language.c            1             60.0                   205.0  ...  c5ee0ac0        lib          c  0.292683
+4                        abafa073_lib_src__language.c            1             60.0                   207.0  ...  abafa073        lib          c  0.289855
+5                        74481399_lib_src__language.c            1             61.0                   212.0  ...  74481399        lib          c  0.287736
+9                            5b5cf5a5_lib_src__node.c            1            212.0                   566.0  ...  5b5cf5a5        lib          c  0.374558
+10                           8c802da1_lib_src__node.c            2            210.0                  1649.0  ...  8c802da1        lib          c  0.127350
+13                       201b41cf_lib_src__language.c            2             69.0                   175.0  ...  201b41cf        lib          c  0.394286
+17                       19482834_lib_src__language.c            1             76.0                   195.0  ...  19482834        lib          c  0.389744
+19                    28d5272e_lib_src_wasm__stdlib.c            2             20.0                    67.0  ...  28d5272e        lib          c  0.298507
+21                           344a88c4_lib_src__node.c            1            203.0                  1324.0  ...  344a88c4        lib          c  0.153323
+23                        9365586c_lib_src__subtree.c            3            364.0                  1483.0  ...  9365586c        lib          c  0.245448
+24                          6e88672d_lib_src__lexer.c            1            135.0                   685.0  ...  6e88672d        lib          c  0.197080
+30                          066fd77d_lib_src__stack.c            2            320.0                  1550.0  ...  066fd77d        lib          c  0.206452
+39                      ffd97795_lib_dotgen__class2.c            4             86.0                   530.0  ...  ffd97795        lib          c  0.162264
+46                        ffd97795_lib_dotgen__rank.c            3            369.0                  3115.0  ...  ffd97795        lib          c  0.118459
+55          d58ff218_plugin_quartz__gvrender_quartz.c            3            165.0                   489.0  ...  d58ff218     plugin          c  0.337423
+56      8ccf6efe_plugin_quartz__gvtextlayout_quartz.c            2             30.0                   133.0  ...  8ccf6efe     plugin          c  0.225564
+63         24d516ae_plugin_pango__gvloadimage_pango.c            2             71.0                    85.0  ...  24d516ae     plugin          c  0.835294
+64         5b52c396_plugin_pango__gvloadimage_pango.c            2             69.0                    87.0  ...  5b52c396     plugin          c  0.793103
+67         feaa8409_plugin_pango__gvloadimage_pango.c            2             73.0                   102.0  ...  feaa8409     plugin          c  0.715686
+68         acb085d9_plugin_pango__gvloadimage_pango.c            3             72.0                    97.0  ...  acb085d9     plugin          c  0.742268
+69         7a882bbe_plugin_pango__gvloadimage_pango.c            2             72.0                    91.0  ...  7a882bbe     plugin          c  0.791209
+76                      b2dd120f_lib_common__output.c            3            201.0                   669.0  ...  b2dd120f        lib          c  0.300448
+80                       4ca5259a_lib_gvpr__compile.c            3            753.0                  2128.0  ...  4ca5259a        lib          c  0.353853
+83                       5feb593c_lib_gvpr__actions.c            2            242.0                   627.0  ...  5feb593c        lib          c  0.385965
+97                     dbcd2467_lib_glcomp__glutils.c            4            186.0                   610.0  ...  dbcd2467        lib          c  0.304918
+105                    aa625430_lib_glcomp__glutils.c            2            186.0                   582.0  ...  aa625430        lib          c  0.319588
+107                    0f038ce2_lib_glcomp__glutils.c            2            188.0                   607.0  ...  0f038ce2        lib          c  0.309720
+115               ccf1ae32_cmd_smyrna_gui__glcompui.c            2            175.0                   582.0  ...  ccf1ae32        cmd          c  0.300687
+119                877c40b6_lib_glcomp__glcompmouse.c            2             11.0                    55.0  ...  877c40b6        lib          c  0.200000
+139                   ea36e9aa_cmd_smyrna__viewport.c            1            244.0                   308.0  ...  ea36e9aa        cmd          c  0.792208
+140                   88037e23_cmd_smyrna__viewport.c            1            238.0                   252.0  ...  88037e23        cmd          c  0.944444
+141                   3f398e74_cmd_smyrna__viewport.c            1            240.0                   243.0  ...  3f398e74        cmd          c  0.987654
+142                   655ada37_cmd_smyrna__viewport.c            1            234.0                   264.0  ...  655ada37        cmd          c  0.886364
+143             f4f51f7e_cmd_smyrna__viewportcamera.c            1             10.0                    11.0  ...  f4f51f7e        cmd          c  0.909091
+148                     24efc128_lib_dotgen__class1.c            3             32.0                    52.0  ...  24efc128        lib          c  0.615385
+167                         ab188d55_lib_common__ns.c            4            506.0                  5097.0  ...  ab188d55        lib          c  0.099274
+168  c08620c8_lib_edgepaint__node_distinct_coloring.c            4            117.0                   272.0  ...  c08620c8        lib          c  0.430147
+169                   5a54870f_lib_common__routespl.c            3            603.0                  1561.0  ...  5a54870f        lib          c  0.386291
+172  4a13d151_lib_edgepaint__node_distinct_coloring.c            4            115.0                   237.0  ...  4a13d151        lib          c  0.485232
+174  9e69df11_lib_edgepaint__node_distinct_coloring.c            4            115.0                   238.0  ...  9e69df11        lib          c  0.483193
+199                  0ed97827_lib_glcomp__glcompset.c            4            114.0                   407.0  ...  0ed97827        lib          c  0.280098
+206                       3a036f15_lib_cgraph__attr.c            4            252.0                  1872.0  ...  3a036f15        lib          c  0.134615
 
 [43 rows x 18 columns]
 

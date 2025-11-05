@@ -43,6 +43,7 @@ def analysis(func):
 
 def save_plot(fig, output_file: Path):
     fig.tight_layout()
+    fig.patch.set_alpha(0.0)
     fig.savefig(output_file.with_suffix(".pgf"), bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)
 
@@ -221,8 +222,8 @@ def rename_local_timings(df: pd.DataFrame, output_file: Path):
         {"full_timings_ms": "Full", "incremental_timings_ms": "Incremental"}
     )
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    fig.set_size_inches(w=5.9, h=(5.9 / 8) * 4)
+    fig, ax = plt.subplots(figsize=(4, 4))
+    fig.set_size_inches(w=5.9, h=(5.9 / 4) * 4)
 
     # Create grouped box plot with different colors
     sns.boxplot(
