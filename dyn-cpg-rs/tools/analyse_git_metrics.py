@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import matplotlib.colors as mcolors
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import LogLocator, LogFormatterSciNotation
 from scipy import stats
 
@@ -29,8 +30,48 @@ matplotlib.rcParams.update(
 
 # --- Config --- #
 
-sns.set_palette("Set2")
 ANALYSES: List[Callable[[pd.DataFrame, Path], None]] = []
+
+
+# --- Stellenbosch University Colors ---
+
+# Primary colors
+SUN_CONFIDENT_MAROON = "#61223b"
+SUN_BRILLIANT_GOLD = "#b79962"
+
+# Secondary colors
+SUN_FIERY_ORANGE = "#dc4405"
+SUN_WINE_RED = "#a60a3d"
+SUN_SOIL = "#643335"
+SUN_SEABREEZE_GREEN = "#82ccae"
+
+# Faculty colors
+SUN_AGRISCIENCE_GREEN = "#658d1b"
+SUN_ARTS_ORANGE = "#ff9e1b"
+SUN_EMS_TURQUOISE = "#2cccd3"
+SUN_EDUCATION_BLUE = "#223d71"
+SUN_ENGINEERING_YELLOW = "#eba900"
+SUN_LAW_RED = "#bf0d3e"
+SUN_MHS_TEAL = "#005f61"
+SUN_MIL_SCIENCE_PEACH = "#e56a54"
+SUN_SCIENCE_RED = "#d22730"
+SUN_THEOLOGY_PURPLE = "#5c068c"
+
+# Ancillary colors
+SUN_GREY = "#7e7d7c"
+SUN_GREY_DARK = "#212121"
+SUN_GREY_LIGHT = "#fafafa"
+
+SUN_PALETTE = [
+    SUN_CONFIDENT_MAROON,
+    SUN_BRILLIANT_GOLD,
+    SUN_FIERY_ORANGE,
+    SUN_SEABREEZE_GREEN,
+    SUN_EDUCATION_BLUE,
+    SUN_MHS_TEAL,
+]
+
+sns.set_palette(SUN_PALETTE)
 
 # --- Analysis registration --- #
 
@@ -62,8 +103,18 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25
     fig.set_size_inches(w=5.9 / 2, h=5.9 / 2)
 
     norm = mcolors.LogNorm(vmin=max(df["edits_count"].min(), 1), vmax=hue_cap)
-    cmap = plt.get_cmap("viridis")
-    colors = cmap(norm(df["edits_count"].to_numpy()))
+    # Use SU color gradient
+    sun_cmap = LinearSegmentedColormap.from_list(
+        "sun_gradient",
+        [
+            SUN_EDUCATION_BLUE,
+            SUN_MHS_TEAL,
+            SUN_SEABREEZE_GREEN,
+            SUN_ARTS_ORANGE,
+            SUN_FIERY_ORANGE,
+        ],
+    )
+    colors = sun_cmap(norm(df["edits_count"].to_numpy()))
 
     ax.scatter(
         df["full_timings_ms"],
@@ -76,12 +127,22 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25
     lim_min = min(df["full_timings_ms"].min(), df["incremental_timings_ms"].min()) * 0.9
     lim_max = max(df["full_timings_ms"].max(), df["incremental_timings_ms"].max()) * 1.1
 
-    # Highlight top-left: incremental > full
+    # Highlight top-left: incremental > full (use SU red)
     x_fill = np.linspace(lim_min, lim_max, 500)
-    ax.fill_betweenx(x_fill, lim_min, x_fill, color="red", alpha=0.2, zorder=0)
+    ax.fill_betweenx(
+        x_fill, lim_min, x_fill, color=SUN_SCIENCE_RED, alpha=0.2, zorder=0
+    )
 
-    # y=x reference
-    ax.plot([lim_min, lim_max], [lim_min, lim_max], "r--", linewidth=1, label="y=x")
+    # y=x reference (use SU maroon)
+    ax.plot(
+        [lim_min, lim_max],
+        [lim_min, lim_max],
+        "--",
+        color=SUN_CONFIDENT_MAROON,
+        linewidth=1,
+        label="y=x",
+        zorder=0,
+    )
 
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -102,7 +163,7 @@ def incremental_vs_full_by_edits(df: pd.DataFrame, output_file: Path, hue_cap=25
     ax.set_ylabel("Incremental Timings (ms)")
     ax.grid(True, linestyle=":", linewidth=0.5, which="major")
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=sun_cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(
         sm, ax=ax, label="Edit Counts (capped at {})".format(hue_cap), shrink=0.7
@@ -133,12 +194,22 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
     lim_max_bin = np.ceil(lim_max / bin_width) * bin_width
     bins_edges = np.arange(lim_min_bin, lim_max_bin + bin_width, bin_width)
 
-    # 2D histogram
+    # 2D histogram (use SU color gradient)
+    sun_cmap = LinearSegmentedColormap.from_list(
+        "sun_gradient",
+        [
+            SUN_EDUCATION_BLUE,
+            SUN_MHS_TEAL,
+            SUN_SEABREEZE_GREEN,
+            SUN_ARTS_ORANGE,
+            SUN_FIERY_ORANGE,
+        ],
+    )
     hb = ax.hist2d(
         x,
         y,
         bins=[bins_edges, bins_edges],
-        cmap="viridis",
+        cmap=sun_cmap,
         cmin=1,
         zorder=5,
         norm=mcolors.LogNorm(),
@@ -147,15 +218,18 @@ def incremental_vs_full_heatmap(df: pd.DataFrame, output_file: Path):
     cbar.set_label("Number of commits")
     cbar.solids.set_rasterized(False)
 
-    # Highlight top-left: incremental > full
+    # Highlight top-left: incremental > full (use SU red)
     x_fill = np.linspace(lim_min, lim_max, 500)
-    ax.fill_betweenx(x_fill, lim_min, x_fill, color="red", alpha=0.2, zorder=0)
+    ax.fill_betweenx(
+        x_fill, lim_min, x_fill, color=SUN_SCIENCE_RED, alpha=0.2, zorder=0
+    )
 
-    # y=x reference
+    # y=x reference (use SU maroon)
     ax.plot(
         [lim_min, lim_max],
         [lim_min, lim_max],
-        "r--",
+        "--",
+        color=SUN_CONFIDENT_MAROON,
         linewidth=1,
         label="y=x",
         zorder=2,
@@ -290,6 +364,7 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
     fig, ax = plt.subplots(figsize=(10, 6))
     fig.set_size_inches(w=5.9, h=(5.9 / 10) * 6)
 
+    # Use SU colors for scatter plots
     sns.scatterplot(
         data=df,
         x="file_size_bytes",
@@ -297,6 +372,7 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
         label="Full",
         alpha=0.7,
         ax=ax,
+        color=SUN_CONFIDENT_MAROON,
     )
     sns.scatterplot(
         data=df,
@@ -305,6 +381,7 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
         label="Incremental",
         alpha=0.7,
         ax=ax,
+        color=SUN_BRILLIANT_GOLD,
     )
 
     # Compute log-transformed data for correlation and regression
@@ -357,10 +434,13 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
             y_fit_full,
             "--",
             linewidth=2,
+            color=SUN_CONFIDENT_MAROON,
             label=f"Full fit ($\\propto$ size$^{{{slope_full:.2f}}}$)",
             zorder=10,
         )
-        ax.fill_between(x_fit, y_lower_full, y_upper_full, alpha=0.2, zorder=5)
+        # ax.fill_between(
+        #     x_fit, y_lower_full, y_upper_full, color=SUN_CONFIDENT_MAROON, alpha=0.2, zorder=5
+        # )
 
     if mask_incr.sum() > 1:
         slope_incr, intercept_incr = np.polyfit(
@@ -401,10 +481,18 @@ def file_size_vs_timings(df: pd.DataFrame, output_file: Path):
             y_fit_incr,
             "--",
             linewidth=2,
+            color=SUN_BRILLIANT_GOLD,
             label=f"Incremental fit ($\\propto$ size$^{{{slope_incr:.2f}}}$)",
             zorder=10,
         )
-        ax.fill_between(x_fit, y_lower_incr, y_upper_incr, alpha=0.2, zorder=5)
+        # ax.fill_between(
+        #     x_fit,
+        #     y_lower_incr,
+        #     y_upper_incr,
+        #     color=SUN_BRILLIANT_GOLD,
+        #     alpha=0.2,
+        #     zorder=5,
+        # )
 
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -551,8 +639,15 @@ def speedup_vs_lines_changed(df: pd.DataFrame, output_file: Path):
 
     fig, ax = plt.subplots(figsize=(12, 6))
     fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
-    sns.scatterplot(x="lines_changed", y="speedup", alpha=0.7, data=df, ax=ax)
-    ax.axhline(1, color="red", linestyle="--", label="No Speedup")
+    sns.scatterplot(
+        x="lines_changed",
+        y="speedup",
+        alpha=0.7,
+        data=df,
+        ax=ax,
+        color=SUN_EDUCATION_BLUE,
+    )
+    ax.axhline(1, color=SUN_SCIENCE_RED, linestyle="--", label="No Speedup")
     ax.set_yscale("log")
     ax.set_xscale("log")
 

@@ -25,9 +25,48 @@ matplotlib.rcParams.update(
     }
 )
 
+# --- Stellenbosch University Colors ---
+
+# Primary colors
+SUN_CONFIDENT_MAROON = "#61223b"
+SUN_BRILLIANT_GOLD = "#b79962"
+
+# Secondary colors
+SUN_FIERY_ORANGE = "#dc4405"
+SUN_WINE_RED = "#a60a3d"
+SUN_SOIL = "#643335"
+SUN_SEABREEZE_GREEN = "#82ccae"
+
+# Faculty colors
+SUN_AGRISCIENCE_GREEN = "#658d1b"
+SUN_ARTS_ORANGE = "#ff9e1b"
+SUN_EMS_TURQUOISE = "#2cccd3"
+SUN_EDUCATION_BLUE = "#223d71"
+SUN_ENGINEERING_YELLOW = "#eba900"
+SUN_LAW_RED = "#bf0d3e"
+SUN_MHS_TEAL = "#005f61"
+SUN_MIL_SCIENCE_PEACH = "#e56a54"
+SUN_SCIENCE_RED = "#d22730"
+SUN_THEOLOGY_PURPLE = "#5c068c"
+
+# Ancillary colors
+SUN_GREY = "#7e7d7c"
+SUN_GREY_DARK = "#212121"
+SUN_GREY_LIGHT = "#fafafa"
+
+# Create a custom color palette
+SUN_PALETTE = [
+    SUN_CONFIDENT_MAROON,
+    SUN_BRILLIANT_GOLD,
+    SUN_FIERY_ORANGE,
+    SUN_SEABREEZE_GREEN,
+    SUN_EDUCATION_BLUE,
+    SUN_MHS_TEAL,
+]
+
 # --- Config --- #
 
-sns.set_palette("Set2")
+sns.set_palette(SUN_PALETTE)
 ANALYSES: List[Callable[[pd.DataFrame, Path], None]] = []
 
 # --- Analysis registration --- #
@@ -62,8 +101,8 @@ def speedup_ratio(df: pd.DataFrame, output_file: Path):
     fig, ax = plt.subplots(figsize=(12, 6))
     fig.set_size_inches(w=5.9, h=(5.9 / 12) * 6)
     sns.boxplot(x="patch_type", y="speedup", data=df, ax=ax, order=order)
-    ax.axhline(1, color="red", linestyle="--", label="No Speedup")
-    ax.axhspan(0, 1, color="red", alpha=0.1)
+    ax.axhline(1, color=SUN_SCIENCE_RED, linestyle="--", label="No Speedup")
+    ax.axhspan(0, 1, color=SUN_SCIENCE_RED, alpha=0.1)
 
     ax.set_xlabel("Patch Type")
     ax.set_ylabel("Full / Incremental")
@@ -260,8 +299,8 @@ def incremental_vs_full(df: pd.DataFrame, output_file: Path):
         max(min(df["full_timings_ms"].min(), df["incremental_timings_ms"].min()), 1),
         max(df["full_timings_ms"].max(), df["incremental_timings_ms"].max()) * 1.1,
     ]
-    ax.plot(lims, lims, "r--", linewidth=1, label="y=x")
-    ax.fill_between(lims, lims, lims[1], color="red", alpha=0.1)
+    ax.plot(lims, lims, "--", color=SUN_CONFIDENT_MAROON, linewidth=1, label="y=x")
+    ax.fill_between(lims, lims, lims[1], color=SUN_SCIENCE_RED, alpha=0.1)
     ax.set_xlim(lims)  # type: ignore
     ax.set_ylim(lims)  # type: ignore
 
