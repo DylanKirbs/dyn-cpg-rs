@@ -1,6 +1,6 @@
-patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed
-001_delete-stmt_delete_stmt_main_b39.patch,1,1,4,0,63,123,63,125,3
-002_insert-decl_insert_decl_main_37263.patch,1,1,3,1,70,138,70,138,4
-003_rename-local_rename_local_main_gen_var_37263_to_gen_var_37263_renamed.patch,1,2,2,1,70,138,70,138,1
-004_modify-num-lit_modify_num_0_to_0.patch,0,1,0,1,70,138,70,138,0
-005_add-comment_add_comment_main.patch,1,1,4,1,71,140,72,140,2
+patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed,file_size_bytes,commit_hash,file_path
+001_delete-stmt_delete_stmt_main_b39.patch,1,1,4,0,63,116,63,116,3,140,patch,base.c
+002_insert-decl_insert_decl_main_37263.patch,1,2,2,1,70,130,70,130,4,171,patch,base.c
+003_rename-local_rename_local_main_gen_var_37263_to_gen_var_37263_renamed.patch,1,1,1,1,70,130,70,130,1,179,patch,base.c
+004_modify-num-lit_modify_num_0_to_0.patch,0,2,0,1,70,130,70,130,0,179,patch,base.c
+005_add-comment_add_comment_main.patch,1,1,4,1,71,132,71,132,2,200,patch,base.c

@@ -1,0 +1,74 @@
+Performance Profile for tree-sitter (10 commits, 21 files processed)
+Total duration: 6.793340728s
+
+Top functions by sample count (filtered for relevant crate code):
+Function                                                                         Samples    Percentage
+------------------------------------------------------------------------------------------------------
+get_node_span (spatial_index.rs:123)                                             6          0.25      %
+get_node_span (spatial_index.rs:123)                                             5          0.21      %
+get_node_span (spatial_index.rs:123)                                             5          0.21      %
+get_node_span (spatial_index.rs:123)                                             5          0.21      %
+get_node_span (spatial_index.rs:123)                                             5          0.21      %
+get_node_span (spatial_index.rs:123)                                             4          0.16      %
+get_node_span (spatial_index.rs:123)                                             4          0.16      %
+<dyn_cpg_rs::cpg::NodeId as core::hash::Hash>::hash (lib.rs:460)                 4          0.16      %
+get_node_span (spatial_index.rs:123)                                             4          0.16      %
+tree_sitter::Parser::parse_with_options (lib.rs:920)                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+<dyn_cpg_rs::cpg::NodeId as core::hash::Hash>::hash (lib.rs:460)                 3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+tree_sitter::Parser::parse_with_options (lib.rs:920)                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+get_node_span (spatial_index.rs:123)                                             3          0.12      %
+<dyn_cpg_rs::cpg::NodeId as core::hash::Hash>::hash (lib.rs:460)                 3          0.12      %
+
+Detailed stack traces for relevant functions (top 10):
+======================================================================
+1. Samples: 6 (0.25%)
+   Stack trace (most relevant frames):
+
+2. Samples: 5 (0.21%)
+   Stack trace (most relevant frames):
+
+3. Samples: 5 (0.21%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:145)
+
+4. Samples: 5 (0.21%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:145)
+
+5. Samples: 5 (0.21%)
+   Stack trace (most relevant frames):
+
+6. Samples: 4 (0.16%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:145)
+
+7. Samples: 4 (0.16%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:145)
+
+8. Samples: 4 (0.16%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:163)
+
+9. Samples: 4 (0.16%)
+   Stack trace (most relevant frames):
+     -> dyn_cpg_rs::languages::RegisteredLanguage::cst_to_cpg (mod.rs:122)
+     -> dyn_cpg_rs::languages::cst_to_cpg (mod.rs:145)
+
+10. Samples: 3 (0.12%)
+   Stack trace (most relevant frames):
+     -> tree_sitter::Parser::parse (lib.rs:793)
+     -> tree_sitter::Parser::parse_with_options (lib.rs:920)
+     -> __GI___clone3 (Unknown:0)
+

@@ -1,2 +1,2 @@
-patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed
-053_rename-local_fn-'msm_substr_from_str'-rename-'len'-to-'new_len_465116'.patch,5,163,849,0,4615,10164,4628,8474,5
+patch_name,edits_count,full_timings_ms,incremental_timings_ms,same,full_nodes,full_edges,incremental_nodes,incremental_edges,lines_changed,file_size_bytes,commit_hash,file_path
+053_rename-local_fn-'msm_substr_from_str'-rename-'len'-to-'new_len_465116'.patch,5,172,1205,0,4615,8439,4615,8439,5,24173,patch,base.c
